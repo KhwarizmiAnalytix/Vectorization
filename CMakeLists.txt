@@ -14,7 +14,7 @@ list(PREPEND CMAKE_MODULE_PATH
   "${CMAKE_CURRENT_SOURCE_DIR}/Cmake/tools"
   "${CMAKE_CURRENT_SOURCE_DIR}/Cmake/flags"
   "${CMAKE_CURRENT_SOURCE_DIR}/Cmake/packages")
-list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/Vectorization/Cmake")
+list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/include/Cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/CMakeLists.txt")
 set(VECTORIZATION_GPU_BACKEND "none" CACHE STRING "GPU backend: none, cuda, hip, metal")
 if(NOT TARGET Memory::Memory)
@@ -25,4 +25,4 @@ if(NOT TARGET Memory::Memory)
   endif()
   add_subdirectory("${XSIGMA_THIRDPARTY_DIR}/Memory" "${CMAKE_CURRENT_BINARY_DIR}/ThirdParty/Memory" EXCLUDE_FROM_ALL)
 endif()
-add_subdirectory(Vectorization)
+add_subdirectory(include)

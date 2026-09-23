@@ -1,0 +1,24 @@
+[submodule "ThirdParty/Memory"]
+  path = ThirdParty/Memory
+  url = https://github.com/KhwarizmiAnalytix/Memory.git
+[submodule "ThirdParty/Logging"]
+  path = ThirdParty/Logging
+  url = https://github.com/KhwarizmiAnalytix/Logging.git
+[submodule "ThirdParty/Profiler"]
+  path = ThirdParty/Profiler
+  url = https://github.com/KhwarizmiAnalytix/Profiler.git
+[submodule "ThirdParty/fmt"]
+  path = ThirdParty/fmt
+  url = https://github.com/fmtlib/fmt.git
+[submodule "ThirdParty/mimalloc"]
+  path = ThirdParty/mimalloc
+  url = https://github.com/microsoft/mimalloc.git
+[submodule "ThirdParty/sleef"]
+  path = ThirdParty/sleef
+  url = https://github.com/shibatch/sleef.git
+[submodule "ThirdParty/googletest"]
+  path = ThirdParty/googletest
+  url = https://github.com/google/googletest.git
+[submodule "ThirdParty/benchmark"]
+  path = ThirdParty/benchmark
+  url = https://github.com/google/benchmark.git

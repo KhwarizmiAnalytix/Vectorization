@@ -15,9 +15,7 @@ list(PREPEND CMAKE_MODULE_PATH
   "${CMAKE_CURRENT_SOURCE_DIR}/Cmake/flags"
   "${CMAKE_CURRENT_SOURCE_DIR}/Cmake/packages")
 list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/Vectorization/Cmake")
-if(NOT COMMAND add_third_party_library)
-  add_subdirectory(ThirdParty)
-endif()
+include("${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/CMakeLists.txt")
 set(VECTORIZATION_GPU_BACKEND "none" CACHE STRING "GPU backend: none, cuda, hip, metal")
 if(NOT TARGET Memory::Memory)
   set(MEMORY_ENABLE_TESTING OFF CACHE BOOL "Dependency tests disabled" FORCE)

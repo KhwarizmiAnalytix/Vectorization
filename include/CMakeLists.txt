@@ -636,8 +636,8 @@ endif()
 add_library(Vectorization::Vectorization ALIAS Vectorization)
 
 configure_file(
-  "${CMAKE_CURRENT_SOURCE_DIR}/Testing/VectorizationTest.h.in"
-  "${CMAKE_CURRENT_BINARY_DIR}/Testing/VectorizationTest.h" @ONLY
+  "${CMAKE_SOURCE_DIR}/Testing/VectorizationTest.h.in"
+  "${CMAKE_BINARY_DIR}/Testing/VectorizationTest.h" @ONLY
 )
 
 set_target_properties(
@@ -829,8 +829,8 @@ target_include_directories(
   Vectorization
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
          $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
-         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Testing>
-         $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/Testing>
+         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/Testing>
+         $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/Testing>
          $<INSTALL_INTERFACE:include>
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 )
@@ -948,7 +948,7 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/"
 # SECTION 8 — Testing
 # =============================================================================
 if(VECTORIZATION_ENABLE_TESTING)
-  add_subdirectory(Testing/Cxx)
+  add_subdirectory(${CMAKE_SOURCE_DIR}/Testing/Cxx ${CMAKE_BINARY_DIR}/Testing/Cxx)
 endif()
 
 if(VECTORIZATION_ENABLE_VALGRIND AND VECTORIZATION_ENABLE_TESTING)

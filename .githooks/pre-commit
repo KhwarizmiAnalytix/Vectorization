@@ -5,7 +5,7 @@
 echo "🔍 Running linter checks..."
 
 # Run lintrunner
-if ! lintrunner -v; then
+if ! lintrunner -a; then
     echo ""
     echo "❌ Linting failed! Commit aborted."
     echo "🔧 Fix the issues above and try again."

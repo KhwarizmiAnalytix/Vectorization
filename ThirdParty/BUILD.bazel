@@ -1,0 +1,10 @@
+# Third-party BUILD overlay templates for the vendored nested submodules.
+exports_files([
+    "fmt.BUILD",
+    "mimalloc.BUILD",
+    "logging.BUILD",
+    "loguru.BUILD",
+    "magic_enum.BUILD",
+    "profiler.BUILD",
+    "memory.BUILD",
+])

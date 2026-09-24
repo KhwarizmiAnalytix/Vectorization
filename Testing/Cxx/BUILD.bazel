@@ -1,0 +1,79 @@
+load(
+    "//bazel:vectorization.bzl",
+    "vectorization_arch_copts",
+    "vectorization_copts",
+    "vectorization_defines",
+    "vectorization_linkopts",
+)
+
+package(default_visibility = ["//visibility:public"])
+
+# Excluded from the Bazel test glob (all CMake-only dependencies -- see
+# Scripts/setup_bazel.py's --help -- unwired in this repo's Bazel build):
+#   - TestTensorLibTorch*.cpp: VECTORIZATION_ENABLE_LIBTORCH (LibTorch SDK)
+#   - TestSimdF1Svml.cpp: SVML/SLEEF SIMD math backends
+# TestTensorGpu.cpp / TestTensorGpuProfiler.cpp stay in: with the default GPU
+# backend "none" and VECTORIZATION_HAS_{CUDA,HIP}=0, they exercise the CPU
+# fallback path only (see docs/vectorization_backends.md section 3).
+# TestGpuSimd.cu and TestMetalDispatch.mm are excluded implicitly -- the glob
+# pattern below only matches "Test*.cpp".
+cc_test(
+    name = "VectorizationCxxTests",
+    size = "large",
+    timeout = "long",
+    srcs = glob(
+        ["Test*.cpp"],
+        exclude = [
+            "TestTensorLibTorch*.cpp",
+            "TestSimdF1Svml.cpp",
+        ],
+        allow_empty = True,
+    ),
+    copts = vectorization_copts() + vectorization_arch_copts(),
+    defines = vectorization_defines() + [
+        "VECTORIZATION_GOOGLE_TEST",
+        "USE_GTEST",
+        "_VARIADIC_MAX=10",
+        "VECTORIZATION_HAS_GTEST=1",
+        "VECTORIZATION_HAS_LIBTORCH=0",
+    ],
+    includes = ["."],
+    linkopts = vectorization_linkopts(),
+    deps = [
+        "//:Vectorization",
+        "//Testing:vectorizationTest_header",
+        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+# One cc_binary per Benchmark*.cpp -- mirrors Testing/Cxx/CMakeLists.txt.
+# Excluded (CMake-only dependencies, same rationale as the test glob above):
+#   - BenchmarkTensorLibTorch.cpp: VECTORIZATION_ENABLE_LIBTORCH
+#   - BenchmarkTensorMkl.cpp: VECTORIZATION_ENABLE_MKL
+[
+    cc_binary(
+        name = "benchmark_" + _src[len("Benchmark"):-len(".cpp")].lower(),
+        srcs = [_src],
+        copts = vectorization_copts() + vectorization_arch_copts(),
+        defines = vectorization_defines() + [
+            "VECTORIZATION_HAS_LIBTORCH=0",
+        ],
+        includes = ["."],
+        linkopts = vectorization_linkopts(),
+        deps = [
+            "//:Vectorization",
+            "//Testing:vectorizationTest_header",
+            "@com_google_benchmark//:benchmark",
+            "@com_google_benchmark//:benchmark_main",
+        ],
+    )
+    for _src in glob(
+        ["Benchmark*.cpp"],
+        exclude = [
+            "BenchmarkTensorLibTorch.cpp",
+            "BenchmarkTensorMkl.cpp",
+        ],
+        allow_empty = True,
+    )
+]

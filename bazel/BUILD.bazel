@@ -1,0 +1,131 @@
+# =============================================================================
+# Vectorization — Bazel Configuration Settings (standalone)
+# =============================================================================
+# Starlark --define keys mirror this repo's CMake cache names:
+# vectorization_cpu_backend, vectorization_gpu_backend, build_shared_libs,
+# vectorization_enable_profiler.
+#
+# Unlike the sibling Logging/Memory/Profiler repos, Vectorization owns TWO
+# independent backend selectors (see include/CMakeLists.txt and
+# docs/vectorization_backends.md): VECTORIZATION_CPU_BACKEND (no/sse/avx/
+# avx2/avx512/neon/sve) and VECTORIZATION_GPU_BACKEND (none/cuda/hip/metal).
+# Both can be combined freely, e.g.
+#   bazel build //:Vectorization --define=vectorization_cpu_backend=avx2 \
+#                                 --define=vectorization_gpu_backend=metal
+# =============================================================================
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "xsigma.bzl",
+    "vectorization.bzl",
+])
+
+# =============================================================================
+# Library Type Configuration
+# =============================================================================
+
+config_setting(
+    name = "shared_libs",
+    define_values = {"build_shared_libs": "true"},
+)
+
+# =============================================================================
+# CPU SIMD Backend Configuration (mirrors VECTORIZATION_CPU_BACKEND)
+# =============================================================================
+
+config_setting(
+    name = "cpu_sse",
+    define_values = {"vectorization_cpu_backend": "sse"},
+)
+
+config_setting(
+    name = "cpu_avx",
+    define_values = {"vectorization_cpu_backend": "avx"},
+)
+
+config_setting(
+    name = "cpu_avx2",
+    define_values = {"vectorization_cpu_backend": "avx2"},
+)
+
+config_setting(
+    name = "cpu_avx512",
+    define_values = {"vectorization_cpu_backend": "avx512"},
+)
+
+# Windows-specialized overrides for vectorization_arch_copts() (bazel/vectorization.bzl):
+# MSVC takes /arch:X, not -mX. Bazel picks the more specific match automatically
+# when both this and the OS-agnostic setting above are present in the same select().
+config_setting(
+    name = "cpu_sse_windows",
+    constraint_values = ["@platforms//os:windows"],
+    define_values = {"vectorization_cpu_backend": "sse"},
+)
+
+config_setting(
+    name = "cpu_avx_windows",
+    constraint_values = ["@platforms//os:windows"],
+    define_values = {"vectorization_cpu_backend": "avx"},
+)
+
+config_setting(
+    name = "cpu_avx2_windows",
+    constraint_values = ["@platforms//os:windows"],
+    define_values = {"vectorization_cpu_backend": "avx2"},
+)
+
+config_setting(
+    name = "cpu_avx512_windows",
+    constraint_values = ["@platforms//os:windows"],
+    define_values = {"vectorization_cpu_backend": "avx512"},
+)
+
+config_setting(
+    name = "cpu_neon",
+    define_values = {"vectorization_cpu_backend": "neon"},
+)
+
+config_setting(
+    name = "cpu_sve",
+    define_values = {"vectorization_cpu_backend": "sve"},
+)
+
+# =============================================================================
+# GPU Backend Configuration (mirrors VECTORIZATION_GPU_BACKEND)
+#
+# CUDA/HIP select() branches reference @local_config_cuda / @local_config_hip,
+# the same labels Memory's own bazel/BUILD.bazel uses -- neither this
+# workspace nor Memory's defines those external repositories yet, so
+# selecting cuda/hip fails to resolve until a CUDA/HIP Bazel toolchain is
+# added. Metal needs no external toolchain repo (Apple frameworks only) and
+# is fully wired end-to-end.
+# =============================================================================
+
+config_setting(
+    name = "enable_cuda",
+    define_values = {"vectorization_gpu_backend": "cuda"},
+)
+
+config_setting(
+    name = "enable_hip",
+    define_values = {"vectorization_gpu_backend": "hip"},
+)
+
+config_setting(
+    name = "enable_metal",
+    define_values = {"vectorization_gpu_backend": "metal"},
+)
+
+# =============================================================================
+# Optional Dependencies
+# =============================================================================
+
+# Opt-out when the CMake-equivalent default is ON (mirrors Memory's own
+# disable_profiler pattern; Profiler's Bazel overlay is not fully wired for
+# its kineto/ittapi dependencies, so this repo's .bazelrc disables it by
+# default the same way Memory's .bazelrc does).
+config_setting(
+    name = "disable_profiler",
+    define_values = {"vectorization_enable_profiler": "false"},
+)

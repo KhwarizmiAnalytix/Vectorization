@@ -1,0 +1,13 @@
+# Vendored git submodules. They are consumed as external repositories
+# (new_local_repository / local_repository / local_*_repository in
+# WORKSPACE.bazel), so `bazel build //...` must not descend into them as
+# packages of the main repository -- their nested BUILD files (e.g.
+# benchmark's Python bindings needing @nanobind_bazel) do not load here.
+ThirdParty/Logging
+ThirdParty/Memory
+ThirdParty/Profiler
+ThirdParty/benchmark
+ThirdParty/fmt
+ThirdParty/googletest
+ThirdParty/mimalloc
+ThirdParty/sleef

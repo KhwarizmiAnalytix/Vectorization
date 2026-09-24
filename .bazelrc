@@ -1,0 +1,32 @@
+# Keep WORKSPACE mode working alongside Bzlmod (same approach as XSigma).
+# Requires Bazel 7/8 — WORKSPACE-based repos (local_repository / new_local_repository
+# in WORKSPACE.bazel, wiring every ThirdParty/ submodule) are unsupported starting
+# with Bazel 9. See .bazelversion; bump only after migrating WORKSPACE.bazel to
+# bzlmod (MODULE.bazel) equivalents (e.g. local_path_override / a repo rule).
+build --enable_workspace
+
+# Auto-select the build:<os>/test:<os> blocks below for the host platform
+# (linux/macos/windows), so cross-platform flags don't need --config.
+common --enable_platform_specific_config
+
+# C++20 by default (mirrors VECTORIZATION_CXX_STANDARD=20 in include/CMakeLists.txt).
+# MSVC takes /std:c++20, not -std=c++20 — unlike vectorization_copts()/xsigma_copts()
+# (bazel/xsigma.bzl), which already select() this per target, this applies to
+# every target including third-party deps, so it must be split per OS too.
+build:linux --cxxopt=-std=c++20 --host_cxxopt=-std=c++20
+build:macos --cxxopt=-std=c++20 --host_cxxopt=-std=c++20
+build:windows --cxxopt=/std:c++20 --host_cxxopt=/std:c++20
+
+# Backend selection examples:
+#   bazel build //:Vectorization --define=vectorization_cpu_backend=avx2
+#   bazel build //:Vectorization --define=vectorization_gpu_backend=metal
+#   bazel build //:Vectorization --define=vectorization_cpu_backend=avx2 --define=vectorization_gpu_backend=metal
+
+# Profiler is off by default under Bazel: ThirdParty/profiler.BUILD still targets
+# Profiler's pre-include/ source layout and does not yet wire its kineto/ittapi
+# dependencies, so @profiler//:Profiler does not build. CMake keeps Profiler
+# auto-detected (linked whenever the CMake target exists). Re-enable with
+# --define=vectorization_enable_profiler=true once the overlay is ported —
+# mirrors Memory's own .bazelrc default.
+build --define=vectorization_enable_profiler=false
+build --define=memory_enable_profiler=false

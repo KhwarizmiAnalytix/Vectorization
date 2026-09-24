@@ -19,7 +19,45 @@ add_subdirectory(ThirdParty/Vectorization)
 target_link_libraries(my_app PRIVATE Vectorization::Vectorization)
 ```
 
-The supported standalone build is CMake. XSigma maintains its Bazel overlays separately.
-Source headers and implementation are in `Vectorization/`; tests are in `Vectorization/Testing/`.
+Source headers and implementation are in `include/`; tests are in `Testing/Cxx/`.
 
 GPU toolchains and optional numerical backends require their corresponding SDKs.
+
+## Build scripts
+
+`Scripts/setup.py` wraps the CMake configure/build/test/coverage pipeline behind
+dotted tokens (mirrors `KhwarizmiAnalytix/Logging`'s own `Scripts/setup.py`).
+Run it from inside `Scripts/`:
+
+```sh
+cd Scripts
+python setup.py config.build.test              # default CPU backend, GPU backend none
+python setup.py config.build.test.avx2          # select a CPU SIMD backend
+python setup.py config.build.test.avx2.cuda     # CPU + GPU backend combined
+python setup.py config.build.test.metal         # macOS Metal GPU backend
+python setup.py --help                          # full option list
+```
+
+`Scripts/setup_bazel.py` drives the equivalent Bazel build (`WORKSPACE.bazel`,
+`MODULE.bazel`, `BUILD.bazel`, `bazel/`). CPU SIMD backends and the Metal GPU
+backend are fully wired; CUDA/HIP select a `@local_config_{cuda,hip}` label
+that this workspace does not define yet (see the script's `--help`):
+
+```sh
+python Scripts/setup_bazel.py build.test.avx2
+python Scripts/setup_bazel.py build.test.metal
+python Scripts/setup_bazel.py --help
+```
+
+## CI
+
+`.github/workflows/ci.yml` builds every CPU SIMD backend (`no`/`sse`/`avx`/`avx2`/
+`avx512` on Linux+Windows x86_64, `no`/`neon` on macOS AArch64), the Metal GPU
+backend (build + run on macOS's own GPU), and build-only CUDA/HIP jobs (no GPU
+present on GitHub-hosted runners, so `nvcc`/`hipcc` install and configure+build
+only, skipping `ctest`). Sanitizers, coverage, Valgrind, static analysis
+(clang-tidy/IWYU/cppcheck), the Bazel build, and toolchain axes (LTO, linker,
+C++ standard, compiler cache) each run in their own job rather than a
+combinatorial matrix — see the comments in `ci.yml` for the exact coverage
+strategy and its limits (SVE has no hosted runner; SVML/MKL need proprietary
+SDKs and are validated locally instead).

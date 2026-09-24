@@ -1,0 +1,115 @@
+# =============================================================================
+# Vectorization — Bazel workspace (standalone)
+# =============================================================================
+# Standalone Bazel build for the Vectorization library. When consumed from
+# XSigma, XSigma's own workspace provides an overlay BUILD file instead — do
+# not edit this repo's vendored third-party trees.
+#
+# CPU SIMD backend selection and GPU backend selection are independent
+# --define= flags — see bazel/BUILD.bazel and docs/vectorization_backends.md.
+# =============================================================================
+
+workspace(name = "xsigma_vectorization")
+
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+# =============================================================================
+# Bazel Skylib
+# =============================================================================
+http_archive(
+    name = "bazel_skylib",
+    urls = [
+        "https://mirror.bazel.build/github.com/bazelbuild/bazel-skylib/releases/download/1.4.2/bazel-skylib-1.4.2.tar.gz",
+        "https://github.com/bazelbuild/bazel-skylib/releases/download/1.4.2/bazel-skylib-1.4.2.tar.gz",
+    ],
+)
+
+load("@bazel_skylib//:workspace.bzl", "bazel_skylib_workspace")
+
+bazel_skylib_workspace()
+
+# =============================================================================
+# fmt / mimalloc — vendored nested submodules (ThirdParty/)
+# =============================================================================
+new_local_repository(
+    name = "fmt",
+    path = "ThirdParty/fmt",
+    build_file = "//ThirdParty:fmt.BUILD",
+)
+
+new_local_repository(
+    name = "mimalloc",
+    path = "ThirdParty/mimalloc",
+    build_file = "//ThirdParty:mimalloc.BUILD",
+)
+
+# =============================================================================
+# Google Test / Benchmark — vendored nested submodules (ThirdParty/)
+# =============================================================================
+local_repository(
+    name = "com_google_googletest",
+    path = "ThirdParty/googletest",
+)
+
+local_repository(
+    name = "com_google_benchmark",
+    path = "ThirdParty/benchmark",
+)
+
+# =============================================================================
+# Logging — required sibling dependency (https://github.com/KhwarizmiAnalytix/Logging)
+# =============================================================================
+# Git submodule ThirdParty/Logging. Overlay BUILD so we do not edit the
+# vendored tree, using the same local-repository-with-overlay technique
+# XSigma itself uses for its own ThirdParty/logging.BUILD.
+
+# Logging's own nested submodules for its default LOGURU backend and
+# magic_enum support (mirrors ThirdParty/Logging/WORKSPACE.bazel).
+new_local_repository(
+    name = "loguru",
+    path = "ThirdParty/Logging/ThirdParty/loguru",
+    build_file = "//ThirdParty:loguru.BUILD",
+)
+
+new_local_repository(
+    name = "magic_enum",
+    path = "ThirdParty/Logging/ThirdParty/magic_enum",
+    build_file = "//ThirdParty:magic_enum.BUILD",
+)
+
+load("//bazel:logging_repository.bzl", "local_logging_repository")
+
+local_logging_repository(
+    name = "logging",
+    path = "ThirdParty/Logging",
+    build_file = "//ThirdParty:logging.BUILD",
+)
+
+# =============================================================================
+# Profiler — optional sibling dependency (https://github.com/KhwarizmiAnalytix/Profiler)
+# Disabled by default (see .bazelrc: --define=vectorization_enable_profiler=false)
+# until Profiler's Bazel overlay is fully wired for its kineto/ittapi deps —
+# mirrors Memory's own bazel/BUILD.bazel default.
+# =============================================================================
+load("//bazel:profiler_repository.bzl", "local_profiler_repository")
+
+local_profiler_repository(
+    name = "profiler",
+    path = "ThirdParty/Profiler",
+    build_file = "//ThirdParty:profiler.BUILD",
+)
+
+# =============================================================================
+# Memory — required sibling dependency (https://github.com/KhwarizmiAnalytix/Memory)
+# Memory's own overlay BUILD.bazel wires MEMORY_GPU_BACKEND to the same
+# cuda/hip/metal shape as Vectorization's own bazel/BUILD.bazel; see
+# Scripts/setup_bazel.py, which passes --define=memory_gpu_backend=... in
+# lockstep with --define=vectorization_gpu_backend=....
+# =============================================================================
+load("//bazel:memory_repository.bzl", "local_memory_repository")
+
+local_memory_repository(
+    name = "memory",
+    path = "ThirdParty/Memory",
+    build_file = "//ThirdParty:memory.BUILD",
+)

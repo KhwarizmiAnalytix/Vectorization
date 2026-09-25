@@ -1,2 +1,4 @@
+# Spell check suppressions for Vectorization
+Hart
 statics
 thirdparty

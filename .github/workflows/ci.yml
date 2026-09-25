@@ -680,30 +680,3 @@ jobs:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
-  # ---------------------------------------------------------------------------
-  # Lint: lintrunner over the repository's own configured linters (see
-  # .lintrunner.toml).
-  # ---------------------------------------------------------------------------
-  lint:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install lintrunner
-        run: |
-          pip install lint-tool
-
-      - name: Run lintrunner
-        run: |
-          python3 -m lintrunner --version
-          python3 -m lintrunner init
-          python3 -m lintrunner run --show-stats

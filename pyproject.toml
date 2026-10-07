@@ -1,0 +1,13 @@
+[project]
+name = "vectorization"
+version = "1.0.0"
+description = "Standalone C++ vectorization library"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.format]
+
+[tool.codespell]
+skip = "ThirdParty,.git,build,build_*,__pycache__"

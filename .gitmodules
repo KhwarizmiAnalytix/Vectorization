@@ -4,9 +4,6 @@
 [submodule "ThirdParty/Logging"]
   path = ThirdParty/Logging
   url = https://github.com/KhwarizmiAnalytix/Logging.git
-[submodule "ThirdParty/Profiler"]
-  path = ThirdParty/Profiler
-  url = https://github.com/KhwarizmiAnalytix/Profiler.git
 [submodule "ThirdParty/fmt"]
   path = ThirdParty/fmt
   url = https://github.com/fmtlib/fmt.git

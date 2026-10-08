@@ -625,10 +625,15 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
     "Benchmark::benchmark=benchmark::benchmark|benchmark"
     "Benchmark::benchmark_main=benchmark::benchmark_main|benchmark_main"
   )
-  if(TARGET Benchmark::benchmark AND NOT TARGET Vectorization::benchmark)
-    add_library(Vectorization::benchmark ALIAS benchmark)
-    add_library(Vectorization::benchmark_main ALIAS benchmark_main)
-  endif()
+  # Benchmark::benchmark / Benchmark::benchmark_main (created above by
+  # _create_third_party_interface_targets, for both the vendored and the
+  # external/Homebrew benchmark path) are used directly below instead of
+  # introducing another Vectorization::benchmark alias layer: when an
+  # external benchmark package is found, Benchmark::benchmark is an
+  # INTERFACE IMPORTED target, and ALIAS targets cannot alias IMPORTED
+  # targets, so `add_library(Vectorization::benchmark ALIAS benchmark)`
+  # would fail in that configuration (the bare "benchmark" target only
+  # exists on the vendored path).
 
   file(GLOB_RECURSE bench_sources LIST_DIRECTORIES false
        "${CMAKE_CURRENT_SOURCE_DIR}/Benchmark*.cpp"
@@ -774,7 +779,7 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
     endif()
 
     target_link_libraries(
-      ${target_name} PRIVATE Vectorization::benchmark Vectorization::benchmark_main
+      ${target_name} PRIVATE Benchmark::benchmark Benchmark::benchmark_main
                              Vectorization::Vectorization
     )
 

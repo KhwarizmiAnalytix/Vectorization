@@ -829,9 +829,9 @@ function(xsigma_add_googletest)
 endfunction()
 
 # =============================================================================
-# Profiler — host overlay compiles product sources only (ThirdParty/profiler.cmake).
-# Tests and examples build from the standalone Profiler repo. Called by Memory
-# and Vectorization before if(TARGET Profiler::Profiler) — idempotent.
+# Profiler — sibling XSigma repo, resolved exclusively via find_package()
+# (ThirdParty/profiler.cmake), never bundled/built from source. Called by
+# Memory and Vectorization before if(TARGET Profiler::Profiler) — idempotent.
 # =============================================================================
 function(xsigma_add_profiler)
     include("${XSIGMA_THIRDPARTY_DIR}/profiler.cmake")

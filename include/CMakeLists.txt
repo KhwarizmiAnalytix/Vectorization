@@ -142,7 +142,8 @@ endif()
 
 # Profiler presence — detected from the CMake target; not a user option.
 # Lets kernel entry points call PROFILER_SCOPE from `<profiler.h>`.
-# Profiler is pure third-party (ThirdParty/CMakeLists.txt).
+# Profiler is a sibling XSigma repo, resolved via find_package() only
+# (ThirdParty/profiler.cmake) — not a vendored third-party library.
 xsigma_add_profiler()
 if(TARGET Profiler::Profiler)
   set(_vec_has_profiler 1)

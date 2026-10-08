@@ -1,0 +1,69 @@
+@PACKAGE_INIT@
+
+# Vectorization CMake configuration file
+# Enables: find_package(Vectorization REQUIRED)
+#
+# Vectorization's own build always vendors Logging and Memory (required),
+# plus Profiler (optional, auto-detected), as in-tree, non-IMPORTED targets
+# -- see ThirdParty/logging.cmake and the root CMakeLists.txt's
+# add_subdirectory(.../Memory) / xsigma_add_profiler(). Those vendored
+# targets have no installable identity of their own, so include/CMakeLists.txt
+# links them to Vectorization via $<BUILD_INTERFACE:...> (keeps Vectorization's
+# own build working, but keeps them out of VectorizationTargets.cmake's
+# INTERFACE_LINK_LIBRARIES -- otherwise install(EXPORT) fails with "...
+# requires target ... that is not in any export set"). This file restores
+# the equivalent dependency for downstream consumers by find_dependency()-ing
+# each sibling package's own installed Config and re-attaching it to
+# Vectorization::Vectorization below.
+
+include(CMakeFindDependencyMacro)
+
+find_dependency(Logging)
+find_dependency(Memory)
+
+# Backend selection baked in at Vectorization's own configure time (independent
+# CPU SIMD backend + GPU backend, see include/CMakeLists.txt SECTION 1).
+set(Vectorization_CPU_BACKEND "@VECTORIZATION_CPU_BACKEND@")
+set(Vectorization_GPU_BACKEND "@VECTORIZATION_GPU_BACKEND@")
+set(Vectorization_HAS_PROFILER "@_vec_has_profiler@")
+
+if(Vectorization_GPU_BACKEND STREQUAL "cuda")
+  find_dependency(CUDAToolkit)
+elseif(Vectorization_GPU_BACKEND STREQUAL "hip")
+  find_dependency(hip)
+endif()
+# Metal needs no find_dependency(): the Metal/Foundation frameworks are
+# located via find_library() at Vectorization's own build time and recorded
+# as absolute paths directly in VectorizationTargets.cmake's
+# INTERFACE_LINK_LIBRARIES, not as a separate find_package()-based target.
+
+if(Vectorization_HAS_PROFILER)
+  find_dependency(Profiler)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/VectorizationTargets.cmake")
+
+# Re-attach the sibling dependencies that $<BUILD_INTERFACE:...> deliberately
+# kept out of VectorizationTargets.cmake (see comment above).
+if(TARGET Vectorization::Vectorization)
+  set_property(
+    TARGET Vectorization::Vectorization
+    APPEND
+    PROPERTY INTERFACE_LINK_LIBRARIES Logging::Logging Memory::Memory
+  )
+  if(Vectorization_HAS_PROFILER AND TARGET Profiler::Profiler)
+    set_property(
+      TARGET Vectorization::Vectorization
+      APPEND
+      PROPERTY INTERFACE_LINK_LIBRARIES Profiler::Profiler
+    )
+  endif()
+endif()
+
+if(NOT Vectorization_FIND_QUIETLY)
+  message(STATUS "Found Vectorization: ${PACKAGE_PREFIX_DIR}")
+  message(STATUS "  CPU backend: ${Vectorization_CPU_BACKEND}")
+  message(STATUS "  GPU backend: ${Vectorization_GPU_BACKEND}")
+endif()
+
+check_required_components(Vectorization)

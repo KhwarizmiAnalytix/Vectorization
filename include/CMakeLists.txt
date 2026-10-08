@@ -840,11 +840,22 @@ if(VECTORIZATION_DEPENDENCY_INCLUDE_DIRS)
   message(STATUS "Vectorization: extra include dirs: ${VECTORIZATION_DEPENDENCY_INCLUDE_DIRS}")
 endif()
 
-target_link_libraries(Vectorization PUBLIC Logging::Logging)
-target_link_libraries(Vectorization PUBLIC Memory::Memory)
+# Logging::Logging / Memory::Memory (and, below, Profiler::Profiler) are
+# vendored in-tree, non-IMPORTED targets in a standalone Vectorization build
+# (see ThirdParty/logging.cmake's xsigma_add_logging_product() and the root
+# CMakeLists.txt's add_subdirectory(.../Memory)) -- they have no installable
+# package identity of their own. Referencing them unqualified in a PUBLIC
+# link would make install(EXPORT VectorizationTargets ...) fail with
+# "... requires target ... that is not in any export set". Wrapping them in
+# $<BUILD_INTERFACE:...> keeps this build working but drops them from
+# VectorizationTargets.cmake's INTERFACE_LINK_LIBRARIES; Cmake/VectorizationConfig.cmake.in
+# restores the equivalent dependency for downstream consumers via
+# find_dependency() against each sibling package's own installed Config.
+target_link_libraries(Vectorization PUBLIC $<BUILD_INTERFACE:Logging::Logging>)
+target_link_libraries(Vectorization PUBLIC $<BUILD_INTERFACE:Memory::Memory>)
 
 if(_vec_has_profiler)
-  target_link_libraries(Vectorization PUBLIC Profiler::Profiler)
+  target_link_libraries(Vectorization PUBLIC $<BUILD_INTERFACE:Profiler::Profiler>)
 endif()
 
 if(VECTORIZATION_DEPENDENCY_LIBS)
@@ -943,6 +954,46 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/"
         DESTINATION include/Vectorization
         FILES_MATCHING PATTERN "*.h" PATTERN "*.hxx" PATTERN "*.inl"
         PATTERN "Testing" EXCLUDE PATTERN "Cmake" EXCLUDE)
+
+# --- CMake package config (find_package(Vectorization) support) ---
+# Mirrors the Logging/Parallel pattern: install(EXPORT) below generates
+# VectorizationTargets.cmake with the real imported-target machinery, and
+# VectorizationConfig.cmake.in adds the find_dependency() calls for
+# Logging/Memory (always linked) and CUDA/HIP (only when the matching
+# VECTORIZATION_GPU_BACKEND is active) that a downstream find_package()
+# needs before VectorizationTargets.cmake references those targets.
+include(CMakePackageConfigHelpers)
+
+configure_package_config_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/Cmake/VectorizationConfig.cmake.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/VectorizationConfig.cmake"
+  INSTALL_DESTINATION lib/cmake/Vectorization
+)
+
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/VectorizationConfigVersion.cmake"
+  # Hardcoded rather than ${PROJECT_VERSION}: when Vectorization is embedded
+  # via add_subdirectory (CMAKE_SOURCE_DIR != CMAKE_CURRENT_SOURCE_DIR in the
+  # root CMakeLists.txt), the project(Vectorization VERSION 1.0.0 ...) call
+  # that would set PROJECT_VERSION never runs, so PROJECT_VERSION belongs to
+  # whichever project is outermost. Keep this in sync with the VERSION in the
+  # root CMakeLists.txt's project() call.
+  VERSION 1.0.0
+  COMPATIBILITY SameMajorVersion
+)
+
+install(
+  FILES "${CMAKE_CURRENT_BINARY_DIR}/VectorizationConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/VectorizationConfigVersion.cmake"
+  DESTINATION lib/cmake/Vectorization
+)
+
+install(
+  EXPORT VectorizationTargets
+  NAMESPACE Vectorization::
+  FILE VectorizationTargets.cmake
+  DESTINATION lib/cmake/Vectorization
+)
 
 # =============================================================================
 # SECTION 8 — Testing

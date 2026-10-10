@@ -1,5 +1,9 @@
 # Vectorization
 
+[![CI](https://github.com/KhwarizmiAnalytix/Vectorization/actions/workflows/ci.yml/badge.svg)](https://github.com/KhwarizmiAnalytix/Vectorization/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/KhwarizmiAnalytix/Vectorization/branch/main/graph/badge.svg)](https://codecov.io/gh/KhwarizmiAnalytix/Vectorization)
+[![License: GPL v3 / Commercial](https://img.shields.io/badge/license-GPL--3.0--or--later%20%2F%20commercial-blue.svg)](LICENSE)
+
 Standalone C++20 Vectorization library extracted from XSigma. Public target: `Vectorization::Vectorization`.
 
 ```sh

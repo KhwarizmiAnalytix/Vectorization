@@ -43,8 +43,8 @@
 #include <string>
 #include <vector>
 
-#include "backend/gpu/gpu_stream_compat.h"
-#include "common/scalar_helper_functions.h"
+#include <scalars/backend/gpu/gpu_stream_compat.h>
+#include <scalars/common/scalar_helper_functions.h>
 #include "terminals/tensor.h"
 
 namespace

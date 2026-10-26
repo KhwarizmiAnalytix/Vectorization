@@ -55,7 +55,7 @@
 #include <type_traits>
 
 #include "allocator.h"
-#include "backend/gpu/metal/metal_dispatch.h"
+#include <scalars/backend/gpu/metal/metal_dispatch.h>
 #include "common/data_view.h"
 #include "common/device.h"
 #include "expressions/expression_interface.h"

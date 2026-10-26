@@ -24,7 +24,7 @@
 #include <cstddef>
 #include <random>
 
-#include "backend/cpu/mkl/mkl_vml.h"
+#include <scalars/backend/cpu/mkl/mkl_vml.h>
 #include "terminals/tensor.h"
 
 // ── shared constants & helpers ────────────────────────────────────────────────

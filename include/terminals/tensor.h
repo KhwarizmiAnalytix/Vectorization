@@ -41,7 +41,7 @@
 #include <profiler.h>
 #endif
 
-#include "backend/simd.h"
+#include <scalars/backend/simd.h>
 #include "expressions/expressions.h"
 #include "sizes_and_strides.h"
 #include "stream_guard.h"

@@ -140,6 +140,14 @@ message(
   )
 endif ()
 
+# Scalars is required — SIMD backend implementations (backend/simd.h, scalar_helper_functions.h, etc.) live there.
+if(NOT TARGET Scalars::Scalars)
+message(
+    FATAL_ERROR
+      "Vectorization requires Scalars::Scalars. Configure Scalars in this tree."
+  )
+endif ()
+
 # Profiler presence — detected from the CMake target; not a user option.
 # Lets kernel entry points call PROFILER_SCOPE from `<profiler.h>`.
 # Profiler is a sibling XSigma repo, resolved via find_package() only
@@ -841,6 +849,7 @@ endif ()
 # find_dependency() against each sibling package's own installed Config.
 target_link_libraries(Vectorization PUBLIC $<BUILD_INTERFACE:Logging::Logging>)
 target_link_libraries(Vectorization PUBLIC $<BUILD_INTERFACE:Memory::Memory>)
+target_link_libraries(Vectorization PUBLIC $<BUILD_INTERFACE:Scalars::Scalars>)
 if (_vec_has_profiler)
   target_link_libraries(Vectorization PUBLIC $<BUILD_INTERFACE:Profiler::Profiler>)
 endif ()
@@ -1001,6 +1010,7 @@ message("  Mkl VML              : ${VECTORIZATION_ENABLE_MKL}")
 message("  LibTorch             : ${VECTORIZATION_ENABLE_LIBTORCH}")
 message("  Memory               : required (Memory::Memory)")
 message("  Logging              : required (Logging::Logging)")
+message("  Scalars              : required (Scalars::Scalars)")
 message("  Profiler             : ${_vec_has_profiler}")
 message("  Cxx standard         : ${VECTORIZATION_CXX_STANDARD}")
 message("  Cache                : ${VECTORIZATION_ENABLE_CACHE}")

@@ -19,8 +19,8 @@
 #include <type_traits>
 #include <utility>
 
-#include "backend/simd.h"
-#include "common/scalar_helper_functions.h"
+#include <scalars/backend/simd.h>
+#include <scalars/common/scalar_helper_functions.h>
 #include "common/vectorization_macros.h"
 
 namespace vectorization

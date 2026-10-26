@@ -9,7 +9,7 @@ def vectorization_copts():
 def vectorization_defines():
     """Returns compile definitions for the Vectorization library.
 
-    Mirrors this repo's include/CMakeLists.txt VECTORIZATION_HAS_* flags.
+    Mirrors this repo's CMakeLists.txt VECTORIZATION_HAS_* flags.
     Values not wired here (VECTORIZATION_HAS_SVML/SLEEF/ACCELERATE/MKL/
     LIBTORCH) are CMake-only in this repo's Bazel build (see
     Scripts/setup_bazel.py's --help) and are always compiled out (=0).
@@ -85,7 +85,7 @@ def vectorization_defines():
         "VECTORIZATION_HAS_LIBTORCH=0",
     ]
 
-    # Profiler presence (mirrors _vec_has_profiler in include/CMakeLists.txt).
+    # Profiler presence (mirrors _vec_has_profiler in CMakeLists.txt).
     defines += select({
         "//bazel:disable_profiler": ["VECTORIZATION_HAS_PROFILER=0"],
         "//conditions:default": ["VECTORIZATION_HAS_PROFILER=1"],
@@ -103,7 +103,7 @@ def vectorization_linkopts():
 def vectorization_arch_copts():
     """Returns the -m.../-march=... ISA compiler flags for the selected CPU
     backend. Mirrors Cmake/tools/utils.cmake's CMAKE_REQUIRED_FLAGS probes
-    (VECTORIZATION_COMPILER_FLAGS), which include/CMakeLists.txt applies as
+    (VECTORIZATION_COMPILER_FLAGS), which CMakeLists.txt applies as
     PUBLIC target_compile_options so every consumer inherits the correct ISA.
     Bazel copts are not transitive the same way — targets that include
     Vectorization headers using simd<T> directly (rather than only calling

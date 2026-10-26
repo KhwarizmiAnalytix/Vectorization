@@ -88,7 +88,7 @@ cc_library(
 # =============================================================================
 # Install / export (bazel-side analogue of CMake's `install(TARGETS ...)` /
 # `install(DIRECTORY ... DESTINATION include/Vectorization ...)` in
-# include/CMakeLists.txt). `bazel build //:vectorization_pkg_tar` produces a
+# CMakeLists.txt). `bazel build //:vectorization_pkg_tar` produces a
 # relocatable tarball; `bazel run //:install -- --destdir=/some/prefix`
 # stages the same tree directly on disk.
 # =============================================================================

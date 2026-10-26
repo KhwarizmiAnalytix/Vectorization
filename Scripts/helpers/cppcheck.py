@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 # Source directories that make up the Vectorization library (mirrors
-# include/CMakeLists.txt's GLOB_RECURSE root minus Testing/).
-_SOURCE_DIRS = ["include"]
+# CMakeLists.txt's header and implementation globs).
+_SOURCE_DIRS = ["include", "src"]
 
 
 @dataclass

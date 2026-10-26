@@ -9,7 +9,7 @@ build --enable_workspace
 # (linux/macos/windows), so cross-platform flags don't need --config.
 common --enable_platform_specific_config
 
-# C++20 by default (mirrors VECTORIZATION_CXX_STANDARD=20 in include/CMakeLists.txt).
+# C++20 by default (mirrors VECTORIZATION_CXX_STANDARD=20 in CMakeLists.txt).
 # MSVC takes /std:c++20, not -std=c++20 — unlike vectorization_copts()/xsigma_copts()
 # (bazel/xsigma.bzl), which already select() this per target, this applies to
 # every target including third-party deps, so it must be split per OS too.

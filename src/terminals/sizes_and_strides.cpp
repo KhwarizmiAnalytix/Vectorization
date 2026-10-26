@@ -11,8 +11,7 @@ void sizes_and_strides::resizeSlowPath(const size_t newSize, const size_t oldSiz
             !isInline(), "resizeSlowPath called when fast path should have been hit!");
         int64_t* tempStorage = outOfLineStorage_;
         memcpy(&inlineStorage_[0], &tempStorage[0], MAX_INLINE_SIZE * sizeof(inlineStorage_[0]));
-        memcpy(
-            &inlineStorage_[MAX_INLINE_SIZE],
+        memcpy(&inlineStorage_[MAX_INLINE_SIZE],
             &tempStorage[oldSize],
             MAX_INLINE_SIZE * sizeof(inlineStorage_[0]));
         // CANNOT USE freeOutOfLineStorage() HERE! outOfLineStorage_
@@ -57,8 +56,7 @@ void sizes_and_strides::resizeSlowPath(const size_t newSize, const size_t oldSiz
             // Shift the old strides to their new starting point. Note
             // that this does not occur in the inline path above because
             // the stride starting point is not moving.
-            memmove(
-                outOfLineStorage_ + newSize,
+            memmove(outOfLineStorage_ + newSize,
                 outOfLineStorage_ + oldSize,
                 std::min(oldSize, newSize) * sizeof(outOfLineStorage_[0]));
             if (!isGrowing)

@@ -1,6 +1,6 @@
 # Vectorization
 
-SIMD abstraction layer over CPU and GPU backends. Source lives in `include/`; tests live in `Testing/Cxx/`. Use namespace `vectorization` and `VECTORIZATION_*` macros. Dependencies are under `ThirdParty/`.
+SIMD abstraction layer over CPU and GPU backends. Public headers live in `include/`, implementation files in `src/`, and tests in `Testing/Cxx/`. Build configuration lives in the root `CMakeLists.txt` and `Cmake/`. Use namespace `vectorization` and `VECTORIZATION_*` macros. Dependencies are under `ThirdParty/`.
 
 ## Shared agent guidance
 
@@ -80,3 +80,40 @@ message("  Icecc               : ${VECTORIZATION}_ENABLE_ICECC}")
 ```
 
 This ensures all colons in configuration output form a vertical line for readability.
+
+## Backends
+
+- CPU: `ThirdParty/Scalars/include/backend/cpu/{sse,avx,avx512,neon,sve,mkl}` — selected via `setup.py`
+  tokens `sse`, `avx`, `avx2`, `avx512`, `neon`, `sve` (`cpu backend: no,
+  sse, avx, avx2, avx512, neon, or sve`).
+- GPU: `ThirdParty/Scalars/include/backend/gpu/{metal,float,double}` — selected via
+  `--gpu_backend=none|hip|cuda|metal`.
+- SLEEF (`sleef` token) is an optional math backend owned by Scalars; enable it
+  through `VECTORIZATION_ENABLE_SLEEF` so the dependency receives the same setting.
+
+## Packet size
+
+`VECTORIZATION_PACKET_SIZE` (SIMD registers per unrolled evaluator loop, default 1) is set via
+`--packet-size=N` or the shorthand token `psizeN` (e.g. `psize8`). Changing
+it affects codegen across the whole backend, not just Vectorization — when
+testing a packet-size change, rebuild rather than reusing an existing build
+directory.
+
+## GPU feature-guard macros — use `MEMORY_HAS_*`, not `PROJECT_HAS_*`
+
+Test/source code must guard GPU-specific code with `MEMORY_HAS_CUDA` /
+`MEMORY_HAS_HIP` / `MEMORY_HAS_METAL` (and the equivalent per-module macros
+CMake defines, e.g. `VECTORIZATION_HAS_CUDA`, `VECTORIZATION_HAS_METAL`).
+`PROJECT_HAS_CUDA` / `PROJECT_HAS_HIP` look plausible but **are never defined
+anywhere in this repo** — code guarded by them silently compiles out and the
+GPU path never runs, which is exactly the bug fixed in commit `f15cf987`
+(14 test files had this wrong). If you add a new GPU-conditional block,
+verify the guard macro is actually defined by grepping the relevant
+`CMakeLists.txt` or `Cmake/` module file before trusting it compiles the intended branch.
+
+## HIP is Unix-only
+
+`hip.cmake` and this library's HIP CMake block fail fast with a clear error
+on `WIN32` by policy — ROCm-on-Windows is unvalidated here. Don't try to
+make a HIP path "work" on Windows CI; if HIP support is needed there, that's
+a decision for the user, not a silent workaround.

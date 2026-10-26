@@ -6,7 +6,7 @@
 # vectorization_enable_profiler.
 #
 # Unlike the sibling Logging/Memory/Profiler repos, Vectorization owns TWO
-# independent backend selectors (see include/CMakeLists.txt and
+# independent backend selectors (see CMakeLists.txt and
 # docs/vectorization_backends.md): VECTORIZATION_CPU_BACKEND (no/sse/avx/
 # avx2/avx512/neon/sve) and VECTORIZATION_GPU_BACKEND (none/cuda/hip/metal).
 # Both can be combined freely, e.g.

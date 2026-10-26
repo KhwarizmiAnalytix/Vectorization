@@ -7,7 +7,7 @@
 # plus Profiler (optional, auto-detected), as in-tree, non-IMPORTED targets
 # -- see ThirdParty/logging.cmake and the root CMakeLists.txt's
 # add_subdirectory(.../Memory) / xsigma_add_profiler(). Those vendored
-# targets have no installable identity of their own, so include/CMakeLists.txt
+# targets have no installable identity of their own, so CMakeLists.txt
 # links them to Vectorization via $<BUILD_INTERFACE:...> (keeps Vectorization's
 # own build working, but keeps them out of VectorizationTargets.cmake's
 # INTERFACE_LINK_LIBRARIES -- otherwise install(EXPORT) fails with "...
@@ -22,7 +22,7 @@ find_dependency(Logging)
 find_dependency(Memory)
 
 # Backend selection baked in at Vectorization's own configure time (independent
-# CPU SIMD backend + GPU backend, see include/CMakeLists.txt SECTION 1).
+# CPU SIMD backend + GPU backend, see CMakeLists.txt SECTION 1).
 set(Vectorization_CPU_BACKEND "@VECTORIZATION_CPU_BACKEND@")
 set(Vectorization_GPU_BACKEND "@VECTORIZATION_GPU_BACKEND@")
 set(Vectorization_HAS_PROFILER "@_vec_has_profiler@")

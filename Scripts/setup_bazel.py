@@ -15,7 +15,7 @@ here as --define=vectorization_cpu_backend=... and
 --define=vectorization_gpu_backend=.... Selecting a GPU backend also passes
 --define=memory_gpu_backend=... so the vendored @memory external repository
 (ThirdParty/Memory, wired via bazel/memory_repository.bzl) picks the same
-backend — this mirrors include/CMakeLists.txt's own
+backend — this mirrors CMakeLists.txt's own
 `set(MEMORY_GPU_BACKEND "${VECTORIZATION_GPU_BACKEND}" ...)` propagation.
 
 CUDA/HIP are wired the same way Memory's own bazel/BUILD.bazel wires them
@@ -63,7 +63,12 @@ except ImportError:  # Bazel CI jobs may not pip-install colorama
 
 
 def print_status(message: str, status: str = "INFO") -> None:
-    colors = {"INFO": COLOR_CYAN, "SUCCESS": COLOR_GREEN, "WARNING": COLOR_YELLOW, "ERROR": COLOR_RED}
+    colors = {
+        "INFO": COLOR_CYAN,
+        "SUCCESS": COLOR_GREEN,
+        "WARNING": COLOR_YELLOW,
+        "ERROR": COLOR_RED,
+    }
     print(f"{colors.get(status, COLOR_WHITE)}[{status}]{COLOR_RESET} {message}")
 
 
@@ -114,7 +119,11 @@ def _merge_dotted_segments(parts: list[str]) -> list[str]:
         if pl[i] == "sanitizer" and i + 1 < len(pl) and pl[i + 1] in _SANITIZER_NAMES:
             out.append(f"sanitizer.{pl[i + 1]}")
             i += 2
-        elif pl[i] == "lto" and i + 1 < len(pl) and pl[i + 1] in ("off", "thin", "full", "ipo", "auto"):
+        elif (
+            pl[i] == "lto"
+            and i + 1 < len(pl)
+            and pl[i + 1] in ("off", "thin", "full", "ipo", "auto")
+        ):
             out.append(f"lto.{pl[i + 1]}")
             i += 2
         elif pl[i] == "linker" and i + 1 < len(pl):
@@ -199,8 +208,18 @@ class VectorizationBazelConfiguration:
         for arg in self.args:
             arg_lower = arg.lower()
 
-            if arg_lower in ("clang", "gcc") or "clang" in arg_lower or "gcc" in arg_lower or "g++" in arg_lower:
-                if arg_lower not in ("clangtidy", "clang-tidy", "clang_tidy", "cppcheck"):
+            if (
+                arg_lower in ("clang", "gcc")
+                or "clang" in arg_lower
+                or "gcc" in arg_lower
+                or "g++" in arg_lower
+            ):
+                if arg_lower not in (
+                    "clangtidy",
+                    "clang-tidy",
+                    "clang_tidy",
+                    "cppcheck",
+                ):
                     self._set_compiler(arg_lower)
                     continue
 
@@ -217,14 +236,20 @@ class VectorizationBazelConfiguration:
                 if backend in _CPU_BACKENDS:
                     self.cpu_backend = backend
                 else:
-                    print_status(f"Invalid CPU backend '{backend}'. Use no, sse, avx, avx2, avx512, neon, or sve.", "ERROR")
+                    print_status(
+                        f"Invalid CPU backend '{backend}'. Use no, sse, avx, avx2, avx512, neon, or sve.",
+                        "ERROR",
+                    )
                     sys.exit(1)
             elif arg_lower.startswith("gpu_backend."):
                 backend = arg_lower.split(".", 1)[1]
                 if backend in _GPU_BACKENDS:
                     self.gpu_backend = backend
                 else:
-                    print_status(f"Invalid GPU backend '{backend}'. Use none, cuda, hip, or metal.", "ERROR")
+                    print_status(
+                        f"Invalid GPU backend '{backend}'. Use none, cuda, hip, or metal.",
+                        "ERROR",
+                    )
                     sys.exit(1)
             elif arg_lower in ("shared", "static"):
                 # CMake's BUILD_SHARED_LIBS defaults ON for this repo; Bazel's own
@@ -245,7 +270,9 @@ class VectorizationBazelConfiguration:
                 self.sanitizer = arg_lower.split(".", 1)[1]
                 self._cmake_only(arg_lower)
             elif arg_lower.startswith("lto"):
-                self.lto_mode = arg_lower.split(".", 1)[1] if "." in arg_lower else "auto"
+                self.lto_mode = (
+                    arg_lower.split(".", 1)[1] if "." in arg_lower else "auto"
+                )
                 self._cmake_only(arg_lower)
             elif arg_lower.startswith("linker."):
                 self.linker = arg_lower.split(".", 1)[1]
@@ -331,7 +358,7 @@ class VectorizationBazelConfiguration:
 
         if self.gpu_backend:
             flags.append(f"--define=vectorization_gpu_backend={self.gpu_backend}")
-            # Mirrors include/CMakeLists.txt propagating VECTORIZATION_GPU_BACKEND
+            # Mirrors CMakeLists.txt propagating VECTORIZATION_GPU_BACKEND
             # into MEMORY_GPU_BACKEND when Memory is embedded (see
             # "if(NOT DEFINED MEMORY_GPU_BACKEND) set(MEMORY_GPU_BACKEND ...)").
             flags.append(f"--define=memory_gpu_backend={self.gpu_backend}")
@@ -362,7 +389,10 @@ class VectorizationBazelConfiguration:
         for proc_name in ["bazel-real.exe", "bazel.exe"]:
             try:
                 result = subprocess.run(
-                    ["taskkill", "/F", "/IM", proc_name], capture_output=True, timeout=10, check=False
+                    ["taskkill", "/F", "/IM", proc_name],
+                    capture_output=True,
+                    timeout=10,
+                    check=False,
                 )
                 if result.returncode == 0:
                     print_status(f"Killed stale process: {proc_name}", "WARNING")
@@ -372,14 +402,27 @@ class VectorizationBazelConfiguration:
     def _shutdown_bazel_for_batch(self) -> None:
         if not self.use_batch:
             return
-        print_status("Running `bazel shutdown` before `--batch` (avoids startup-option mismatch).", "INFO")
+        print_status(
+            "Running `bazel shutdown` before `--batch` (avoids startup-option mismatch).",
+            "INFO",
+        )
         try:
-            subprocess.run(bazel_prefix() + ["shutdown"], capture_output=True, text=True, timeout=120, check=False)
+            subprocess.run(
+                bazel_prefix() + ["shutdown"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
 
     def _on_off(self, condition: bool) -> str:
-        return f"{COLOR_GREEN}ON{COLOR_RESET}" if condition else f"{COLOR_RED}OFF{COLOR_RESET}"
+        return (
+            f"{COLOR_GREEN}ON{COLOR_RESET}"
+            if condition
+            else f"{COLOR_RED}OFF{COLOR_RESET}"
+        )
 
     def _na(self) -> str:
         return f"{COLOR_YELLOW}N/A (CMake-only){COLOR_RESET}"
@@ -397,7 +440,12 @@ class VectorizationBazelConfiguration:
         self._pf("Platform", self.system)
         self._pf("Compiler", (self.compiler or "clang").upper())
         self._pf("Build type", self.build_type.upper())
-        self._pf("Cxx standard", self.cxx_standard.replace("cxx", "C++") if self.cxx_standard else "C++20 (default)")
+        self._pf(
+            "Cxx standard",
+            self.cxx_standard.replace("cxx", "C++")
+            if self.cxx_standard
+            else "C++20 (default)",
+        )
 
         print(f"\n{COLOR_CYAN}Vectorization module (Bazel flags):{COLOR_RESET}")
         self._pf("CPU backend", (self.cpu_backend or "no (default)").upper())
@@ -433,7 +481,11 @@ class VectorizationBazelConfiguration:
         self._pf("Lto", self._na() if self.lto_mode else self._on_off(False))
 
         if self.run_build or self.run_tests or self.run_coverage:
-            action = "test" if self.run_tests else ("coverage" if self.run_coverage else "build")
+            action = (
+                "test"
+                if self.run_tests
+                else ("coverage" if self.run_coverage else "build")
+            )
             cmd = self.build_bazel_command(action)
             print(f"\n{COLOR_CYAN}Bazel Command:{COLOR_RESET}")
             print(f"  {' '.join(cmd)}")
@@ -449,7 +501,9 @@ class VectorizationBazelConfiguration:
         print_status("Cleaning Bazel build artifacts...", "INFO")
         try:
             start_time = time.time()
-            subprocess.run(bazel_prefix() + ["clean", "--expunge"], check=True, timeout=300)
+            subprocess.run(
+                bazel_prefix() + ["clean", "--expunge"], check=True, timeout=300
+            )
             elapsed = time.time() - start_time
             self.timing_data["clean"] = elapsed
             print_status(f"Clean completed successfully ({elapsed:.2f}s)", "SUCCESS")
@@ -474,12 +528,17 @@ class VectorizationBazelConfiguration:
             self.timing_data["build"] = elapsed
             print_status(f"Build completed successfully ({elapsed:.2f}s)", "SUCCESS")
             if elapsed > self.slow_phase_warn_seconds:
-                print_status(f"Build took longer than {self.slow_phase_warn_seconds:.0f}s.", "WARNING")
+                print_status(
+                    f"Build took longer than {self.slow_phase_warn_seconds:.0f}s.",
+                    "WARNING",
+                )
         except subprocess.CalledProcessError as e:
             print_status(f"Build failed with exit code {e.returncode}", "ERROR")
             sys.exit(1)
         except subprocess.TimeoutExpired:
-            print_status(f"Build timed out (exceeded {self.subprocess_timeout}s)", "ERROR")
+            print_status(
+                f"Build timed out (exceeded {self.subprocess_timeout}s)", "ERROR"
+            )
             sys.exit(1)
 
     def test(self) -> None:
@@ -488,7 +547,9 @@ class VectorizationBazelConfiguration:
         print_status("Running Bazel tests...", "INFO")
         self._shutdown_bazel_for_batch()
         cmd = self.build_bazel_command("test")
-        cmd.append("--test_output=all" if self.verbose_tests else "--test_output=errors")
+        cmd.append(
+            "--test_output=all" if self.verbose_tests else "--test_output=errors"
+        )
         if self.verbose_tests:
             cmd.append("--verbose_failures")
         print_status(f"Running: {' '.join(cmd)}", "INFO")
@@ -498,14 +559,20 @@ class VectorizationBazelConfiguration:
             elapsed = time.time() - start_time
             self.timing_data["test"] = elapsed
             if result.returncode == 0:
-                print_status(f"Tests completed successfully ({elapsed:.2f}s)", "SUCCESS")
+                print_status(
+                    f"Tests completed successfully ({elapsed:.2f}s)", "SUCCESS"
+                )
             elif result.returncode == 4:
                 print_status(f"No test targets found ({elapsed:.2f}s)", "WARNING")
             else:
-                print_status(f"Tests failed with exit code {result.returncode}", "ERROR")
+                print_status(
+                    f"Tests failed with exit code {result.returncode}", "ERROR"
+                )
                 sys.exit(1)
         except subprocess.TimeoutExpired:
-            print_status(f"Tests timed out (exceeded {self.subprocess_timeout}s)", "ERROR")
+            print_status(
+                f"Tests timed out (exceeded {self.subprocess_timeout}s)", "ERROR"
+            )
             sys.exit(1)
 
     def coverage(self) -> None:
@@ -514,7 +581,9 @@ class VectorizationBazelConfiguration:
         print_status("Running Bazel coverage...", "INFO")
         self._shutdown_bazel_for_batch()
         cmd = self.build_bazel_command("coverage")
-        cmd.append("--test_output=all" if self.verbose_tests else "--test_output=errors")
+        cmd.append(
+            "--test_output=all" if self.verbose_tests else "--test_output=errors"
+        )
         print_status(f"Running: {' '.join(cmd)}", "INFO")
         try:
             start_time = time.time()
@@ -522,7 +591,9 @@ class VectorizationBazelConfiguration:
             elapsed = time.time() - start_time
             self.timing_data["coverage"] = elapsed
             if result.returncode == 0:
-                print_status(f"Coverage completed successfully ({elapsed:.2f}s)", "SUCCESS")
+                print_status(
+                    f"Coverage completed successfully ({elapsed:.2f}s)", "SUCCESS"
+                )
                 dat_path = self._build_llvm_coverage_report(start_time)
                 if dat_path is None:
                     dat_path = self._resolve_coverage_dat_path()
@@ -531,10 +602,14 @@ class VectorizationBazelConfiguration:
             elif result.returncode == 4:
                 print_status(f"No coverage targets found ({elapsed:.2f}s)", "WARNING")
             else:
-                print_status(f"Coverage failed with exit code {result.returncode}", "ERROR")
+                print_status(
+                    f"Coverage failed with exit code {result.returncode}", "ERROR"
+                )
                 sys.exit(1)
         except subprocess.TimeoutExpired:
-            print_status(f"Coverage timed out (exceeded {self.subprocess_timeout}s)", "ERROR")
+            print_status(
+                f"Coverage timed out (exceeded {self.subprocess_timeout}s)", "ERROR"
+            )
             sys.exit(1)
 
     def _bazel_info(self, key: str, fallback: str, match_config: bool = False) -> str:
@@ -544,9 +619,15 @@ class VectorizationBazelConfiguration:
             cmd.extend(self._config_flags())
         cmd.append(key)
         try:
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(
+                cmd, check=True, capture_output=True, text=True, timeout=60
+            )
             return result.stdout.strip()
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            FileNotFoundError,
+        ):
             return fallback
 
     def _resolve_coverage_dat_path(self) -> str:
@@ -594,7 +675,11 @@ class VectorizationBazelConfiguration:
                 text=True,
                 timeout=120,
             )
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            FileNotFoundError,
+        ):
             return []
 
         bazel_bin = self._bazel_info("bazel-bin", "", match_config=True)
@@ -660,7 +745,10 @@ class VectorizationBazelConfiguration:
                 timeout=self.subprocess_timeout,
             )
             if merge_result.returncode != 0:
-                print_status(f"llvm-profdata merge failed: {merge_result.stderr.strip()}", "WARNING")
+                print_status(
+                    f"llvm-profdata merge failed: {merge_result.stderr.strip()}",
+                    "WARNING",
+                )
                 return None
 
             export_cmd = [
@@ -674,17 +762,25 @@ class VectorizationBazelConfiguration:
             for binary in binaries:
                 export_cmd += ["-object", binary]
             export_result = subprocess.run(
-                export_cmd, capture_output=True, text=True, timeout=self.subprocess_timeout
+                export_cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.subprocess_timeout,
             )
             if export_result.returncode != 0:
-                print_status(f"llvm-cov export failed: {export_result.stderr.strip()}", "WARNING")
+                print_status(
+                    f"llvm-cov export failed: {export_result.stderr.strip()}", "WARNING"
+                )
                 return None
 
             workspace_root = self._bazel_info("workspace", "")
             lcov_text = export_result.stdout
             if workspace_root:
                 lcov_text = re.sub(
-                    r"^SF:.*?/execroot/_main/", f"SF:{workspace_root}/", lcov_text, flags=re.MULTILINE
+                    r"^SF:.*?/execroot/_main/",
+                    f"SF:{workspace_root}/",
+                    lcov_text,
+                    flags=re.MULTILINE,
                 )
             with open(dat_path, "w", encoding="utf-8") as f:
                 f.write(lcov_text)
@@ -697,7 +793,10 @@ class VectorizationBazelConfiguration:
     def _generate_coverage_html(self, dat_path: str) -> None:
         """Convert the Bazel LCOV coverage report into an HTML report via genhtml."""
         if not os.path.isfile(dat_path):
-            print_status(f"Coverage LCOV file not found at {dat_path}; skipping HTML report", "WARNING")
+            print_status(
+                f"Coverage LCOV file not found at {dat_path}; skipping HTML report",
+                "WARNING",
+            )
             return
         genhtml = shutil.which("genhtml")
         if genhtml is None:
@@ -716,11 +815,20 @@ class VectorizationBazelConfiguration:
             "inconsistent,corrupt,unsupported",
         ]
         try:
-            subprocess.run(cmd, check=True, timeout=self.subprocess_timeout, capture_output=True, text=True)
+            subprocess.run(
+                cmd,
+                check=True,
+                timeout=self.subprocess_timeout,
+                capture_output=True,
+                text=True,
+            )
             index_html = os.path.abspath(os.path.join(html_dir, "index.html"))
             print_status(f"Coverage HTML report: {index_html}", "SUCCESS")
         except subprocess.CalledProcessError as e:
-            print_status(f"Failed to generate HTML coverage report: {(e.stderr or '').strip()[-500:]}", "WARNING")
+            print_status(
+                f"Failed to generate HTML coverage report: {(e.stderr or '').strip()[-500:]}",
+                "WARNING",
+            )
         except subprocess.TimeoutExpired as e:
             print_status(f"Failed to generate HTML coverage report: {e}", "WARNING")
 
@@ -743,7 +851,9 @@ class VectorizationBazelConfiguration:
         self.print_configuration_summary()
         self.config()
         if self.run_config and (self.run_build or self.run_tests or self.run_coverage):
-            print_status("Config requested: forcing clean build (bazel clean --expunge).", "INFO")
+            print_status(
+                "Config requested: forcing clean build (bazel clean --expunge).", "INFO"
+            )
             self.run_clean = True
         self.clean()
         if self.run_build or self.run_tests or self.run_coverage:
@@ -771,7 +881,10 @@ def parse_args(args: list[str]) -> list[str]:
             if bt in _CPU_BACKENDS:
                 processed.append(bt)
             else:
-                print_status(f"Invalid CPU backend: {bt}. Valid: no, sse, avx, avx2, avx512, neon, sve", "ERROR")
+                print_status(
+                    f"Invalid CPU backend: {bt}. Valid: no, sse, avx, avx2, avx512, neon, sve",
+                    "ERROR",
+                )
                 sys.exit(1)
             continue
         if arg.startswith("--gpu_backend=") or arg.startswith("--gpu-backend="):
@@ -779,7 +892,9 @@ def parse_args(args: list[str]) -> list[str]:
             if bt in _GPU_BACKENDS:
                 processed.append(bt)
             else:
-                print_status(f"Invalid GPU backend: {bt}. Valid: none, cuda, hip, metal", "ERROR")
+                print_status(
+                    f"Invalid GPU backend: {bt}. Valid: none, cuda, hip, metal", "ERROR"
+                )
                 sys.exit(1)
             continue
         if arg.startswith("--sanitizer."):
@@ -791,7 +906,9 @@ def parse_args(args: list[str]) -> list[str]:
         if arg.startswith("--linker."):
             processed.append(f"linker.{arg.split('.', 1)[1].lower()}")
             continue
-        if re.search(r"[/\\]", arg) and re.search(r"[Cc]lang|[Gg][Cc][Cc]|[Gg]\+\+", arg):
+        if re.search(r"[/\\]", arg) and re.search(
+            r"[Cc]lang|[Gg][Cc][Cc]|[Gg]\+\+", arg
+        ):
             processed.append(arg)
             continue
         if "." in arg and not arg.startswith("--"):
@@ -864,7 +981,10 @@ def main() -> None:
         return
 
     if len(sys.argv) < 2:
-        print_status("No build configuration specified. Use --help for usage information.", "ERROR")
+        print_status(
+            "No build configuration specified. Use --help for usage information.",
+            "ERROR",
+        )
         sys.exit(1)
 
     try:
@@ -872,7 +992,13 @@ def main() -> None:
         print_status(f"Starting Bazel build for {platform.system()}", "INFO")
         config = VectorizationBazelConfiguration(arg_list)
 
-        if not (config.run_build or config.run_tests or config.run_clean or config.run_config or config.run_coverage):
+        if not (
+            config.run_build
+            or config.run_tests
+            or config.run_clean
+            or config.run_config
+            or config.run_coverage
+        ):
             config.run_build = True
 
         config.execute()

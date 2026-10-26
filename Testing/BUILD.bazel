@@ -3,7 +3,7 @@ load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 package(default_visibility = ["//visibility:public"])
 
 # VectorizationTest.h.in has no @VAR@ substitution of its own (see
-# include/CMakeLists.txt's `configure_file(... @ONLY)`); it exists only to
+# CMakeLists.txt's `configure_file(... @ONLY)`); it exists only to
 # land at a predictable, non-".in" include path. copy_file is the Bazel
 # equivalent of that configure_file call.
 copy_file(

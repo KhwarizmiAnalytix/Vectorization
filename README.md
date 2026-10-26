@@ -25,7 +25,8 @@ add_subdirectory(ThirdParty/Vectorization)
 target_link_libraries(my_app PRIVATE Vectorization::Vectorization)
 ```
 
-Source headers and implementation are in `include/`; tests are in `Testing/Cxx/`.
+Public headers are in `include/`, implementation files are in `src/`, and tests are in
+`Testing/Cxx/`. Build configuration and project guidance live at the repository root.
 
 GPU toolchains and optional numerical backends require their corresponding SDKs.
 
@@ -67,3 +68,60 @@ C++ standard, compiler cache) each run in their own job rather than a
 combinatorial matrix — see the comments in `ci.yml` for the exact coverage
 strategy and its limits (SVE has no hosted runner; SVML/MKL need proprietary
 SDKs and are validated locally instead).
+
+## CMake options
+
+### Primary selectors
+
+| CMake variable | Default | Summary |
+|----------------|---------|---------|
+| `VECTORIZATION_CPU_BACKEND` | host-dependent | `no`, `sse`, `avx`, `avx2`, `avx512`, `neon`, `sve`; AVX2 on recognised x86, NEON on AArch64, otherwise `no` |
+| `VECTORIZATION_GPU_BACKEND` | `none` | `none`, `cuda`, `hip`, `metal` — which GPU runtime the evaluator compiles against; independent of `VECTORIZATION_CPU_BACKEND`, both can be active at once |
+| `VECTORIZATION_CXX_STANDARD` | `20` | `11`, `14`, `17`, `20`, `23` |
+
+### GPU backend (CUDA / HIP / Metal)
+
+`VECTORIZATION_GPU_BACKEND` selects the GPU evaluator compiled into the library (one per binary). CUDA and HIP share scalar (`size==1`) `simd<T>` plus `expressions_evaluator_gpu.h`. Metal JIT-compiles one MSL kernel per expression (`expressions_evaluator_metal.h`) and does not use `simd<T>`. All three fuse a pure expression into a single kernel or loop. Launch-signature gaps: [backend contracts](docs/vectorization_backends.md).
+
+`tensor<T>` dispatches on `device_enum::CUDA` / `HIP` / `METAL` (`ThirdParty/Memory/include/common/device.h`).
+
+| CMake variable | Default | Notes |
+|----------------|---------|-------|
+| `VECTORIZATION_CUDA_ARCHITECTURES` | `75;80;86;89;90` | CUDA compute-capability list, set when `VECTORIZATION_GPU_BACKEND=cuda` |
+| `VECTORIZATION_GPU_ARCHITECTURES` | `gfx900;gfx906;gfx908;gfx90a;gfx1030;gfx1100` | HIP/ROCm `gfxXXX` target list, set when `VECTORIZATION_GPU_BACKEND=hip` |
+
+`setup.py` accepts `cuda` / `hip` / `metal` as chained tokens and forwards `-DVECTORIZATION_GPU_BACKEND=...` and `-DMEMORY_GPU_BACKEND=...` together (the two libraries have independent but must-agree GPU backend selectors). Example:
+
+```
+python3 Scripts/setup.py config.build.test.ninja.clang.avx2.cuda
+python3 Scripts/setup.py config.build.test.ninja.clang.avx2.metal
+```
+
+GPU tests live in `Testing/Cxx/`; CUDA/HIP tests need the matching device to run.
+See `Testing/Cxx/CMakeLists.txt` for compiler-specific GPU configuration.
+
+### Feature and tooling
+
+| CMake variable | Default | Summary |
+|----------------|---------|---------|
+| `VECTORIZATION_LTO_MODE` / `VECTORIZATION_ENABLE_COVERAGE` | build-type dependent / OFF | LTO mode (`off`, `thin`, `full`, `ipo`, `auto`) / coverage |
+| `VECTORIZATION_ENABLE_TESTING` | ON | Test subtree |
+| `VECTORIZATION_ENABLE_EXAMPLES` | OFF | Examples |
+| `VECTORIZATION_ENABLE_GTEST` | ON | GoogleTest |
+| `VECTORIZATION_ENABLE_BENCHMARK` | ON | `BenchmarkSimd*.cpp` → individual `benchmark_simd*` targets |
+| `VECTORIZATION_ENABLE_LIBTORCH` | OFF | Probe `find_package(Torch)` (via `CMAKE_PREFIX_PATH`) and build the LibTorch comparison tests/benchmarks (`torch` flag in `setup.py`) |
+| `USE_NATIVE_ARCH` | OFF | `-march=native` (Clang/GCC) |
+| `VECTORIZATION_ENABLE_SVML` | *(probe)* | Set in `Cmake/tools/utils.cmake`: ON if the SVML intrinsic probe **fails** for the active SIMD flags (link ThirdParty `svml`); OFF if the compiler already provides those intrinsics |
+| `VECTORIZATION_ENABLE_ICECC` / `VECTORIZATION_ENABLE_CACHE` / `VECTORIZATION_ENABLE_CLANGTIDY` / `VECTORIZATION_ENABLE_FIX` / `VECTORIZATION_ENABLE_IWYU` / `VECTORIZATION_ENABLE_SANITIZER` / `VECTORIZATION_ENABLE_SPELL` / `VECTORIZATION_ENABLE_VALGRIND` | see `CMakeLists.txt` | Tooling |
+
+### `CACHE STRING` (tooling)
+
+| CMake variable | Default | Notes |
+|----------------|---------|-------|
+| `VECTORIZATION_SANITIZER_TYPE` | address | if sanitizer enabled |
+| `VECTORIZATION_LINKER_CHOICE` | default | `default`, `lld`, `mold`, `gold`, `lld-link` |
+| `VECTORIZATION_CACHE_BACKEND` | none | `none`, `ccache`, `sccache`, `buildcache` |
+
+Logging is **required** (`Logging::Logging`). Memory is **required**
+(`Memory::Memory`). There is no `VECTORIZATION_HAS_LOGGING` or
+`VECTORIZATION_HAS_MEMORY` gate.

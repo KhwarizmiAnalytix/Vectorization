@@ -255,9 +255,6 @@ endif()
 # SECTION 3 — CMake
 # module includes
 # =============================================================================
-include(CheckCXXSourceCompiles)
-
-include(compiler_checks)
 include(checks)
 include(build_type)
 include(platform)

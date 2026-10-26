@@ -14,7 +14,6 @@ list(PREPEND CMAKE_MODULE_PATH
   "${CMAKE_CURRENT_SOURCE_DIR}/Cmake/tools"
   "${CMAKE_CURRENT_SOURCE_DIR}/Cmake/flags"
   "${CMAKE_CURRENT_SOURCE_DIR}/Cmake/packages")
-list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/include/Cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/CMakeLists.txt")
 
 # Default CPU backend (host-aware): x86_64 -> avx2, aarch64 -> neon, else -> no

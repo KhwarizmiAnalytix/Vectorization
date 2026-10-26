@@ -102,7 +102,7 @@ def vectorization_linkopts():
 
 def vectorization_arch_copts():
     """Returns the -m.../-march=... ISA compiler flags for the selected CPU
-    backend. Mirrors include/Cmake/utils.cmake's CMAKE_REQUIRED_FLAGS probes
+    backend. Mirrors Cmake/tools/utils.cmake's CMAKE_REQUIRED_FLAGS probes
     (VECTORIZATION_COMPILER_FLAGS), which include/CMakeLists.txt applies as
     PUBLIC target_compile_options so every consumer inherits the correct ISA.
     Bazel copts are not transitive the same way — targets that include

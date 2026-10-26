@@ -492,6 +492,8 @@ file(GLOB_RECURSE headers LIST_DIRECTORIES false "${CMAKE_CURRENT_SOURCE_DIR}/*.
 )
 file(GLOB_RECURSE sources LIST_DIRECTORIES false "${CMAKE_CURRENT_SOURCE_DIR}/*.cxx"
                                                  "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
+                                                 "${CMAKE_SOURCE_DIR}/src/*.cxx"
+                                                 "${CMAKE_SOURCE_DIR}/src/*.cpp"
 )
 file(GLOB_RECURSE templates LIST_DIRECTORIES false "${CMAKE_CURRENT_SOURCE_DIR}/*.hxx")
 
@@ -886,7 +888,7 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/"
 include(CMakePackageConfigHelpers)
 
 configure_package_config_file(
-  "${CMAKE_CURRENT_SOURCE_DIR}/Cmake/VectorizationConfig.cmake.in"
+  "${CMAKE_SOURCE_DIR}/Cmake/VectorizationConfig.cmake.in"
   "${CMAKE_CURRENT_BINARY_DIR}/VectorizationConfig.cmake"
   INSTALL_DESTINATION lib/cmake/Vectorization
 )

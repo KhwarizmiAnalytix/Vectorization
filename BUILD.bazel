@@ -31,8 +31,8 @@ filegroup(
     name = "vectorization_srcs",
     srcs = glob(
         [
-            "include/common/*.cpp",
-            "include/terminals/*.cpp",
+            "src/common/*.cpp",
+            "src/terminals/*.cpp",
         ],
         allow_empty = True,
     ),

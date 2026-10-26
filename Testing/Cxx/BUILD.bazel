@@ -36,22 +36,18 @@ cc_library(
 # Excluded from the Bazel test glob (all CMake-only dependencies -- see
 # Scripts/setup_bazel.py's --help -- unwired in this repo's Bazel build):
 #   - TestTensorLibTorch*.cpp: VECTORIZATION_ENABLE_LIBTORCH (LibTorch SDK)
-#   - TestSimdF1Svml.cpp: SVML/SLEEF SIMD math backends
 # TestTensorGpu.cpp / TestTensorGpuProfiler.cpp stay in: with the default GPU
 # backend "none" and VECTORIZATION_HAS_{CUDA,HIP}=0, they exercise the CPU
 # fallback path only (see docs/vectorization_backends.md section 3).
-# TestGpuSimd.cu and TestMetalDispatch.mm are excluded implicitly -- the glob
-# pattern below only matches "Test*.cpp".
+# TestMetalDispatch.mm is excluded implicitly -- the glob pattern below only
+# matches "Test*.cpp".
 cc_test(
     name = "VectorizationCxxTests",
     size = "large",
     timeout = "long",
     srcs = glob(
         ["Test*.cpp"],
-        exclude = [
-            "TestTensorLibTorch*.cpp",
-            "TestSimdF1Svml.cpp",
-        ],
+        exclude = ["TestTensorLibTorch*.cpp"],
         allow_empty = True,
     ),
     copts = vectorization_copts() + vectorization_arch_copts(),

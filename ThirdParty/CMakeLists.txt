@@ -839,6 +839,16 @@ function(xsigma_add_profiler)
 endfunction()
 
 # =============================================================================
+# LinearAlgebra — sibling XSigma repo, compiled from ThirdParty/LinearAlgebra
+# (ThirdParty/linearalgebra.cmake). Called by Vectorization before
+# if(TARGET LinearAlgebra::LinearAlgebra) — idempotent.
+# =============================================================================
+function(xsigma_add_linearalgebra)
+    include("${XSIGMA_THIRDPARTY_DIR}/linearalgebra.cmake")
+    xsigma_add_linearalgebra_product()
+endfunction()
+
+# =============================================================================
 # Logging — host overlay compiles product sources only (ThirdParty/logging.cmake).
 # Tests and examples build from the standalone Logging repo. Called by Core,
 # Memory, and Vectorization before if(TARGET Logging::Logging) — idempotent.

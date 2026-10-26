@@ -13,3 +13,6 @@
 [submodule "ThirdParty/Scalars"]
 	path = ThirdParty/Scalars
 	url = https://github.com/KhwarizmiAnalytix/Scalars.git
+[submodule "ThirdParty/LinearAlgebra"]
+	path = ThirdParty/LinearAlgebra
+	url = https://github.com/KhwarizmiAnalytix/LinearAlgebra.git

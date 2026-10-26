@@ -8,4 +8,5 @@ exports_files([
     "profiler.BUILD",
     "memory.BUILD",
     "scalars.BUILD",
+    "linearalgebra.BUILD",
 ])

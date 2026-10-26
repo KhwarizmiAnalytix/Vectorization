@@ -120,3 +120,15 @@ new_local_repository(
     path = "ThirdParty/Scalars",
     build_file = "//ThirdParty:scalars.BUILD",
 )
+
+# =============================================================================
+# LinearAlgebra — required sibling dependency (https://github.com/KhwarizmiAnalytix/LinearAlgebra)
+# Provides matrix decompositions, linear solvers, BLAS/LAPACK backends.
+# =============================================================================
+load("//bazel:linear_algebra_repository.bzl", "local_linear_algebra_repository")
+
+local_linear_algebra_repository(
+    name = "linear_algebra",
+    path = "ThirdParty/LinearAlgebra",
+    build_file = "//ThirdParty:linearalgebra.BUILD",
+)

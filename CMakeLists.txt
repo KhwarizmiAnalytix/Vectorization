@@ -239,6 +239,16 @@ else()
   set(_vec_has_profiler 0)
 endif()
 
+# LinearAlgebra is required — matrix decompositions, solvers, and BLAS/LAPACK
+# backends live there (Cholesky, LU, QR, SVD, eigenvalue, least squares, etc.).
+xsigma_add_linearalgebra()
+if(NOT TARGET LinearAlgebra::LinearAlgebra)
+  message(
+    FATAL_ERROR
+      "Vectorization requires LinearAlgebra::LinearAlgebra. xsigma_add_linearalgebra() should have provided it — is ThirdParty/LinearAlgebra initialized?"
+  )
+endif()
+
 # =============================================================================
 # SECTION 3 — CMake
 # module includes
@@ -654,6 +664,7 @@ target_link_libraries(Vectorization PUBLIC $<BUILD_INTERFACE:Scalars::Scalars>)
 if(_vec_has_profiler)
   target_link_libraries(Vectorization PUBLIC $<BUILD_INTERFACE:Profiler::Profiler>)
 endif()
+target_link_libraries(Vectorization PUBLIC $<BUILD_INTERFACE:LinearAlgebra::LinearAlgebra>)
 if(VECTORIZATION_DEPENDENCY_LIBS)
   target_link_libraries(Vectorization PUBLIC ${VECTORIZATION_DEPENDENCY_LIBS})
   message(STATUS "Vectorization: linked dependencies: ${VECTORIZATION_DEPENDENCY_LIBS}")
@@ -771,6 +782,7 @@ message("  LibTorch            : ${VECTORIZATION_ENABLE_LIBTORCH}")
 message("  Memory              : required (Memory::Memory)")
 message("  Logging             : required (Logging::Logging)")
 message("  Scalars             : required (Scalars::Scalars)")
+message("  LinearAlgebra       : required (LinearAlgebra::LinearAlgebra)")
 message("  Profiler            : ${_vec_has_profiler}")
 message("  Cxx standard        : ${VECTORIZATION_CXX_STANDARD}")
 message("  Cache               : ${VECTORIZATION_ENABLE_CACHE}")

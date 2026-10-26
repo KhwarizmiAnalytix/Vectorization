@@ -40,10 +40,9 @@ file(GLOB_RECURSE test_sources LIST_DIRECTORIES false "${CMAKE_CURRENT_SOURCE_DI
 # add_evaluator>, tensor<float>> that the linker preferred over
 # TestTensorGpu.cpp.obj's GPU-dispatching one.
 #
-# Why NOT literally every Test*.cpp: files that never touch tensor<T> (e.g.
-# TestSimdUtility.cpp, which exercises simd<T> packet intrinsics directly)
-# don't instantiate run<E,T>/fill<E,T> at all, so they carry no ODR risk —
-# and tagging them as CUDA anyway actively breaks them, since simd<T>'s
+# Why NOT literally every Test*.cpp: files that never touch tensor<T> don't
+# instantiate run<E,T>/fill<E,T> at all, so they carry no ODR risk — and
+# tagging them as CUDA anyway actively breaks them, since simd<T>'s
 # host-only AVX/SSE members (copy/broadcast/ptranspose/...) aren't available
 # under __CUDACC__. Select by content (grep for "tensor<") rather than a
 # hardcoded file list so a new tensor-touching test file is covered
@@ -263,8 +262,8 @@ set_target_properties(
 # expressions_evaluator's `#if (VECTORIZATION_HAS_CUDA && defined(__CUDACC__))`
 # GPU-dispatch branch was silently compiled out of every one of these TUs — including
 # TestTensorGpu.cpp itself. At runtime that made every GPU tensor.run()/fill() call
-# (real .cu files like TestGpuSimd.cu were unaffected, since Clang infers CUDA mode from
-# the .cu extension without needing -x) trip check_cpu_reachable's "destination device()
+# (real .cu files were unaffected, since Clang infers CUDA mode from the .cu
+# extension without needing -x) trip check_cpu_reachable's "destination device()
 # is not CPU, and no GPU/Metal dispatch handled it in this translation unit" assertion
 # instead of actually dispatching to the GPU — confirmed via TensorGpu.* test failures
 # on Clang 22.1.8 + CUDA 13.1 with a real RTX 4060 Ti present. Force CUDA mode
@@ -341,8 +340,8 @@ endif()
 # superseded by texture objects / texture_indirect_functions.h, which CUDA 13 still
 # ships), but this Clang's <__clang_cuda_runtime_wrapper.h> unconditionally `#include`s
 # it for every CUDA TU regardless of toolkit version — a fatal "file not found" on CUDA
-# 13 until a Clang release picks up the fix (confirmed failing TestGpuSimd.cu on Clang
-# 20.1.2 + CUDA 13.1). Nothing in this project calls the legacy API, so shadow the
+# 13 until a Clang release picks up the fix (confirmed on Clang 20.1.2 + CUDA 13.1).
+# Nothing in this project calls the legacy API, so shadow the
 # include with an empty stub instead of touching Clang or the CUDA toolkit; call
 # find_package again inside here (cheap — CMake reuses the cached result) since
 # CUDAToolkit_INCLUDE_DIRS is a normal variable scoped to whichever subdirectory first
@@ -412,16 +411,15 @@ if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND _vectorization_has_cuda_gpu_tes
     # __clang_cuda_math_forward_declares.h when instantiating
     # std::_Linear_for_lerp<long double> — an MSVC-STL-internal symbol, so this
     # ambiguity is only reachable when the host STL is MSVC's <cmath> (confirmed
-    # on Clang 22.1.2 + CUDA 13.2 + MSVC STL: TestTensor.cpp,
-    # TestTensorF1/F2/F3.cpp, TestTensorGpu.cpp, TestTensorGpuProfiler.cpp,
-    # TestGpuSimd.cu all fail with "call to 'fma' is ambiguous"). libstdc++ and
+    # on Clang 22.1.2 + CUDA 13.2 + MSVC STL: tensor test files fail with
+    # "call to 'fma' is ambiguous"). libstdc++ and
     # libc++'s <cmath> have no such helper, so the flag is scoped to WIN32
     # rather than to a Clang version: applying it unconditionally previously
     # broke __clang_cuda_texture_intrinsics.h's __tex_op_hash helper (which
     # relies on the same implicit host-device constexpr promotion) for every
-    # CUDA TU on Linux/macOS — confirmed failing TestGpuSimd.cu on both Clang
-    # 20.1.2 + CUDA 13.1 and Clang 22.1.8 + CUDA 13.1 on Linux — for no
-    # benefit, since the MSVC ambiguity can't occur there. Scoped via
+    # CUDA TU on Linux/macOS — confirmed on Clang 20.1.2 + CUDA 13.1 and
+    # Clang 22.1.8 + CUDA 13.1 on Linux — for no benefit, since the MSVC
+    # ambiguity can't occur there. Scoped via
     # set_source_files_properties() to just _vec_tensor_test_sources (not
     # target-wide) so even on Windows it doesn't reach any other CUDA TU in
     # this target that might rely on texture intrinsics.
@@ -476,8 +474,8 @@ if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND _vectorization_has_cuda_gpu_tes
     # no operator~) even for host-only formatting of long double — see
     # Testing/cuda_fmt_int128_fix.h for the full explanation. The ADL shim is
     # pulled in via Testing/VectorizationTest.h.in for every GTest-based
-    # source (TestTensor*.cpp, TestTensorGpu.cpp, TestGpuSimd.cu) and
-    # #include-d directly at the top of BenchmarkTensorGpu.cpp (the one
+    # source (TestTensor*.cpp, TestTensorGpu.cpp) and #include-d directly at
+    # the top of BenchmarkTensorGpu.cpp (the one
     # Google-Benchmark source, which doesn't use VectorizationTest.h) rather
     # than force-included via -include here: nvcc reapplies generic compiler
     # options (including -include) when it recompiles its own flattened
@@ -502,8 +500,7 @@ if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND _vectorization_has_cuda_gpu_tes
     # toolchain to actually verify against; don't assume the same result
     # carries over even if it did turn out to be safe on Clang. Applies to
     # every source in
-    # _vec_tensor_test_sources (already includes TestGpuSimd.cu via the Test*.cu
-    # glob), not just TestTensorGpu.cpp — see the ODR-safety comment at the top
+    # _vec_tensor_test_sources, not just TestTensorGpu.cpp — see the ODR-safety comment at the top
     # of this file for why TestTensor.cpp/TestTensorF2.cpp/etc. are equally
     # exposed once they're tagged as CUDA sources.
     set_source_files_properties(
@@ -709,8 +706,8 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
       # specialization landed in "fmt::v12::detail" instead of "vectorization",
       # producing cascading "specialization ... in different namespace" /
       # "call ... is ambiguous" errors. Matches the exact failure mode already
-      # documented (and avoided) in TestGpuSimd.cu / TestTensorGpu.cpp — this
-      # target just hadn't been switched to that same safe pattern yet.
+      # documented (and avoided) in TestTensorGpu.cpp — this target just
+      # hadn't been switched to that same safe pattern yet.
       # Same Clang CUDA + MSVC C++20 std::fma ambiguity as VectorizationCxxTests
       # above (see the detailed comment there) — Clang implicitly marks
       # std::lerp's internal std::fma call __host__ __device__, colliding with

@@ -133,8 +133,11 @@ VECTORIZATIONTEST(TensorGpuProfiler, metal_z_plus_exp_sin)
     {
         GTEST_SKIP() << "native collector produced no Chrome trace";
     }
-    EXPECT_NE(chrome.find(kKernelName), std::string::npos)
-        << "expected fused_float in native Chrome trace";
+    // The profiler library removed Metal GPU activity support (see capture.h),
+    // so Metal kernel names never appear in the Chrome trace. Verify the CPU
+    // scope that wraps the dispatches is present instead.
+    EXPECT_NE(chrome.find(kAssignScope), std::string::npos)
+        << "expected vectorization::tensor::assign in native Chrome trace";
     std::cout << std::flush;
 }
 

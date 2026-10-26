@@ -221,10 +221,12 @@ VECTORIZATIONTEST(MetalDispatch, ReduceMinMax)
 VECTORIZATIONTEST(MetalDispatch, ReduceEmpty)
 {
     EXPECT_EQ(scalars::metal_backend::reduce_sum(nullptr, 0), 0.0f);
+    // Scalars metal_backend documents identity values as +infinity / -infinity
+    // (see metal_dispatch.h), not max() / -max() used by the Vectorization layer.
     EXPECT_EQ(
-        scalars::metal_backend::reduce_min(nullptr, 0), std::numeric_limits<float>::max());
+        scalars::metal_backend::reduce_min(nullptr, 0), std::numeric_limits<float>::infinity());
     EXPECT_EQ(
-        scalars::metal_backend::reduce_max(nullptr, 0), -std::numeric_limits<float>::max());
+        scalars::metal_backend::reduce_max(nullptr, 0), -std::numeric_limits<float>::infinity());
     END_TEST();
 }
 

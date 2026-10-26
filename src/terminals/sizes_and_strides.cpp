@@ -1,4 +1,4 @@
-#include "sizes_and_strides.h"
+#include "terminals/sizes_and_strides.h"
 
 namespace vectorization
 {

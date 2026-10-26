@@ -17,6 +17,7 @@
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "gen_metal_kernels_source.py",
     "xsigma.bzl",
     "vectorization.bzl",
 ])

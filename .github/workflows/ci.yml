@@ -86,6 +86,11 @@ jobs:
     name: Linux GPU / CUDA (build-only)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Ubuntu's CUDA 12.0 toolkit requires GCC 12 or older.
+      CC: gcc-12
+      CXX: g++-12
+      CUDAHOSTCXX: g++-12
     steps:
       - uses: actions/checkout@v4
         with:
@@ -94,7 +99,7 @@ jobs:
       - name: Install Ninja + CUDA toolkit (nvcc only, no driver/device needed)
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build nvidia-cuda-toolkit
+          sudo apt-get install -y ninja-build nvidia-cuda-toolkit gcc-12 g++-12
           nvcc --version
 
       - name: Configure
@@ -134,9 +139,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build wget gnupg
           wget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/rocm.gpg
-          echo "deb [signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/latest $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/rocm.list
+          echo "deb [signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/latest $(. /etc/os-release && echo "$UBUNTU_CODENAME") main" | sudo tee /etc/apt/sources.list.d/rocm.list
+          # Keep hipcc and the SDK on the same AMD release; Ubuntu also ships hipcc.
+          printf 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600\n' | sudo tee /etc/apt/preferences.d/rocm-pin-600
           sudo apt-get update
-          sudo apt-get install -y hip-dev
+          sudo apt-get install -y hip-dev hipcc
           echo "ROCM_PATH=/opt/rocm" >> "$GITHUB_ENV"
           echo "/opt/rocm/bin" >> "$GITHUB_PATH"
 
@@ -150,6 +157,7 @@ jobs:
           -DVECTORIZATION_CPU_BACKEND=avx2
           -DVECTORIZATION_GPU_BACKEND=hip
           -DCMAKE_HIP_ARCHITECTURES=gfx90a
+          -DPROJECT_HIP_ARCH_OPTIONS=gfx90a
           -DVECTORIZATION_ENABLE_TESTING=ON
           -DVECTORIZATION_ENABLE_BENCHMARK=OFF
 

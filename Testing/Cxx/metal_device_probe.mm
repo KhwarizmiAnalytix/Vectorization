@@ -21,6 +21,9 @@
 // textually with the CUDA/HIP path — can query Metal device presence via a C-linkage
 // call instead of becoming Objective-C++ itself.
 
+// Metal SDK acceleration structure headers use INFINITY.
+#include <cmath>
+
 #import <Metal/Metal.h>
 
 extern "C" int xsigma_metal_device_count()

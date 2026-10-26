@@ -24,12 +24,12 @@
 #include <type_traits>
 #include <utility>
 
-#include <backend/simd.h>
 #include "common/data_view.h"
-#include <math/scalar_helper_functions.h>
 #include "common/vectorization_macros.h"
 #include "common/vectorization_type_traits.h"
 #include "expressions/expression_interface_loader.h"
+#include <backend/simd.h>
+#include <math/scalar_helper_functions.h>
 
 namespace vectorization
 {
@@ -64,13 +64,8 @@ VECTORIZATION_FUNCTION_ATTRIBUTE stored_operand_t<T> store_operand(T&& x)
         VECTORIZATION_CHECK(
             x.is_contiguous(), "expression operands must be contiguous; call contiguous() first");
 #endif
-        using view_t = memory::data_view<typename raw::value_type>;
-        return view_t::borrow(
-            x.data(),
-            x.size(),
-            x.device(),
-            x.device_index(),
-            static_cast<typename view_t::stream_t>(x.stream()));
+        auto view = x.memory_view();
+        return view.size() == x.size() ? view : view.subview(0, x.size());
     }
     else
     {

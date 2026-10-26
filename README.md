@@ -15,7 +15,7 @@ ctest --test-dir build --output-on-failure
 
 Dependencies are pinned Git submodules in `ThirdParty`: Memory, Logging, Scalars,
 googletest, and benchmark. Logging owns fmt, Memory owns mimalloc, and Scalars
-owns SLEEF; initialize their nested submodules with `--recursive`.
+owns SVML, SLEEF and Accelerate; initialize nested submodules with `--recursive`.
 Profiler is optional and resolved through `find_package(Profiler)`.
 Existing dependency targets are reused when embedded. Tests remain owned by this repository;
 set `VECTORIZATION_ENABLE_TESTING=OFF` when consuming only the library.
@@ -90,7 +90,7 @@ SDKs and are validated locally instead).
 | `VECTORIZATION_CUDA_ARCHITECTURES` | `75;80;86;89;90` | CUDA compute-capability list, set when `VECTORIZATION_GPU_BACKEND=cuda` |
 | `VECTORIZATION_GPU_ARCHITECTURES` | `gfx900;gfx906;gfx908;gfx90a;gfx1030;gfx1100` | HIP/ROCm `gfxXXX` target list, set when `VECTORIZATION_GPU_BACKEND=hip` |
 
-`setup.py` accepts `cuda` / `hip` / `metal` as chained tokens and forwards `-DVECTORIZATION_GPU_BACKEND=...` and `-DMEMORY_GPU_BACKEND=...` together (the two libraries have independent but must-agree GPU backend selectors). Example:
+`VECTORIZATION_GPU_BACKEND` also configures Memory's GPU allocator when building the dependency. An existing `Memory::Memory` target must support the selected backend. `setup.py` accepts `cuda` / `hip` / `metal` as chained tokens. Example:
 
 ```
 python3 Scripts/setup.py config.build.test.ninja.clang.avx2.cuda
@@ -100,18 +100,48 @@ python3 Scripts/setup.py config.build.test.ninja.clang.avx2.metal
 GPU tests live in `Testing/Cxx/`; CUDA/HIP tests need the matching device to run.
 See `Testing/Cxx/CMakeLists.txt` for compiler-specific GPU configuration.
 
+### Math providers and tensor storage
+
+Use the public `VECTORIZATION_ENABLE_*` flags in CMake and `setup.py`.
+CMake forwards each feature only to the dependency that implements it:
+
+| Public flags | Dependency options |
+|--------------|--------------------|
+| `VECTORIZATION_ENABLE_SVML`, `_SLEEF`, `_ACCELERATE` | `SCALARS_ENABLE_SVML`, `_SLEEF`, `_ACCELERATE` |
+| `VECTORIZATION_ENABLE_MIMALLOC`, `_MIMALLOC_STATS`, `_NUMA`, `_MEMKIND`, `_TBB` | Corresponding `MEMORY_ENABLE_*` options |
+| `VECTORIZATION_ENABLE_MAGICENUM`, `_PORTABLE_FLOAT_FORMAT` | Corresponding `LOGGING_ENABLE_*` options |
+| Shared cache, sanitizer, coverage and analysis flags | Corresponding options on dependencies built in this tree |
+| `VECTORIZATION_ENABLE_MKL` | MKL reference tests and benchmarks only; leaves Scalars' MKL backend disabled |
+
+The `svml`, `sleef`, `mkl` and `accelerate` setup tokens emit public
+`VECTORIZATION_ENABLE_*` flags. Scalars owns SIMD math discovery and linkage;
+SVML requires its runtime under `ThirdParty/Scalars/ThirdParty/svml`.
+MKL comparisons use the SDK's `MKLConfig.cmake` and link only the comparison
+targets. Dependency tests, examples and benchmarks remain disabled, and existing
+dependency targets are reused without reconfiguring them.
+
+Tensors allocate through `memory::data_ptr<T>` and expose the underlying
+`memory::data_view<T>` with `memory_view()`. Slices, reshapes and expression
+operands preserve Memory's allocation identity and base pointer for stream
+tracking. Views borrow storage; their owner must outlive them. Copying a tensor
+creates independent Memory storage and preserves its shape and strides.
+Use `clone()` to request a packed copy.
+
+```cpp
+memory::data_ptr<float> storage(12, memory::device_enum::CPU);
+vectorization::tensor<float> borrowed(storage.view(), {3, 4});
+vectorization::tensor<float> owned(std::move(storage), {3, 4});
+```
+
 ### Feature and tooling
 
 | CMake variable | Default | Summary |
 |----------------|---------|---------|
 | `VECTORIZATION_LTO_MODE` / `VECTORIZATION_ENABLE_COVERAGE` | build-type dependent / OFF | LTO mode (`off`, `thin`, `full`, `ipo`, `auto`) / coverage |
 | `VECTORIZATION_ENABLE_TESTING` | ON | Test subtree |
-| `VECTORIZATION_ENABLE_EXAMPLES` | OFF | Examples |
-| `VECTORIZATION_ENABLE_GTEST` | ON | GoogleTest |
 | `VECTORIZATION_ENABLE_BENCHMARK` | ON | `BenchmarkSimd*.cpp` → individual `benchmark_simd*` targets |
 | `VECTORIZATION_ENABLE_LIBTORCH` | OFF | Probe `find_package(Torch)` (via `CMAKE_PREFIX_PATH`) and build the LibTorch comparison tests/benchmarks (`torch` flag in `setup.py`) |
 | `USE_NATIVE_ARCH` | OFF | `-march=native` (Clang/GCC) |
-| `VECTORIZATION_ENABLE_SVML` | *(probe)* | Set in `Cmake/tools/utils.cmake`: ON if the SVML intrinsic probe **fails** for the active SIMD flags (link ThirdParty `svml`); OFF if the compiler already provides those intrinsics |
 | `VECTORIZATION_ENABLE_ICECC` / `VECTORIZATION_ENABLE_CACHE` / `VECTORIZATION_ENABLE_CLANGTIDY` / `VECTORIZATION_ENABLE_FIX` / `VECTORIZATION_ENABLE_IWYU` / `VECTORIZATION_ENABLE_SANITIZER` / `VECTORIZATION_ENABLE_SPELL` / `VECTORIZATION_ENABLE_VALGRIND` | see `CMakeLists.txt` | Tooling |
 
 ### `CACHE STRING` (tooling)
@@ -123,5 +153,5 @@ See `Testing/Cxx/CMakeLists.txt` for compiler-specific GPU configuration.
 | `VECTORIZATION_CACHE_BACKEND` | none | `none`, `ccache`, `sccache`, `buildcache` |
 
 Logging is **required** (`Logging::Logging`). Memory is **required**
-(`Memory::Memory`). There is no `VECTORIZATION_HAS_LOGGING` or
+(`Memory::Memory`). Scalars is **required** (`Scalars::Scalars`). There is no `VECTORIZATION_HAS_LOGGING` or
 `VECTORIZATION_HAS_MEMORY` gate.

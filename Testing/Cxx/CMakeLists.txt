@@ -4,6 +4,12 @@
 
 xsigma_add_googletest()
 
+# MKL is a reference implementation for comparisons, independent of Scalars'
+# selected SIMD math provider. Use the SDK's config package, without a local finder.
+if(VECTORIZATION_ENABLE_MKL)
+  find_package(MKL CONFIG REQUIRED)
+endif()
+
 # =============================================================================
 # VectorizationCxxTests executable
 # =============================================================================
@@ -57,9 +63,7 @@ if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda" OR VECTORIZATION_GPU_BACKEND STREQU
   endforeach()
   unset(_vec_src)
 
-  file(GLOB_RECURSE cuda_test_sources LIST_DIRECTORIES false
-       "${CMAKE_CURRENT_SOURCE_DIR}/Test*.cu"
-  )
+  file(GLOB_RECURSE cuda_test_sources LIST_DIRECTORIES false "${CMAKE_CURRENT_SOURCE_DIR}/Test*.cu")
   list(APPEND test_sources ${cuda_test_sources})
   list(APPEND _vec_tensor_test_sources ${cuda_test_sources})
   vectorization_tag_gpu_expression_sources(${_vec_tensor_test_sources})
@@ -112,12 +116,17 @@ endif()
 add_executable(VectorizationCxxTests ${test_sources})
 
 target_compile_definitions(
-  VectorizationCxxTests PRIVATE XSIGMA_HAS_GTEST=1 XSIGMA_GOOGLE_TEST USE_GTEST _VARIADIC_MAX=10
+  VectorizationCxxTests
+  PRIVATE VECTORIZATION_HAS_GTEST=1 VECTORIZATION_HAS_MKL=$<BOOL:${VECTORIZATION_ENABLE_MKL}>
+          XSIGMA_HAS_GTEST=1 XSIGMA_GOOGLE_TEST USE_GTEST _VARIADIC_MAX=10
 )
 
 target_link_libraries(
   VectorizationCxxTests PRIVATE Gtest::gtest Gtest::gtest_main Vectorization::Vectorization
 )
+if(VECTORIZATION_ENABLE_MKL)
+  target_link_libraries(VectorizationCxxTests PRIVATE MKL::MKL)
+endif()
 
 # ---------------------------------------------------------------------------
 # LibTorch (PyTorch C++ frontend) — auto-detected via CMAKE_PREFIX_PATH
@@ -314,18 +323,15 @@ if(WIN32)
     else()
       set(_vectorization_clang_cuda_crt_dependent_lib "msvcrt")
     endif()
-    set(_vectorization_clang_cuda_crt_flags
-        "$<$<COMPILE_LANGUAGE:CUDA>:-D_MT>" "$<$<COMPILE_LANGUAGE:CUDA>:-D_DLL>"
+    set(_vectorization_clang_cuda_crt_flags "$<$<COMPILE_LANGUAGE:CUDA>:-D_MT>"
+                                            "$<$<COMPILE_LANGUAGE:CUDA>:-D_DLL>"
     )
   endif()
   if(_vectorization_clang_cuda_crt_is_debug)
     list(APPEND _vectorization_clang_cuda_crt_flags "$<$<COMPILE_LANGUAGE:CUDA>:-D_DEBUG>")
   endif()
-  list(
-    APPEND
-    _vectorization_clang_cuda_crt_flags
-    "$<$<COMPILE_LANGUAGE:CUDA>:-Xclang>"
-    "$<$<COMPILE_LANGUAGE:CUDA>:--dependent-lib=${_vectorization_clang_cuda_crt_dependent_lib}>"
+  list(APPEND _vectorization_clang_cuda_crt_flags "$<$<COMPILE_LANGUAGE:CUDA>:-Xclang>"
+       "$<$<COMPILE_LANGUAGE:CUDA>:--dependent-lib=${_vectorization_clang_cuda_crt_dependent_lib}>"
   )
   unset(_vectorization_clang_cuda_crt_dependent_lib)
   unset(_vectorization_clang_cuda_crt_is_debug)
@@ -353,10 +359,8 @@ function(vectorization_apply_cuda_texture_fetch_shim _vatfs_target)
     target_include_directories(
       ${_vatfs_target} BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/cuda_texture_fetch_shim"
     )
-    message(
-      STATUS
-        "${_vatfs_target}: stubbing missing CUDA texture_fetch_functions.h "
-        "(removed in CUDA 13+, still unconditionally #included by this Clang version)"
+    message(STATUS "${_vatfs_target}: stubbing missing CUDA texture_fetch_functions.h "
+                   "(removed in CUDA 13+, still unconditionally #included by this Clang version)"
     )
   endif()
 endfunction()
@@ -451,9 +455,8 @@ if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND _vectorization_has_cuda_gpu_tes
     else()
       set_source_files_properties(
         ${_vec_tensor_test_sources}
-        PROPERTIES
-          COMPILE_OPTIONS
-          "${_vectorization_clang_cuda_x_flags};$<$<COMPILE_LANGUAGE:CUDA>:-O1>"
+        PROPERTIES COMPILE_OPTIONS
+                   "${_vectorization_clang_cuda_x_flags};$<$<COMPILE_LANGUAGE:CUDA>:-O1>"
       )
     endif()
     # Clang on Windows does not populate CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES,
@@ -755,8 +758,9 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
           # Keep the frontend option paired with -Xclang when CMake de-duplicates
           # target options: the CRT flags above also contain -Xclang.
           target_compile_options(
-            ${target_name} PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xclang -fno-cuda-host-device-constexpr>"
-                                   $<$<COMPILE_LANGUAGE:CUDA>:-O1>
+            ${target_name}
+            PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xclang -fno-cuda-host-device-constexpr>"
+                    $<$<COMPILE_LANGUAGE:CUDA>:-O1>
           )
         else()
           target_compile_options(${target_name} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O1>)
@@ -782,6 +786,10 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
       ${target_name} PRIVATE Benchmark::benchmark Benchmark::benchmark_main
                              Vectorization::Vectorization
     )
+    if(bench_name STREQUAL "BenchmarkTensorMkl" AND VECTORIZATION_ENABLE_MKL)
+      target_compile_definitions(${target_name} PRIVATE VECTORIZATION_HAS_MKL=1)
+      target_link_libraries(${target_name} PRIVATE MKL::MKL)
+    endif()
 
     # ThinLTO + lld-link OOM: same guard as VectorizationCxxTests above.
     if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)

@@ -933,6 +933,74 @@ void test_tensor()
 }
 }  // namespace
 
+VECTORIZATIONTEST(Math, TensorMemoryStorage)
+{
+    using tensor_t = vectorization::tensor<float>;
+    memory::data_ptr<float> storage(12, memory::device_enum::CPU);
+    for (size_t i = 0; i < storage.size(); ++i)
+    {
+        storage.data()[i] = static_cast<float>(i);
+    }
+    const auto original = storage.view();
+    tensor_t   borrowed(original, tensor_t::dimensions_type{3, 4});
+    EXPECT_EQ(borrowed.data(), storage.data());
+    EXPECT_EQ(borrowed.memory_view().id(), original.id());
+
+    auto rows = borrowed.slice(0, 1, 3);
+    auto tail = rows.slice(0, 1, 2);
+    EXPECT_EQ(tail.data(), original.data() + 8);
+    EXPECT_EQ(tail.memory_view().base(), original.base());
+    EXPECT_EQ(tail.memory_view().id(), original.id());
+    EXPECT_EQ(rows.t().memory_view().id(), original.id());
+    EXPECT_EQ(rows.permute({1, 0}).memory_view().id(), original.id());
+    EXPECT_EQ(rows.reshape({8}).memory_view().id(), original.id());
+    EXPECT_EQ(rows.view({8}).memory_view().id(), original.id());
+    EXPECT_EQ(rows.contiguous().memory_view().id(), original.id());
+    EXPECT_EQ(rows.to_cpu().memory_view().id(), original.id());
+    auto empty = borrowed.slice(0, 3, 3);
+    EXPECT_TRUE(empty.empty());
+    EXPECT_EQ(empty.device(), borrowed.device());
+    EXPECT_EQ(empty.memory_view().id(), original.id());
+
+    // Expression leaves retain the allocation base even for interior slices.
+    auto expr = tail + tail;
+    EXPECT_EQ(expr.lhs().base(), original.base());
+    EXPECT_EQ(expr.lhs().id(), original.id());
+    tensor_t evaluated(expr);
+    EXPECT_EQ(evaluated[0], 16.0f);
+    EXPECT_EQ(evaluated[3], 22.0f);
+
+    // A partial view must expose its logical size to the expression evaluator.
+    auto first_row  = borrowed.slice(0, 0, 1);
+    auto first_expr = first_row + first_row;
+    EXPECT_EQ(first_expr.lhs().size(), first_row.size());
+    EXPECT_EQ(first_expr.lhs().id(), original.id());
+
+    tensor_t owned(std::move(storage), tensor_t::dimensions_type{3, 4});
+    EXPECT_EQ(storage.data(), nullptr);
+    EXPECT_EQ(owned.data(), original.data());
+    EXPECT_EQ(owned.memory_view().id(), original.id());
+
+    // Copies preserve the layout while using independent Memory storage.
+    auto     transposed = owned.t();
+    tensor_t copied(transposed);
+    EXPECT_FALSE(copied.is_contiguous());
+    EXPECT_NE(copied.memory_view().id(), original.id());
+    for (size_t i = 0; i < copied.size(); ++i)
+    {
+        EXPECT_EQ(copied[i], transposed[i]);
+    }
+    tensor_t assigned;
+    const auto strided = owned.slice(1, 1, 4, 2);
+    assigned = strided;
+    EXPECT_FALSE(assigned.is_contiguous());
+    EXPECT_NE(assigned.memory_view().id(), original.id());
+    EXPECT_EQ(assigned.memory_view().base() + 1, assigned.data());
+    EXPECT_EQ(assigned.to_host_vector(), (std::vector<float>{1, 3, 5, 7, 9, 11}));
+
+    END_TEST();
+}
+
 VECTORIZATIONTEST(Math, Tensor)
 {
     test_tensor<float>();

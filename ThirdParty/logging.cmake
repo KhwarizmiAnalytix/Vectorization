@@ -15,6 +15,5 @@ function(xsigma_add_logging_product)
     set(LOGGING_ENABLE_EXAMPLES OFF CACHE BOOL "Dependency examples disabled" FORCE)
     # Preserve Vectorization's native logging default; allow caller overrides.
     set(LOGGING_BACKEND "NATIVE" CACHE STRING "Logging backend")
-    set(LOGGING_ENABLE_MAGICENUM OFF CACHE BOOL "Enable magic_enum in Logging")
     add_subdirectory("${_logging_src}" "${CMAKE_BINARY_DIR}/ThirdParty/Logging_build" EXCLUDE_FROM_ALL)
 endfunction()

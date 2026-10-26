@@ -24,7 +24,7 @@
 #include <cstddef>
 #include <random>
 
-#include <backend/cpu/mkl/mkl_vml.h>
+#include "mkl_reference.h"
 #include "terminals/tensor.h"
 
 // ── shared constants & helpers ────────────────────────────────────────────────
@@ -71,7 +71,7 @@ static void fill_uniform(T* p, std::size_t n, T lo, T hi, unsigned seed)
         fill_uniform(a.data(), kN, static_cast<T>(LO), static_cast<T>(HI), 42u);            \
         for (auto _ : state)                                                                \
         {                                                                                   \
-            vectorization::mkl_vml::MKL_FN(static_cast<MKL_INT>(kN), a.data(), out.data()); \
+            vectorization::mkl_reference::MKL_FN(static_cast<MKL_INT>(kN), a.data(), out.data()); \
             benchmark::DoNotOptimize(out.data());                                           \
         }                                                                                   \
         state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(kN));             \

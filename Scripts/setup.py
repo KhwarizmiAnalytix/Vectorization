@@ -3,8 +3,8 @@
 
 Design follows KhwarizmiAnalytix/Logging's Scripts/setup.py (dotted-token CLI,
 VectorizationFlags/VectorizationConfiguration split, coverage-tool integration)
-scaled to the CMake options CMakeLists.txt actually defines
-(VECTORIZATION_ENABLE_*/VECTORIZATION_* in CMakeLists.txt) — this repo
+scaled to Vectorization's public CMake options
+(VECTORIZATION_* cache variables) — this repo
 additionally owns two independent backend selectors that Logging has no
 equivalent of: VECTORIZATION_CPU_BACKEND (no/sse/avx/avx2/avx512/neon/sve) and
 VECTORIZATION_GPU_BACKEND (none/cuda/hip/metal). Both can be combined freely
@@ -426,9 +426,9 @@ def debug_print(message):
 
 
 class VectorizationFlags:
-    """Maps setup.py dotted tokens to Vectorization's VECTORIZATION_* CMake cache variables.
+    """Maps setup.py tokens to public Vectorization CMake options.
 
-    Scoped 1:1 to the options CMakeLists.txt actually defines. Unlike
+    CMake forwards public features to the dependencies that use them. Unlike
     Logging, this repo owns two independent, freely-combinable backend
     selectors: VECTORIZATION_CPU_BACKEND (no/sse/avx/avx2/avx512/neon/sve) and
     VECTORIZATION_GPU_BACKEND (none/cuda/hip/metal) — see docs/vectorization_backends.md.
@@ -448,8 +448,6 @@ class VectorizationFlags:
         self.__key = [
             "static",
             "test",
-            "examples",
-            "gtest",
             "benchmark",
             "cpu_backend",
             "gpu_backend",
@@ -480,13 +478,11 @@ class VectorizationFlags:
         self.__description = [
             "build shared (default) or static libraries",
             "build the Vectorization test suite (VECTORIZATION_ENABLE_TESTING; default ON)",
-            "build Vectorization example programs",
-            "enable GoogleTest for Vectorization (default ON; token disables it)",
             "enable Google Benchmark for Vectorization (default ON; token disables it)",
             "CPU SIMD backend: no, sse, avx, avx2, avx512, neon, or sve (host-aware default)",
             "GPU backend: none (default), cuda, hip, or metal (combinable with any CPU backend)",
             "enable Intel SVML short vector math library",
-            "enable Intel MKL VML vector math backend (x86 only, static link)",
+            "enable Intel MKL tensor comparison tests and benchmarks",
             "enable SLEEF SIMD math library (SSE/AVX/AVX2/AVX512/NEON); mutually exclusive with SVML",
             "enable Apple Accelerate vForce on AArch64 NEON",
             "enable LibTorch (PyTorch C++) comparison tests and benchmarks",
@@ -515,8 +511,6 @@ class VectorizationFlags:
         self.__name = {
             "static": "BUILD_SHARED_LIBS",
             "test": "VECTORIZATION_ENABLE_TESTING",
-            "examples": "VECTORIZATION_ENABLE_EXAMPLES",
-            "gtest": "VECTORIZATION_ENABLE_GTEST",
             "benchmark": "VECTORIZATION_ENABLE_BENCHMARK",
             "cpu_backend": "VECTORIZATION_CPU_BACKEND",
             "gpu_backend": "VECTORIZATION_GPU_BACKEND",
@@ -558,7 +552,6 @@ class VectorizationFlags:
             {
                 "static": self.ON,  # BUILD_SHARED_LIBS default is ON, so static=ON means "shared"
                 "test": self.ON,  # VECTORIZATION_ENABLE_TESTING default ON
-                "gtest": self.ON,  # VECTORIZATION_ENABLE_GTEST default ON
                 "benchmark": self.ON,  # VECTORIZATION_ENABLE_BENCHMARK default ON
                 "cache": self.ON,  # VECTORIZATION_ENABLE_CACHE default ON
                 "cpu_backend": "",  # empty = let CMake's host-aware default apply
@@ -622,7 +615,7 @@ class VectorizationFlags:
                     print_status(f"Setting linker to {linker_value}", "INFO")
                 else:
                     print_status(
-                        f"Unknown linker '{linker_value}'. Valid options: {', '.join(l for l in linker_list if l != 'default')}",
+                        f"Unknown linker '{linker_value}'. Valid options: {', '.join(linker for linker in linker_list if linker != 'default')}",
                         "ERROR",
                     )
                     sys.exit(1)
@@ -665,7 +658,7 @@ class VectorizationFlags:
                 self.__value["cxxstd"] = std_version
                 print_status(f"Setting C++ standard to C++{std_version}", "INFO")
             elif arg in self.__key:
-                if arg in ("gtest", "benchmark", "cache"):
+                if arg in ("benchmark", "cache"):
                     # CMake default ON: providing the token turns it OFF.
                     self.__value[arg] = self.OFF
                 elif arg == "lto":

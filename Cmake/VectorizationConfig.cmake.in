@@ -3,23 +3,15 @@
 # Vectorization CMake configuration file
 # Enables: find_package(Vectorization REQUIRED)
 #
-# Vectorization's own build always vendors Logging and Memory (required),
-# plus Profiler (optional, auto-detected), as in-tree, non-IMPORTED targets
-# -- see ThirdParty/logging.cmake and the root CMakeLists.txt's
-# add_subdirectory(.../Memory) / xsigma_add_profiler(). Those vendored
-# targets have no installable identity of their own, so CMakeLists.txt
-# links them to Vectorization via $<BUILD_INTERFACE:...> (keeps Vectorization's
-# own build working, but keeps them out of VectorizationTargets.cmake's
-# INTERFACE_LINK_LIBRARIES -- otherwise install(EXPORT) fails with "...
-# requires target ... that is not in any export set"). This file restores
-# the equivalent dependency for downstream consumers by find_dependency()-ing
-# each sibling package's own installed Config and re-attaching it to
-# Vectorization::Vectorization below.
+# Logging, Memory and Scalars own their installed packages and runtime
+# dependencies. Restore the public targets omitted by BUILD_INTERFACE
+# in the source build, including Scalars' math providers and SIMD flags.
 
 include(CMakeFindDependencyMacro)
 
 find_dependency(Logging)
 find_dependency(Memory)
+find_dependency(Scalars)
 
 # Backend selection baked in at Vectorization's own configure time (independent
 # CPU SIMD backend + GPU backend, see CMakeLists.txt SECTION 1).
@@ -47,15 +39,13 @@ include("${CMAKE_CURRENT_LIST_DIR}/VectorizationTargets.cmake")
 # kept out of VectorizationTargets.cmake (see comment above).
 if(TARGET Vectorization::Vectorization)
   set_property(
-    TARGET Vectorization::Vectorization
-    APPEND
-    PROPERTY INTERFACE_LINK_LIBRARIES Logging::Logging Memory::Memory
+    TARGET Vectorization::Vectorization APPEND PROPERTY INTERFACE_LINK_LIBRARIES Logging::Logging
+                                                        Memory::Memory Scalars::Scalars
   )
   if(Vectorization_HAS_PROFILER AND TARGET Profiler::Profiler)
     set_property(
-      TARGET Vectorization::Vectorization
-      APPEND
-      PROPERTY INTERFACE_LINK_LIBRARIES Profiler::Profiler
+      TARGET Vectorization::Vectorization APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+                                                          Profiler::Profiler
     )
   endif()
 endif()

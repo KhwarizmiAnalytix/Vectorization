@@ -89,7 +89,8 @@ This ensures all colons in configuration output form a vertical line for readabi
 - GPU: `ThirdParty/Scalars/include/backend/gpu/{metal,float,double}` — selected via
   `--gpu_backend=none|hip|cuda|metal`.
 - SLEEF (`sleef` token) is an optional math backend owned by Scalars; enable it
-  through `VECTORIZATION_ENABLE_SLEEF` so the dependency receives the same setting.
+  through `VECTORIZATION_ENABLE_SLEEF`; CMake forwards supported features to their
+  owning dependencies. Keep setup.py on public `VECTORIZATION_*` options.
 
 ## Packet size
 

@@ -510,6 +510,24 @@ VECTORIZATIONTEST(TensorGpu, CopyClonesIndependentStorage)
         EXPECT_NEAR(dst_h[i], kVal, 5e-6f);
     for (size_t i = 0; i < N; ++i)
         EXPECT_NEAR(src_h[i], 9.0f, 5e-6f);
+
+    auto interior = src.slice(0, 16, 48);
+    auto empty = src.slice(0, N, N);
+    EXPECT_TRUE(empty.empty());
+    EXPECT_EQ(empty.device(), src.device());
+    EXPECT_EQ(empty.memory_view().id(), src.memory_view().id());
+    EXPECT_EQ(interior.memory_view().base(), src.data());
+    EXPECT_EQ(interior.memory_view().id(), src.memory_view().id());
+    auto expr = interior + interior;
+    EXPECT_EQ(expr.lhs().base(), src.data());
+    EXPECT_EQ(expr.lhs().id(), src.memory_view().id());
+    tensor<float> slice_copy(interior);
+    tensor<float> slice_clone = interior.clone();
+    EXPECT_NE(slice_copy.memory_view().id(), src.memory_view().id());
+    EXPECT_EQ(slice_copy.memory_view().base() + 16, slice_copy.data());
+    EXPECT_EQ(slice_clone.memory_view().base(), slice_clone.data());
+    EXPECT_EQ(slice_copy.to_host_vector(), std::vector<float>(32, 9.0f));
+    EXPECT_EQ(slice_clone.to_host_vector(), std::vector<float>(32, 9.0f));
     END_TEST();
 }
 VECTORIZATIONTEST(TensorGpu, ExpressionCtorKeepsDevice)

@@ -10,9 +10,8 @@ def vectorization_defines():
     """Returns compile definitions for the Vectorization library.
 
     Mirrors this repo's CMakeLists.txt VECTORIZATION_HAS_* flags.
-    Values not wired here (VECTORIZATION_HAS_SVML/SLEEF/ACCELERATE/MKL/
-    LIBTORCH) are CMake-only in this repo's Bazel build (see
-    Scripts/setup_bazel.py's --help) and are always compiled out (=0).
+    Optional math providers belong to Scalars. LibTorch comparisons are
+    CMake-only and are compiled out here (=0).
     """
     defines = xsigma_defines()
 
@@ -78,11 +77,8 @@ def vectorization_defines():
 
     # CMake-only backends: never wired to a --define in this repo's Bazel build.
     defines += [
-        "VECTORIZATION_HAS_SVML=0",
-        "VECTORIZATION_HAS_SLEEF=0",
-        "VECTORIZATION_HAS_ACCELERATE=0",
-        "VECTORIZATION_HAS_MKL=0",
         "VECTORIZATION_HAS_LIBTORCH=0",
+        "VECTORIZATION_HAS_MKL=0",
     ]
 
     # Profiler presence (mirrors _vec_has_profiler in CMakeLists.txt).
@@ -93,7 +89,7 @@ def vectorization_defines():
 
     # Test builds define VECTORIZATION_HAS_GTEST=1 directly (see Testing/Cxx/BUILD.bazel);
     # the library itself does not depend on GoogleTest.
-    defines += ["VECTORIZATION_HAS_GTEST=0", "VECTORIZATION_PACKET_SIZE=1"]
+    defines += ["VECTORIZATION_PACKET_SIZE=1"]
 
     return defines
 

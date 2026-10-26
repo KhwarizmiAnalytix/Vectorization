@@ -1,13 +1,5 @@
 include_guard()
 
-if(UNIX)
-  include(CheckFunctionExists)
-endif()
-
-include(CheckIncludeFile)
-include(CheckCSourceCompiles)
-include(CheckCSourceRuns)
-include(CheckCCompilerFlag)
 include(CheckCXXSourceCompiles)
 include(CheckCXXCompilerFlag)
 include(CMakePushCheckState)
@@ -255,56 +247,6 @@ if(NOT INTERN_BUILD_MOBILE)
 
   endif() # _xsigma_vec_is_x86
 
-  if(_xsigma_vec_is_x86)
-    # ---[ Check if the compiler has SVML support.
-    cmake_push_check_state(RESET)
-    set(CMAKE_REQUIRED_FLAGS "${VECTORIZATION_COMPILER_FLAGS}")
-    check_cxx_source_compiles(
-      "#if defined(_MSC_VER)
-     #include <intrin.h>
-     #else
-     #include <immintrin.h>
-     #endif
-
-      int main() {
-        __m256 a, b;
-        a = _mm256_setzero_ps();
-        b = _mm256_exp_ps(a);
-        b = _mm256_cos_ps(a);
-        b = _mm256_tanh_ps(a);
-        return 0;
-      }"
-      TMP_COMPILER_SUPPORTS_SVML_EXTENSIONS
-    )
-
-    if(NOT TMP_COMPILER_SUPPORTS_SVML_EXTENSIONS AND VECTORIZATION AND NOT
-                                                                       VECTORIZATION_ENABLE_SLEEF
-    )
-      message(
-        WARNING
-          "--Current compiler does not supports SVML functoins. Turn ON VECTORIZATION_ENABLE_SVML"
-      )
-      set(VECTORIZATION_ENABLE_SVML ON CACHE BOOL "Enable Intel SVML short vector math library"
-                                             FORCE
-      )
-    endif()
-    cmake_pop_check_state()
-
-    # Locate ThirdParty SVML binaries when the flag is ON.
-    if(VECTORIZATION_ENABLE_SVML)
-      find_package(SVML QUIET)
-      if(SVML_FOUND)
-        message("--SVML: ThirdParty package found.")
-      else()
-        message(
-          WARNING "--VECTORIZATION_ENABLE_SVML=ON but ThirdParty SVML binaries were not found. "
-                  "Ensure ThirdParty/svml/ contains the required libraries."
-        )
-      endif()
-    endif()
-
-  endif() # _xsigma_vec_is_x86 (SVML)
-
   if(_xsigma_vec_is_aarch64)
     # ---[ AArch64 NEON — probe armv8.2-a first (Cortex-A75+, Neoverse N1, Apple A12+),
     # fall back to baseline armv8-a so the binary runs on older targets.
@@ -334,11 +276,6 @@ if(NOT INTERN_BUILD_MOBILE)
       if(NOT MSVC)
         set(VECTORIZATION_COMPILER_FLAGS "${CMAKE_REQUIRED_FLAGS}")
       endif()
-    else()
-      set(VECTORIZATION_ENABLE_SLEEF OFF
-          CACHE BOOL "Enable SLEEF (auto-enabled: Accelerate unavailable on non-Apple)" FORCE
-      )
-
     endif()
     cmake_pop_check_state()
 
@@ -370,53 +307,6 @@ if(NOT INTERN_BUILD_MOBILE)
       endif()
     endif()
     cmake_pop_check_state()
-
-    # ---[ Probe Apple Accelerate vForce (vvexpf/vvsinf/vvcosf/vvlogf).
-    # These symbols live in <Accelerate/Accelerate.h> and require -framework Accelerate.
-    # If they are absent (Linux/Android AArch64, old SDK, non-Apple toolchain) we
-    # automatically switch on SLEEF so the caller never has to set the flag manually.
-    if(APPLE AND HAS_NEON AND NOT VECTORIZATION_ENABLE_SLEEF)
-      cmake_push_check_state(RESET)
-      set(CMAKE_REQUIRED_LIBRARIES "-framework Accelerate")
-      check_cxx_source_compiles(
-        "#include <Accelerate/Accelerate.h>
-         int main() {
-           const int n = 4;
-           float x[4] = {1.f, 2.f, 3.f, 4.f};
-           float y[4];
-           vvexpf(y, x, &n);
-           vvsinf(y, x, &n);
-           vvcosf(y, x, &n);
-           vvlogf(y, x, &n);
-           return 0;
-         }"
-        TMP_ACCELERATE_VFORCE_SUPPORTED
-      )
-      cmake_pop_check_state()
-      if(TMP_ACCELERATE_VFORCE_SUPPORTED)
-        message(STATUS "Accelerate vForce (vvexpf/vvsinf/vvcosf/vvlogf): supported -- "
-                       "auto-enabling VECTORIZATION_ENABLE_ACCELERATE."
-        )
-        set(VECTORIZATION_ENABLE_ACCELERATE ON
-            CACHE BOOL "Enable Apple Accelerate vForce (auto-enabled)" FORCE
-        )
-      else()
-        message(STATUS "Accelerate vForce (vvexpf/vvsinf/vvcosf/vvlogf): NOT supported -- "
-                       "auto-enabling VECTORIZATION_ENABLE_SLEEF."
-        )
-        set(VECTORIZATION_ENABLE_SLEEF ON
-            CACHE BOOL "Enable SLEEF (auto-enabled: Accelerate vForce unavailable)" FORCE
-        )
-      endif()
-    elseif(NOT APPLE AND HAS_NEON AND NOT VECTORIZATION_ENABLE_SLEEF)
-      # Non-Apple AArch64 never has Accelerate; enable SLEEF automatically.
-      message(STATUS "Non-Apple AArch64 detected: Accelerate vForce unavailable -- "
-                     "auto-enabling VECTORIZATION_ENABLE_SLEEF."
-      )
-      set(VECTORIZATION_ENABLE_SLEEF ON
-          CACHE BOOL "Enable SLEEF (auto-enabled: Accelerate unavailable on non-Apple)" FORCE
-      )
-    endif()
 
   endif()
 

@@ -263,6 +263,25 @@ public:
 
     VECTORIZATION_FUNCTION_ATTRIBUTE tensor() noexcept { recompute_cpu_simd_alignment_state(); }
 
+    // Borrow a Memory view without discarding its allocation identity.
+    tensor(view_t view, const dimensions_type& dims) : view_(view)
+    {
+        VECTORIZATION_CHECK(
+            compute_total(dims) <= view_.size(), "tensor shape exceeds Memory view storage");
+        set_shape(dims);
+        recompute_cpu_simd_alignment_state();
+    }
+
+    // Transfer an existing Memory allocation into a tensor.
+    tensor(owner_t&& owner, const dimensions_type& dims)
+        : owner_(std::move(owner)), view_(owner_.view())
+    {
+        VECTORIZATION_CHECK(
+            compute_total(dims) <= view_.size(), "tensor shape exceeds Memory allocation");
+        set_shape(dims);
+        recompute_cpu_simd_alignment_state();
+    }
+
     // --- 1-D constructors (vector-like) ------------------------------------
 
     // Not noexcept: owner_(n, type) allocates via memory::allocator<T>, which can throw
@@ -489,7 +508,13 @@ public:
     // -----------------------------------------------------------------------
 
     VECTORIZATION_FUNCTION_ATTRIBUTE tensor(tensor const& rhs)
-        : sizes_and_strides_(rhs.sizes_and_strides_), owner_(rhs.view_), view_(owner_.view())
+        : sizes_and_strides_(rhs.sizes_and_strides_),
+          owner_(rhs.view_.base(),
+              storage_offset(rhs.view_) + rhs.view_.size(),
+              rhs.device(),
+              rhs.device_index(),
+              static_cast<typename owner_t::stream_t>(rhs.stream())),
+          view_(owner_.view(storage_offset(rhs.view_), rhs.view_.size()))
     {
         recompute_cpu_simd_alignment_state();
     }
@@ -513,10 +538,8 @@ public:
     {
         if (this != &rhs)
         {
-            sizes_and_strides_ = rhs.sizes_and_strides_;
-            owner_             = owner_t(rhs.view_);
-            view_              = owner_.view();
-            recompute_cpu_simd_alignment_state();
+            tensor copy(rhs);
+            *this = std::move(copy);
         }
         return *this;
     }
@@ -548,9 +571,9 @@ public:
         tensor       result(total, device(), device_index(), stream());
         if (total != 0)
         {
-            if (is_contiguous())
+            if (is_contiguous() && storage_offset(view_) == 0)
             {
-                allocator_t::copy(
+                allocator_t::copy_sync(
                     data(),
                     total,
                     result.data(),
@@ -581,13 +604,7 @@ public:
     {
         if (is_contiguous())
         {
-            return tensor(
-                data(),
-                view_.size(),
-                sizes_and_strides_,
-                device(),
-                view_.device_index(),
-                view_.stream());
+            return tensor(view_, sizes_and_strides_);
         }
         return clone();
     }
@@ -696,6 +713,7 @@ public:
     // -----------------------------------------------------------------------
 
     VECTORIZATION_FUNCTION_ATTRIBUTE value_t* data() const noexcept { return view_.data(); }
+    VECTORIZATION_FUNCTION_ATTRIBUTE view_t   memory_view() const noexcept { return view_; }
     VECTORIZATION_FUNCTION_ATTRIBUTE size_t   size() const noexcept { return numel_; }
     VECTORIZATION_FUNCTION_ATTRIBUTE bool     empty() const noexcept { return numel_ == 0; }
 
@@ -737,7 +755,7 @@ public:
             std::copy_n(ptr, static_cast<size_t>(count), data());
             return;
         }
-        allocator_t::copy(
+        allocator_t::copy_sync(
             ptr,
             count,
             data(),
@@ -793,13 +811,7 @@ public:
     {
         if (device() == device_enum::CPU && is_contiguous())
         {
-            return tensor(
-                data(),
-                view_.size(),
-                sizes_and_strides_,
-                device(),
-                view_.device_index(),
-                view_.stream());
+            return tensor(view_, sizes_and_strides_);
         }
         tensor result(size(), device_enum::CPU);
         copy_logical_to_host(result.data());
@@ -967,7 +979,7 @@ public:
         sizes_and_strides sas = sizes_and_strides_;
         std::swap(sas.size_at_unchecked(0), sas.size_at_unchecked(1));
         std::swap(sas.stride_at_unchecked(0), sas.stride_at_unchecked(1));
-        return tensor(data(), view_.size(), sas, device(), view_.device_index(), view_.stream());
+        return tensor(view_, std::move(sas));
     }
 
     VECTORIZATION_FUNCTION_ATTRIBUTE tensor permute(const dimensions_type& order) const
@@ -988,7 +1000,7 @@ public:
             sas.size_at_unchecked(i)   = sizes_and_strides_.size_at_unchecked(src);
             sas.stride_at_unchecked(i) = sizes_and_strides_.stride_at_unchecked(src);
         }
-        return tensor(data(), view_.size(), sas, device(), view_.device_index(), view_.stream());
+        return tensor(view_, std::move(sas));
     }
 
     VECTORIZATION_FUNCTION_ATTRIBUTE tensor view(const dimensions_type& new_dims) const
@@ -999,7 +1011,7 @@ public:
             compute_total(new_dims) == size(), "view: element count must not change");
         sizes_and_strides sas;
         make_contiguous_sas(sas, new_dims);
-        return tensor(data(), view_.size(), sas, device(), view_.device_index(), view_.stream());
+        return tensor(view_, std::move(sas));
     }
 
     VECTORIZATION_FUNCTION_ATTRIBUTE tensor reshape(const dimensions_type& new_dims) const
@@ -1010,7 +1022,7 @@ public:
             compute_total(new_dims) == size(), "reshape: element count must not change");
         sizes_and_strides sas;
         make_contiguous_sas(sas, new_dims);
-        return tensor(data(), view_.size(), sas, device(), view_.device_index(), view_.stream());
+        return tensor(view_, std::move(sas));
     }
 
     // Slice along one dimension. stop == -1 (the default) means "to end".
@@ -1044,9 +1056,11 @@ public:
         sas.stride_at_unchecked(dim) = sizes_and_strides_.stride_at_unchecked(dim) * step;
         const size_t offset          = static_cast<size_t>(start) *
                               static_cast<size_t>(sizes_and_strides_.stride_at_unchecked(dim));
-        value_t*     new_ptr      = data() + offset;
         const size_t storage_size = view_.size() > offset ? view_.size() - offset : 0;
-        return tensor(new_ptr, storage_size, sas, device(), view_.device_index(), view_.stream());
+        // Memory returns a default CPU view for an out-of-range subview. An
+        // empty tensor slice still belongs to the source allocation/device.
+        return tensor(storage_size == 0 ? view_ : view_.subview(offset, storage_size),
+            std::move(sas));
     }
 
 #if 0
@@ -1308,17 +1322,18 @@ public:
     }
 
 private:
+    // Memory's GPU copy API tracks allocation bases. Copy the prefix before an
+    // interior view too, then recreate that view over the independent owner.
+    static size_t storage_offset(view_t view) noexcept
+    {
+        return view.data() == nullptr ? 0 :
+            (reinterpret_cast<std::uintptr_t>(view.data()) -
+                reinterpret_cast<std::uintptr_t>(view.base())) / sizeof(value_t);
+    }
+
     // View constructor — non-owning tensor over an existing buffer with
     // explicit shape/strides. Used by t() / permute / view / reshape / slice.
-    tensor(
-        value_t*                  ptr,
-        size_t                    storage_size,
-        sizes_and_strides         sas,
-        device_enum               type         = device_enum::CPU,
-        int                       device_index = 0,
-        typename view_t::stream_t stream       = nullptr)
-        : sizes_and_strides_(std::move(sas)),
-          view_(view_t::borrow(ptr, storage_size, type, device_index, stream))
+    tensor(view_t view, sizes_and_strides sas) : sizes_and_strides_(std::move(sas)), view_(view)
     {
         recompute_cpu_simd_alignment_state();
     }
@@ -1498,25 +1513,29 @@ private:
             }
             return;
         }
-        if (is_contiguous())
+        const size_t offset = storage_offset(view_);
+        if (is_contiguous() && offset == 0)
         {
-            allocator_t::copy(
-                data(), total, dst, device(), device_enum::CPU, view_.device_index(), 0);
+            allocator_t::copy_sync(
+                view_.base(), total, dst, device(), device_enum::CPU,
+                view_.device_index(), 0,
+                static_cast<typename allocator_t::stream_t>(stream()));
             return;
         }
-        owner_t window(view_.size(), device_enum::CPU);
-        if (view_.size() != 0)
+        owner_t window(offset + view_.size(), device_enum::CPU);
+        if (window.size() != 0)
         {
-            allocator_t::copy(
-                data(),
-                view_.size(),
+            allocator_t::copy_sync(
+                view_.base(),
+                window.size(),
                 window.data(),
                 device(),
                 device_enum::CPU,
                 view_.device_index(),
-                0);
+                0,
+                static_cast<typename allocator_t::stream_t>(stream()));
         }
-        gather_logical(window.data(), dst);
+        gather_logical(window.data() + offset, dst);
     }
 
     void gather_logical(value_t const* storage, value_t* dst) const

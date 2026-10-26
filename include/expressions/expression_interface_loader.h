@@ -21,8 +21,8 @@
 
 #include <cstdint>
 
-#include <scalars/backend/simd.h>
-#include <scalars/common/scalar_helper_functions.h>
+#include <backend/simd.h>
+#include <math/scalar_helper_functions.h>
 #include "common/vectorization_macros.h"
 #include "common/vectorization_type_traits.h"
 

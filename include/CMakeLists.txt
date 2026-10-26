@@ -123,7 +123,7 @@ option(VECTORIZATION_ENABLE_LIBTORCH
 )
 
 # Logging is required — Vectorization log/check/throw macros go through the Logging
-# library. Logging is pure third-party (ThirdParty/CMakeLists.txt); added on demand.
+# library, which configures its own fmt dependency; added on demand.
 xsigma_add_logging()
 if (NOT TARGET Logging::Logging)
 message(
@@ -399,6 +399,9 @@ endif ()
 endfunction()
 
 compile_definition(VECTORIZATION_COMPILE_DEFINITIONS VECTORIZATION_ENABLE_SVML)
+if(DEFINED SCALARS_ENABLE_SLEEF)
+  set(VECTORIZATION_ENABLE_SLEEF "${SCALARS_ENABLE_SLEEF}")
+endif()
 compile_definition(VECTORIZATION_COMPILE_DEFINITIONS VECTORIZATION_ENABLE_SLEEF)
 compile_definition(VECTORIZATION_COMPILE_DEFINITIONS VECTORIZATION_ENABLE_ACCELERATE)
 compile_definition(VECTORIZATION_COMPILE_DEFINITIONS VECTORIZATION_ENABLE_MKL)
@@ -417,66 +420,6 @@ list(APPEND VECTORIZATION_COMPILE_DEFINITIONS
 set(VECTORIZATION_DEPENDENCY_COMPILE_DEFINITIONS "")
 list(APPEND VECTORIZATION_DEPENDENCY_COMPILE_DEFINITIONS ${VECTORIZATION_COMPILE_DEFINITIONS})
 set(VECTORIZATION_DEPENDENCY_LINK_DIRS "")
-
-# Build/link ThirdParty SLEEF for AArch64 NEON when requested.
-if(VECTORIZATION_ENABLE_SLEEF)
-  set(_tpdir "${XSIGMA_THIRDPARTY_DIR}")
-  set(_sleef_build_dir "${CMAKE_BINARY_DIR}/ThirdParty/sleef_build")
-  set(_sleef_install_prefix "${CMAKE_BINARY_DIR}/ThirdParty/install")
-
-  # SLEEF requires a non-default install prefix even for subdirectory builds.
-  if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-    set(CMAKE_INSTALL_PREFIX "${_sleef_install_prefix}"
-        CACHE PATH "Install path prefix, prepended onto install directories." FORCE
-    )
-    set(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT FALSE)
-endif ()
-
-  set(SLEEF_BUILD_TESTS OFF CACHE BOOL "Disable SLEEF tests" FORCE)
-  set(SLEEF_BUILD_DFT OFF CACHE BOOL "Disable SLEEF DFT library" FORCE)
-  set(SLEEF_BUILD_SCALAR_LIB OFF CACHE BOOL "Disable SLEEF scalar library" FORCE)
-  set(SLEEF_BUILD_QUAD OFF CACHE BOOL "Disable SLEEF quad library" FORCE)
-  set(SLEEF_BUILD_GNUABI_LIBS OFF CACHE BOOL "Disable SLEEF GNU ABI variants" FORCE)
-  set(SLEEF_DISABLE_OPENMP ON CACHE BOOL "Disable SLEEF OpenMP usage" FORCE)
-  set(SLEEF_BUILD_INLINE_HEADERS OFF CACHE BOOL "Disable SLEEF inline headers" FORCE)
-  set(SLEEF_ENABLE_TESTER OFF CACHE BOOL "Disable SLEEF tester binaries" FORCE)
-  set(SLEEF_ENABLE_TESTER4 OFF CACHE BOOL "Disable SLEEF tester4 binaries" FORCE)
-  # SLEEF 3.x gates OpenSSL behind SLEEF_DISABLE_SSL (the old SLEEF_ENABLE_SSL name no
-  # longer exists). Without this, a system OpenSSL makes src/common register
-  # test_psha/test_psha_capi in CTest even though SLEEF_BUILD_TESTS is OFF — those
-  # phantom third-party tests then fail as "Not Run" in XSigma's ctest run.
-  set(SLEEF_DISABLE_SSL ON CACHE BOOL "Disable SLEEF SSL-backed tester checks" FORCE)
-  set(SLEEF_SHOW_CONFIG OFF CACHE BOOL "Suppress SLEEF config output" FORCE)
-  set(SLEEF_BUILD_SHARED_LIBS OFF CACHE BOOL "Build SLEEF as static library" FORCE)
-
-  add_third_party_library(
-    sleef
-    LIBRARY_TYPE
-    STATIC
-    SOURCE_DIR
-    "${_tpdir}/sleef"
-    BINARY_DIR
-    "${_sleef_build_dir}"
-    XSIGMA_TARGETS
-    "Sleef::sleef=sleef"
-    INCLUDE_DIR
-    "${CMAKE_BINARY_DIR}/include"
-    EXCLUDE_FROM_ALL
-    AUTO_ADD_TO_DEPENDENCIES
-    OFF
-  )
-
-  list(APPEND VECTORIZATION_DEPENDENCY_INCLUDE_DIRS "${CMAKE_BINARY_DIR}/include")
-  list(APPEND VECTORIZATION_DEPENDENCY_INCLUDE_DIRS "${_sleef_build_dir}/include")
-if (TARGET sleef)
-    list(APPEND VECTORIZATION_DEPENDENCY_LIBS sleef)
-endif ()
-  list(APPEND VECTORIZATION_DEPENDENCY_LINK_DIRS "${_sleef_install_prefix}/lib")
-  # sleef.h uses SLEEF_STATIC_LIBS to suppress __declspec(dllimport) on Windows.
-  # The generated sleef-config.h defines it, but sleef.h does not include that header,
-  # so we propagate the definition explicitly to all consumers.
-  list(APPEND VECTORIZATION_DEPENDENCY_COMPILE_DEFINITIONS SLEEF_STATIC_LIBS)
-endif ()
 
 # Detect and configure Intel MKL VML (x86 only, statically linked) when requested.
 if(VECTORIZATION_ENABLE_MKL)
@@ -767,11 +710,12 @@ message(
 endif ()
 
 # ---- Metal GPU backend ------------------------------------------------------
-# Unlike CUDA/HIP, Metal has no CMake "language"/unified host+device compiler pass — MSL
-# kernel source (backend/gpu/metal/kernels.metal) is embedded as a string at configure
-# time and compiled at runtime via newLibraryWithSource:, so this block only needs
-# Objective-C++ (for the .mm dispatch/allocator glue) plus the Metal/Foundation
-# frameworks. See backend/gpu/metal/metal_dispatch.mm and
+# Unlike CUDA/HIP, Metal has no CMake "language"/unified host+device compiler pass. The
+# MSL kernel source and the .mm dispatch/allocator glue now live in ThirdParty/Scalars
+# (see Scalars's cmake/gpu_backend.cmake), which builds and links them into
+# Scalars::Scalars when SCALARS_GPU_BACKEND=metal; Vectorization only needs the
+# Objective-C++ language and the Metal/Foundation frameworks enabled for its own
+# Objective-C++ sources (e.g. Testing/Cxx's Metal tests). See
 # expressions/expressions_evaluator_metal.h for the rest of the design.
 if(VECTORIZATION_GPU_BACKEND STREQUAL "metal")
   enable_language(OBJCXX)
@@ -781,18 +725,6 @@ if(VECTORIZATION_GPU_BACKEND STREQUAL "metal")
   find_library(METAL_FRAMEWORK Metal REQUIRED)
   find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
 
-  # Embed kernels.metal as a C++ string literal (kMetalKernelSource) — see
-  # metal_kernels_source.h.in for the template this fills in.
-  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/backend/gpu/metal/kernels.metal" METAL_KERNEL_SOURCE)
-  configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/backend/gpu/metal/metal_kernels_source.h.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/backend/gpu/metal/metal_kernels_source.h" @ONLY
-  )
-
-  target_sources(Vectorization PRIVATE backend/gpu/metal/metal_dispatch.mm)
-  set_source_files_properties(
-    backend/gpu/metal/metal_dispatch.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc"
-  )
   target_link_libraries(Vectorization PUBLIC ${METAL_FRAMEWORK} ${FOUNDATION_FRAMEWORK})
 message(STATUS "Vectorization: Metal GPU backend enabled (framework: ${METAL_FRAMEWORK})")
 endif ()

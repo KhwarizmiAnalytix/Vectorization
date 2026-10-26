@@ -38,7 +38,7 @@
 // no erf/erfinv). Arithmetic, comparisons, if_else, min/max/pow/hypot/copysign, and
 // the metal_stdlib unaries all emit into one kernel. Scalar fill uses dispatch_fill.
 // kernels.metal still holds fill/reduce and the named kernels used by
-// metal_backend::dispatch() tests.
+// scalars::metal_backend::dispatch() tests.
 //
 // float-only: MSL has no double type on any Apple GPU. memory::allocator<double> already
 // throws at allocation time for device_enum::METAL (see Library/Memory/allocator.h), so
@@ -55,7 +55,7 @@
 #include <type_traits>
 
 #include "allocator.h"
-#include <scalars/backend/gpu/metal/metal_dispatch.h>
+#include <backend/gpu/metal/metal_dispatch.h>
 #include "common/data_view.h"
 #include "common/device.h"
 #include "expressions/expression_interface.h"
@@ -523,7 +523,7 @@ void run_metal(E const& expr, T& rhs)
             throw std::runtime_error("Metal fused kernel exceeds the device buffer limit");
         }
         std::string const src = metal_detail::metal_fuse_source(st);
-        metal_backend::dispatch_fused(
+        scalars::metal_backend::dispatch_fused(
             src, st.buffers, st.n_buffers, st.scalars, st.n_scalars, rhs.data(), n);
     }
     else
@@ -537,7 +537,7 @@ void run_metal(E const& expr, T& rhs)
 template <typename T>
 void fill_metal(T& rhs, float value)
 {
-    metal_backend::dispatch_fill(rhs.data(), value, rhs.size());
+    scalars::metal_backend::dispatch_fill(rhs.data(), value, rhs.size());
 }
 
 template <reduce_op Op>
@@ -545,15 +545,15 @@ float reduce_metal_buffer(void const* data, std::size_t n)
 {
     if constexpr (Op == reduce_op::sum)
     {
-        return metal_backend::reduce_sum(data, n);
+        return scalars::metal_backend::reduce_sum(data, n);
     }
     else if constexpr (Op == reduce_op::min)
     {
-        return metal_backend::reduce_min(data, n);
+        return scalars::metal_backend::reduce_min(data, n);
     }
     else
     {
-        return metal_backend::reduce_max(data, n);
+        return scalars::metal_backend::reduce_max(data, n);
     }
 }
 
@@ -589,7 +589,7 @@ float reduce_metal(E const& expr, std::size_t n)
             }
             std::string const src = metal_detail::metal_fuse_source(st);
             float* tmp = metal_detail::metal_alloc_t::allocate(n, memory::device_enum::METAL);
-            metal_backend::dispatch_fused(
+            scalars::metal_backend::dispatch_fused(
                 src, st.buffers, st.n_buffers, st.scalars, st.n_scalars, tmp, n);
             float const result = reduce_metal_buffer<Op>(tmp, n);
             metal_detail::metal_alloc_t::free(tmp, memory::device_enum::METAL);

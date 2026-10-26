@@ -71,7 +71,7 @@ VECTORIZATIONTEST(TensorGpuProfiler, metal_z_plus_exp_sin)
 
     profiler::session_options opts;
     opts.gpu_tracing = true;
-    opts.activities  = {profiler::activity::cpu, profiler::activity::metal};
+    opts.activities  = {profiler::activity::cpu};
     profiler::session session(opts);
     if (!session.start())
     {

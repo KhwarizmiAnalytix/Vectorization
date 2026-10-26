@@ -29,17 +29,17 @@ load("@bazel_skylib//:workspace.bzl", "bazel_skylib_workspace")
 bazel_skylib_workspace()
 
 # =============================================================================
-# fmt / mimalloc — vendored nested submodules (ThirdParty/)
+# Transitive dependencies owned by Logging and Memory
 # =============================================================================
 new_local_repository(
     name = "fmt",
-    path = "ThirdParty/fmt",
+    path = "ThirdParty/Logging/ThirdParty/fmt",
     build_file = "//ThirdParty:fmt.BUILD",
 )
 
 new_local_repository(
     name = "mimalloc",
-    path = "ThirdParty/mimalloc",
+    path = "ThirdParty/Memory/ThirdParty/mimalloc",
     build_file = "//ThirdParty:mimalloc.BUILD",
 )
 
@@ -112,4 +112,11 @@ local_memory_repository(
     name = "memory",
     path = "ThirdParty/Memory",
     build_file = "//ThirdParty:memory.BUILD",
+)
+
+# Scalars owns scalar types and the CPU/GPU SIMD backends.
+new_local_repository(
+    name = "scalars",
+    path = "ThirdParty/Scalars",
+    build_file = "//ThirdParty:scalars.BUILD",
 )

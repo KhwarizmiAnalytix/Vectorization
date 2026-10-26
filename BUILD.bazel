@@ -2,7 +2,6 @@
 # live under include/, which is also the include root (e.g. "terminals/tensor.h",
 # "backend/simd.h"). CPU SIMD backend and GPU backend are independent --define=
 # flags -- see bazel/BUILD.bazel and docs/vectorization_backends.md.
-load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("@rules_pkg//pkg:install.bzl", "pkg_install")
 load("@rules_pkg//pkg:mappings.bzl", "pkg_files", "strip_prefix")
 load("@rules_pkg//pkg:pkg.bzl", "pkg_tar")
@@ -23,18 +22,7 @@ filegroup(
             "include/common/*.h",
             "include/expressions/*.h",
             "include/terminals/*.h",
-            "include/backend/*.h",
-            "include/backend/cpu/*.h",
-            "include/backend/cpu/**/*.h",
-            "include/backend/gpu/*.h",
-            "include/backend/gpu/float/*.h",
-            "include/backend/gpu/double/*.h",
-            "include/backend/gpu/metal/*.h",
         ],
-        # MKL/SVML VML headers are CMake-only in this repo's Bazel build (see
-        # Scripts/setup_bazel.py's --help); mkl_vml.h in particular expects the
-        # MKL SDK headers, which this workspace does not vendor or find_package().
-        exclude = ["include/backend/cpu/mkl/**"],
         allow_empty = True,
     ),
 )
@@ -48,48 +36,6 @@ filegroup(
         ],
         allow_empty = True,
     ),
-)
-
-# --- Metal GPU backend: embed kernels.metal as a C++ string literal --------
-# Bazel equivalent of CMake's `file(READ kernels.metal ...); configure_file(
-# metal_kernels_source.h.in metal_kernels_source.h @ONLY)`.
-genrule(
-    name = "metal_kernels_source_gen",
-    srcs = [
-        "include/backend/gpu/metal/kernels.metal",
-        "include/backend/gpu/metal/metal_kernels_source.h.in",
-    ],
-    outs = ["include/backend/gpu/metal/metal_kernels_source.h"],
-    cmd = "python3 $(location //bazel:gen_metal_kernels_source.py) $(location include/backend/gpu/metal/kernels.metal) $(location include/backend/gpu/metal/metal_kernels_source.h.in) $@",
-    tools = ["//bazel:gen_metal_kernels_source.py"],
-)
-
-# cc_library srcs don't accept .mm without rules_apple. Copy to a .cc suffix
-# and compile as Objective-C++ in a dedicated target so ARC copts don't leak
-# onto the plain C++ TUs (same split as @memory//:memory_metal_objcxx).
-copy_file(
-    name = "metal_dispatch_objcxx",
-    src = "include/backend/gpu/metal/metal_dispatch.mm",
-    out = "include/backend/gpu/metal/metal_dispatch_mm.cc",
-)
-
-cc_library(
-    name = "vectorization_metal_objcxx",
-    srcs = select({
-        "//bazel:enable_metal": [":metal_dispatch_objcxx"],
-        "//conditions:default": [],
-    }),
-    hdrs = select({
-        "//bazel:enable_metal": [":metal_kernels_source_gen"],
-        "//conditions:default": [],
-    }),
-    copts = vectorization_copts() + select({
-        "//bazel:enable_metal": ["-x", "objective-c++", "-fobjc-arc"],
-        "//conditions:default": [],
-    }),
-    defines = vectorization_defines(),
-    includes = ["include"],
-    visibility = ["//visibility:private"],
 )
 
 cc_library(
@@ -106,11 +52,7 @@ cc_library(
         "//conditions:default": ["VECTORIZATION_STATIC_DEFINE"],
     }),
     includes = ["include"],
-    linkopts = vectorization_linkopts() + select({
-        # Mirrors include/CMakeLists.txt's find_library(Metal)/find_library(Foundation).
-        "//bazel:enable_metal": ["-framework", "Metal", "-framework", "Foundation"],
-        "//conditions:default": [],
-    }),
+    linkopts = vectorization_linkopts(),
     linkstatic = select({
         "//bazel:shared_libs": False,
         "//conditions:default": True,
@@ -118,12 +60,10 @@ cc_library(
     deps = [
         "@logging//:Logging",
         "@memory//:Memory",
+        "@scalars//:Scalars",
     ] + select({
         "//bazel:disable_profiler": [],
         "//conditions:default": ["@profiler//:Profiler"],
-    }) + select({
-        "//bazel:enable_metal": [":vectorization_metal_objcxx"],
-        "//conditions:default": [],
     }) + select({
         # Mirrors Memory's own bazel/BUILD.bazel (@local_config_cuda -- not yet
         # defined by this workspace or Memory's; see Scripts/setup_bazel.py's

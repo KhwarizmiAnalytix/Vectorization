@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Substitutes @METAL_KERNEL_SOURCE@ in metal_kernels_source.h.in with the raw
+"""Substitutes @SCALARS_METAL_KERNEL_SOURCE@ in metal_kernels_source.h.in with the raw
 contents of kernels.metal — the Bazel equivalent of CMake's
 `configure_file(... metal_kernels_source.h.in metal_kernels_source.h @ONLY)`.
 
@@ -22,7 +22,7 @@ def main() -> int:
         template = f.read()
 
     with open(out_path, "w", encoding="utf-8") as f:
-        f.write(template.replace("@METAL_KERNEL_SOURCE@", kernel_source))
+        f.write(template.replace("@SCALARS_METAL_KERNEL_SOURCE@", kernel_source))
 
     return 0
 

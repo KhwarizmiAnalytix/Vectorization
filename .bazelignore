@@ -7,7 +7,5 @@ ThirdParty/Logging
 ThirdParty/Memory
 ThirdParty/Profiler
 ThirdParty/benchmark
-ThirdParty/fmt
 ThirdParty/googletest
-ThirdParty/mimalloc
-ThirdParty/sleef
+ThirdParty/Scalars

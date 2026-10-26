@@ -24,7 +24,7 @@
 #include <type_traits>
 #include <utility>
 
-#include <scalars/backend/simd.h>
+#include <backend/simd.h>
 
 namespace memory
 {

@@ -25,7 +25,8 @@
 #include <limits>
 #include <type_traits>
 
-#include "common/scalar_helper_functions.h"
+#include <math/scalar_helper_functions.h>
+
 #include "common/vectorization_macros.h"
 #include "common/vectorization_type_traits.h"
 

@@ -123,11 +123,11 @@ constexpr gpu_error_t kGpuSuccess = hipSuccess;
 // becoming Objective-C++ itself, unlike TestTensorGpu.cpp's device-count query (which
 // needed a separate .mm shim because that file only wants device_enum, not the rest of
 // the Metal backend surface).
-#include <scalars/backend/gpu/metal/metal_dispatch.h>
+#include <backend/gpu/metal/metal_dispatch.h>
 using gpu_error_t                 = int;
 constexpr gpu_error_t kGpuSuccess = 0;
 #define gpuGetDeviceCount(pn) \
-    (*(pn) = vectorization::metal_backend::device_available() ? 1 : 0, kGpuSuccess)
+    (*(pn) = scalars::metal_backend::device_available() ? 1 : 0, kGpuSuccess)
 // Every metal_backend::dispatch()/dispatch_fill() call already blocks on
 // waitUntilCompleted internally (see metal_dispatch.mm) — no separate device-sync API.
 #define gpuDeviceSynchronize() ((void)0)

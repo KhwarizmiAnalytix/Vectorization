@@ -13,8 +13,10 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-Dependencies are pinned Git submodules in `ThirdParty`: Memory, Logging, Profiler, fmt, mimalloc, sleef, googletest, benchmark.
-Logging and Profiler use product-only CMake overlays, matching XSigma's integration.
+Dependencies are pinned Git submodules in `ThirdParty`: Memory, Logging, Scalars,
+googletest, and benchmark. Logging owns fmt, Memory owns mimalloc, and Scalars
+owns SLEEF; initialize their nested submodules with `--recursive`.
+Profiler is optional and resolved through `find_package(Profiler)`.
 Existing dependency targets are reused when embedded. Tests remain owned by this repository;
 set `VECTORIZATION_ENABLE_TESTING=OFF` when consuming only the library.
 

@@ -2,7 +2,7 @@
 # mimalloc Library BUILD Configuration
 # =============================================================================
 # Microsoft's high-performance memory allocator
-# Equivalent to ThirdParty/mimalloc
+# Sources owned by ThirdParty/Memory/ThirdParty/mimalloc
 # =============================================================================
 
 package(default_visibility = ["//visibility:public"])

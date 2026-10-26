@@ -4,15 +4,6 @@
 [submodule "ThirdParty/Logging"]
   path = ThirdParty/Logging
   url = https://github.com/KhwarizmiAnalytix/Logging.git
-[submodule "ThirdParty/fmt"]
-  path = ThirdParty/fmt
-  url = https://github.com/fmtlib/fmt.git
-[submodule "ThirdParty/mimalloc"]
-  path = ThirdParty/mimalloc
-  url = https://github.com/microsoft/mimalloc.git
-[submodule "ThirdParty/sleef"]
-  path = ThirdParty/sleef
-  url = https://github.com/shibatch/sleef.git
 [submodule "ThirdParty/googletest"]
   path = ThirdParty/googletest
   url = https://github.com/google/googletest.git
@@ -22,6 +13,3 @@
 [submodule "ThirdParty/Scalars"]
 	path = ThirdParty/Scalars
 	url = https://github.com/KhwarizmiAnalytix/Scalars.git
-[submodule "ThirdParty/LinearAlgebra"]
-	path = ThirdParty/LinearAlgebra
-	url = https://github.com/KhwarizmiAnalytix/LinearAlgebra.git

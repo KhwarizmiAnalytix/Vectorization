@@ -56,7 +56,7 @@ float* upload(const std::vector<float>& host)
 
 VECTORIZATIONTEST(MetalDispatch, DeviceAvailable)
 {
-    EXPECT_TRUE(vectorization::metal_backend::device_available());
+    EXPECT_TRUE(scalars::metal_backend::device_available());
     END_TEST();
 }
 
@@ -65,7 +65,7 @@ VECTORIZATIONTEST(MetalDispatch, Fill)
     constexpr size_t n   = 512;
     float*           out = alloc_t::allocate(n, memory::device_enum::METAL);
 
-    vectorization::metal_backend::dispatch_fill(out, 3.5f, n);
+    scalars::metal_backend::dispatch_fill(out, 3.5f, n);
 
     auto host = download(out, n);
     for (float v : host)
@@ -90,7 +90,7 @@ VECTORIZATIONTEST(MetalDispatch, Add)
     float* doubt = alloc_t::allocate(n, memory::device_enum::METAL);
 
     const void* ins[] = {da, db};
-    vectorization::metal_backend::dispatch("add", ins, 2, doubt, n);
+    scalars::metal_backend::dispatch("add", ins, 2, doubt, n);
 
     auto host = download(doubt, n);
     for (size_t i = 0; i < n; ++i)
@@ -113,7 +113,7 @@ VECTORIZATIONTEST(MetalDispatch, Sin)
     float* doubt = alloc_t::allocate(n, memory::device_enum::METAL);
 
     const void* ins[] = {da};
-    vectorization::metal_backend::dispatch("sin", ins, 1, doubt, n);
+    scalars::metal_backend::dispatch("sin", ins, 1, doubt, n);
 
     auto host = download(doubt, n);
     for (size_t i = 0; i < n; ++i)
@@ -141,7 +141,7 @@ VECTORIZATIONTEST(MetalDispatch, Fma)
     float* doubt = alloc_t::allocate(n, memory::device_enum::METAL);
 
     const void* ins[] = {da, db, dc};
-    vectorization::metal_backend::dispatch("fma", ins, 3, doubt, n);
+    scalars::metal_backend::dispatch("fma", ins, 3, doubt, n);
 
     auto host = download(doubt, n);
     for (size_t i = 0; i < n; ++i)
@@ -166,7 +166,7 @@ VECTORIZATIONTEST(MetalDispatch, ReduceSum)
     }
 
     float* da  = upload(a);
-    float  got = vectorization::metal_backend::reduce_sum(da, n);
+    float  got = scalars::metal_backend::reduce_sum(da, n);
     EXPECT_NEAR(got, expected, 1e-2f);
 
     alloc_t::free(da, memory::device_enum::METAL);
@@ -185,7 +185,7 @@ VECTORIZATIONTEST(MetalDispatch, ReduceSumNonPowerOfTwo)
     }
 
     float* da  = upload(a);
-    float  got = vectorization::metal_backend::reduce_sum(da, n);
+    float  got = scalars::metal_backend::reduce_sum(da, n);
     EXPECT_NEAR(got, expected, 1e-3f);
 
     alloc_t::free(da, memory::device_enum::METAL);
@@ -197,7 +197,7 @@ VECTORIZATIONTEST(MetalDispatch, ReduceSumLarge)
     constexpr size_t   n = 10000;
     std::vector<float> a(n, 1.0f);
     float*             da  = upload(a);
-    float              got = vectorization::metal_backend::reduce_sum(da, n);
+    float              got = scalars::metal_backend::reduce_sum(da, n);
     EXPECT_NEAR(got, static_cast<float>(n), 1e-2f);
     alloc_t::free(da, memory::device_enum::METAL);
     END_TEST();
@@ -210,8 +210,8 @@ VECTORIZATIONTEST(MetalDispatch, ReduceMinMax)
     for (size_t i = 0; i < n; ++i)
         a[i] = static_cast<float>(i) * 0.01f - 10.0f;
     float* da   = upload(a);
-    float  gmin = vectorization::metal_backend::reduce_min(da, n);
-    float  gmax = vectorization::metal_backend::reduce_max(da, n);
+    float  gmin = scalars::metal_backend::reduce_min(da, n);
+    float  gmax = scalars::metal_backend::reduce_max(da, n);
     EXPECT_NEAR(gmin, a.front(), 1e-5f);
     EXPECT_NEAR(gmax, a.back(), 1e-5f);
     alloc_t::free(da, memory::device_enum::METAL);
@@ -220,11 +220,11 @@ VECTORIZATIONTEST(MetalDispatch, ReduceMinMax)
 
 VECTORIZATIONTEST(MetalDispatch, ReduceEmpty)
 {
-    EXPECT_EQ(vectorization::metal_backend::reduce_sum(nullptr, 0), 0.0f);
+    EXPECT_EQ(scalars::metal_backend::reduce_sum(nullptr, 0), 0.0f);
     EXPECT_EQ(
-        vectorization::metal_backend::reduce_min(nullptr, 0), std::numeric_limits<float>::max());
+        scalars::metal_backend::reduce_min(nullptr, 0), std::numeric_limits<float>::max());
     EXPECT_EQ(
-        vectorization::metal_backend::reduce_max(nullptr, 0), -std::numeric_limits<float>::max());
+        scalars::metal_backend::reduce_max(nullptr, 0), -std::numeric_limits<float>::max());
     END_TEST();
 }
 
@@ -257,7 +257,7 @@ VECTORIZATIONTEST(MetalDispatch, FusedYPlusAPlusFiveD)
         "{\n  if (tid < n)\n    out[tid] = ((in0[tid]+in1[tid])+(c0*in2[tid]));\n}\n";
     const void* ins[] = {dy, da, dd};
     float       five  = 5.0f;
-    vectorization::metal_backend::dispatch_fused(src, ins, 3, &five, 1, dx, n);
+    scalars::metal_backend::dispatch_fused(src, ins, 3, &five, 1, dx, n);
 
     auto got = download(dx, n);
     for (size_t i = 0; i < n; ++i)

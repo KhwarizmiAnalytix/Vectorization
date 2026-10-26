@@ -7,4 +7,5 @@ exports_files([
     "magic_enum.BUILD",
     "profiler.BUILD",
     "memory.BUILD",
+    "scalars.BUILD",
 ])

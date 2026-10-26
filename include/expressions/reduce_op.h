@@ -19,7 +19,7 @@
 
 #pragma once
 
-#include <cfloat>
+#include <limits>
 #include <type_traits>
 
 #include "common/vectorization_macros.h"
@@ -38,20 +38,12 @@ enum class reduce_op : int
     max = 2
 };
 
-// MSVC+nvcc treats std::numeric_limits<T>::max() as a host-only function, so
-// a __host__ __device__ identity must use the C macros (literal constants).
 template <typename T>
 VECTORIZATION_FUNCTION_ATTRIBUTE T reduce_finite_max()
 {
-    if constexpr (std::is_same_v<T, float>)
-    {
-        return FLT_MAX;
-    }
-    else
-    {
-        static_assert(std::is_same_v<T, double>, "reduce_identity supports float and double");
-        return DBL_MAX;
-    }
+    static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>,
+                  "reduce_identity supports float and double");
+    return std::numeric_limits<T>::max();
 }
 
 template <typename T, reduce_op Op>

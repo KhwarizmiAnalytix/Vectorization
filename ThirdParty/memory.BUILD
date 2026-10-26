@@ -1,6 +1,6 @@
 # Standalone Memory library (KhwarizmiAnalytix/Memory). Public headers live under
-# memory/, which is also the include root (e.g. "memory/allocator.h",
-# "memory/common/data_ptr.h") — the submodule was restructured from a flat
+# memory/, which is also the include root (e.g. "include/allocator.h",
+# "include/common/data_ptr.h") — the submodule was restructured from a flat
 # include/ layout to this memory/ layout.
 load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("//bazel:memory.bzl", "memory_copts", "memory_defines", "memory_linkopts")
@@ -11,8 +11,8 @@ filegroup(
     name = "memory_hdrs",
     srcs = glob(
         [
-            "memory/*.h",
-            "memory/**/*.h",
+            "include/*.h",
+            "include/**/*.h",
         ],
         allow_empty = True,
     ),
@@ -22,10 +22,10 @@ filegroup(
     name = "memory_srcs",
     srcs = glob(
         [
-            "memory/*.cpp",
-            "memory/common/*.cpp",
-            "memory/helper/*.cpp",
-            "memory/profiler/*.cpp",
+            "src/*.cpp",
+            "src/common/*.cpp",
+            "src/helper/*.cpp",
+            "src/profiler/*.cpp",
         ],
         allow_empty = True,
     ),
@@ -39,14 +39,14 @@ filegroup(
 # set_source_files_properties(${memory_objcxx_sources} PROPERTIES COMPILE_OPTIONS "-fobjc-arc").
 copy_file(
     name = "metal_buffer_allocator_objcxx",
-    src = "memory/gpu/metal/metal_buffer_allocator.mm",
-    out = "memory/gpu/metal/metal_buffer_allocator_mm.cc",
+    src = "src/gpu/metal/metal_buffer_allocator.mm",
+    out = "include/gpu/metal/metal_buffer_allocator_mm.cc",
 )
 
 copy_file(
     name = "metal_caching_allocator_objcxx",
-    src = "memory/gpu/metal/metal_caching_allocator.mm",
-    out = "memory/gpu/metal/metal_caching_allocator_mm.cc",
+    src = "src/gpu/metal/metal_caching_allocator.mm",
+    out = "include/gpu/metal/metal_caching_allocator_mm.cc",
 )
 
 cc_library(
@@ -59,7 +59,7 @@ cc_library(
         "//conditions:default": [],
     }),
     hdrs = [":memory_hdrs"] + select({
-        "//bazel:enable_metal": glob(["memory/gpu/*.h", "memory/gpu/metal/*.h"], allow_empty = True),
+        "//bazel:enable_metal": glob(["include/gpu/*.h", "include/gpu/metal/*.h"], allow_empty = True),
         "//conditions:default": [],
     }),
     copts = memory_copts() + select({
@@ -70,7 +70,7 @@ cc_library(
         "//bazel:shared_libs": ["MEMORY_SHARED_DEFINE", "MEMORY_BUILDING_DLL"],
         "//conditions:default": ["MEMORY_STATIC_DEFINE"],
     }),
-    includes = ["memory"],
+    includes = ["include"],
     deps = ["@logging//:Logging"] + select({
         "//bazel:disable_profiler": [],
         "//conditions:default": ["@profiler//:Profiler"],
@@ -83,20 +83,20 @@ cc_library(
     srcs = [
         ":memory_srcs",
     ] + select({
-        "//bazel:enable_cuda": glob(["memory/gpu/*.cpp"], allow_empty = True),
-        "//bazel:enable_hip": glob(["memory/gpu/*.cpp"], allow_empty = True),
+        "//bazel:enable_cuda": glob(["src/gpu/*.cpp"], allow_empty = True),
+        "//bazel:enable_hip": glob(["src/gpu/*.cpp"], allow_empty = True),
         # gpu/*.cpp (cuda_caching_allocator.cpp) is included for Metal too, matching CMake
         # (CMakeLists.txt only strips it for GPU backend "none") -- the file's own
         # #if MEMORY_HAS_CUDA || MEMORY_HAS_HIP guard makes it compile to an empty TU here.
-        "//bazel:enable_metal": glob(["memory/gpu/*.cpp"], allow_empty = True),
+        "//bazel:enable_metal": glob(["src/gpu/*.cpp"], allow_empty = True),
         "//conditions:default": [],
     }),
     hdrs = [
         ":memory_hdrs",
     ] + select({
-        "//bazel:enable_cuda": glob(["memory/gpu/*.h"], allow_empty = True),
-        "//bazel:enable_hip": glob(["memory/gpu/*.h"], allow_empty = True),
-        "//bazel:enable_metal": glob(["memory/gpu/*.h", "memory/gpu/metal/*.h"], allow_empty = True),
+        "//bazel:enable_cuda": glob(["include/gpu/*.h"], allow_empty = True),
+        "//bazel:enable_hip": glob(["include/gpu/*.h"], allow_empty = True),
+        "//bazel:enable_metal": glob(["include/gpu/*.h", "include/gpu/metal/*.h"], allow_empty = True),
         "//conditions:default": [],
     }),
     copts = memory_copts(),
@@ -104,7 +104,7 @@ cc_library(
         "//bazel:shared_libs": ["MEMORY_SHARED_DEFINE", "MEMORY_BUILDING_DLL"],
         "//conditions:default": ["MEMORY_STATIC_DEFINE"],
     }),
-    includes = ["memory"],
+    includes = ["include"],
     linkopts = memory_linkopts() + select({
         "@platforms//os:windows": [],
         "@platforms//os:macos": [],

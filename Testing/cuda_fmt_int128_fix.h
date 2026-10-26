@@ -25,7 +25,7 @@
 // even for translation units, like this one, that only ever format on the
 // host. fmt::detail::uint128 does not define operator~, so
 // fmt::detail::format_hexfloat's `f.f &= ~(inc - 1);` (carrier_uint for
-// `long double`, ThirdParty/fmt/include/fmt/format.h) fails to compile under
+// `long double`, Logging's fmt/include/fmt/format.h) fails to compile under
 // nvcc with "no operator '~' matches these operands", even though the code
 // path never executes on device.
 //

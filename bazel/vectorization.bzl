@@ -116,10 +116,10 @@ def vectorization_arch_copts():
     # bazel/BUILD.bazel. Neon/SVE have no Windows target here, so they need no
     # such override.
     return select({
-        "//bazel:cpu_sse": ["-msse", "-msse2"],
-        "//bazel:cpu_avx": ["-mavx", "-mf16c", "-mfma"],
-        "//bazel:cpu_avx2": ["-mavx2", "-mf16c", "-mfma"],
-        "//bazel:cpu_avx512": [
+        Label("//bazel:cpu_sse"): ["-msse", "-msse2"],
+        Label("//bazel:cpu_avx"): ["-mavx", "-mf16c", "-mfma"],
+        Label("//bazel:cpu_avx2"): ["-mavx2", "-mf16c", "-mfma"],
+        Label("//bazel:cpu_avx512"): [
             "-mavx512f",
             "-mavx512dq",
             "-mavx512vl",
@@ -128,11 +128,11 @@ def vectorization_arch_copts():
             "-mf16c",
             "-mfma",
         ],
-        "//bazel:cpu_neon": ["-march=armv8-a"],
-        "//bazel:cpu_sve": ["-march=armv8-a+sve", "-msve-vector-bits=128"],
-        "//bazel:cpu_sse_windows": ["/arch:SSE2"],
-        "//bazel:cpu_avx_windows": ["/arch:AVX", "/D__F16C__"],
-        "//bazel:cpu_avx2_windows": ["/arch:AVX2", "/D__F16C__"],
-        "//bazel:cpu_avx512_windows": ["/arch:AVX512", "/D__F16C__"],
+        Label("//bazel:cpu_neon"): ["-march=armv8-a"],
+        Label("//bazel:cpu_sve"): ["-march=armv8-a+sve", "-msve-vector-bits=128"],
+        Label("//bazel:cpu_sse_windows"): ["/arch:SSE2"],
+        Label("//bazel:cpu_avx_windows"): ["/arch:AVX", "/D__F16C__"],
+        Label("//bazel:cpu_avx2_windows"): ["/arch:AVX2", "/D__F16C__"],
+        Label("//bazel:cpu_avx512_windows"): ["/arch:AVX512", "/D__F16C__"],
         "//conditions:default": [],
     })

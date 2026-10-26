@@ -20,7 +20,7 @@
 #include "terminals/tensor.h"
 
 #if VECTORIZATION_HAS_MKL
-#include <scalars/backend/cpu/mkl/mkl_vml.h>
+#include <backend/cpu/mkl/mkl_vml.h>
 #endif
 
 namespace vectorization

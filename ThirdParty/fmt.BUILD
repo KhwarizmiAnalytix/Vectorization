@@ -2,7 +2,7 @@
 # fmt Library BUILD Configuration
 # =============================================================================
 # Modern formatting library (header-only mode)
-# Equivalent to ThirdParty/fmt
+# Sources owned by ThirdParty/Logging/ThirdParty/fmt
 # =============================================================================
 
 package(default_visibility = ["//visibility:public"])

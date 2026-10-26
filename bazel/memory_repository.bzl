@@ -3,8 +3,8 @@
 The vendored repo ships its own BUILD.bazel for standalone use (allocator,
 data_ptr, data_view, device_enum). This rule copies first-party Memory
 sources, drops nested BUILD/WORKSPACE files and Memory's own vendored
-ThirdParty/ (this workspace supplies fmt/mimalloc/loguru/magic_enum/
-googletest/benchmark itself, at the same submodule paths Memory uses), and
+ThirdParty/ (WORKSPACE.bazel resolves transitive dependencies from their
+owning Logging/Memory checkouts), and
 writes //ThirdParty:memory.BUILD at the root so @vectorization//bazel flags
 apply.
 

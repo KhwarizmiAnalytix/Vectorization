@@ -2,9 +2,7 @@
 # Do not edit files inside that submodule — this overlay lives in this repo, mirroring
 # the same technique XSigma itself uses for its own ThirdParty/logging.BUILD.
 # This repo depends on @logging//:Logging only. Tracks the submodule's own
-# BUILD.bazel: include root is the repo root, public headers live under logging/
-# (e.g. "logging/logging.h", "logging/logger/logger.h") — the submodule was
-# restructured from a flat include/ layout to this logging/ layout.
+# BUILD.bazel: public headers live under include/, sources under src/.
 load("//bazel:logging.bzl", "logging_copts", "logging_defines", "logging_linkopts")
 
 package(default_visibility = ["//visibility:public"])
@@ -13,10 +11,11 @@ filegroup(
     name = "logging_hdrs",
     srcs = glob(
         [
-            "logging/*.h",
-            "logging/common/*.h",
-            "logging/util/*.h",
-            "logging/logger/*.h",
+            "include/*.h",
+            "include/common/*.h",
+            "include/util/*.h",
+            "include/logger/*.h",
+            "include/backend/*.h",
         ],
         allow_empty = True,
     ),
@@ -26,7 +25,8 @@ filegroup(
     name = "logging_srcs",
     srcs = glob(
         [
-            "logging/util/*.cpp",
+            "src/*.cpp",
+            "src/backend/*.cpp",
         ],
         allow_empty = True,
     ),
@@ -36,8 +36,6 @@ cc_library(
     name = "logging_lib",
     srcs = [
         ":logging_srcs",
-        "logging/logger/back_trace.cpp",
-        "logging/logger/logger.cpp",
     ],
     hdrs = [":logging_hdrs"],
     copts = logging_copts(),
@@ -49,15 +47,7 @@ cc_library(
         "//bazel:shared_libs": ["LOGGING_BUILDING_DLL"],
         "//conditions:default": [],
     }),
-    # Logging's own headers include each other as "logging/util/..." from the
-    # repo root, and Memory includes them as <logging/util/...>, <logging/logger/logger.h>
-    # (angle-bracket form, which needs a -isystem/-I path, not just the -iquote path
-    # that "includes" would add without "."). "logging/logger" is also needed:
-    # sources include bare "logger_verbosity_enum.h".
-    includes = [
-        ".",
-        "logging/logger",
-    ],
+    includes = ["include/logger"],
     linkopts = logging_linkopts() + select({
         "@platforms//os:windows": ["dbghelp.lib"],
         "//conditions:default": [],

@@ -1,0 +1,95 @@
+name: BuildCache
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: buildcache-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  buildcache:
+    name: BuildCache / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+
+      - name: Install CMake and Ninja
+        run: python -m pip install cmake==4.1.2 ninja
+
+      - name: Set cache directory
+        shell: bash
+        run: echo "BUILDCACHE_DIR=$RUNNER_TEMP/buildcache-data" >> "$GITHUB_ENV"
+
+      - name: Build pinned BuildCache
+        shell: bash
+        run: python .github/scripts/install_buildcache.py --prefix "$RUNNER_TEMP/buildcache-tool"
+
+      - name: Check MSVC debug flag regression
+        run: python -m unittest discover -s Testing/CMake -p test_platform.py -v
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DVECTORIZATION_ENABLE_CACHE=ON
+          -DVECTORIZATION_CACHE_BACKEND=buildcache
+          -DVECTORIZATION_ENABLE_TESTING=ON
+          -DVECTORIZATION_ENABLE_BENCHMARK=OFF
+          -DVECTORIZATION_CPU_BACKEND=no
+          -DLINALG_CPU_BACKEND=no
+          -DVECTORIZATION_GPU_BACKEND=none
+
+      - name: Verify BuildCache is the compiler launcher
+        shell: bash
+        run: |
+          cmake --build build --target Vectorization -- -t commands > build/compile-commands.txt
+          if ! grep -Ei 'buildcache(\.exe)?"? .* (-c |/c |/Fo)' build/compile-commands.txt; then
+            echo "::error::BuildCache is missing from the generated compiler commands"
+            exit 1
+          fi
+
+      - name: Build
+        run: cmake --build build --parallel 4
+
+      - name: Rebuild from cache
+        run: cmake --build build --clean-first --parallel 4
+
+      - name: Verify cache hits
+        shell: bash
+        run: |
+          buildcache --show-stats > build/cache-stats.txt
+          cat build/cache-stats.txt
+          if ! grep -E '(Direct|Local|Remote) hits: +[1-9]' build/cache-stats.txt; then
+            echo "::error::The clean rebuild did not produce any BuildCache hits"
+            exit 1
+          fi
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure --no-tests=error --timeout 300
+
+      - name: Report cache statistics
+        if: always()
+        run: buildcache --show-stats

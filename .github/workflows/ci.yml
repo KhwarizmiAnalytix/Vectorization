@@ -388,8 +388,7 @@ jobs:
   # Compiler cache + Icecream, cross-platform: toolchain-axes above only covers
   # ccache on Linux. This job exercises VECTORIZATION_ENABLE_CACHE (ccache,
   # sccache) and VECTORIZATION_ENABLE_ICECC on Linux, macOS, and Windows.
-  # buildcache is intentionally not covered -- it needs a separate pinned
-  # installer, out of scope here. Icecream has no Windows port, so icecc is
+  # BuildCache runs in buildcache.yml. Icecream has no Windows port, so icecc is
   # Linux/macOS only.
   # ---------------------------------------------------------------------------
   cache-icecc:

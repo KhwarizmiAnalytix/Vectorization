@@ -596,9 +596,9 @@ VECTORIZATION_NOINLINE void test_tensor_views_slices()
         }
     }
 
-    // Assigning an expression into a non-contiguous destination must fail loudly
-    // rather than silently write through the raw pointer as if it were packed
-    // (expressions_evaluator::run/fill hard-check the destination).
+    // A non-contiguous destination is written through its strides by the
+    // planner; the result shape must equal the destination's shape. fill()
+    // still requires a contiguous destination.
     {
         tensor_t m(2u, 3u);
         for (size_t i = 0; i < 2; ++i)
@@ -611,17 +611,27 @@ VECTORIZATION_NOINLINE void test_tensor_views_slices()
         auto tv = m.t();
         EXPECT_FALSE(tv.is_contiguous());
 
-        // Contiguous sources, non-contiguous destination: isolates the destination
-        // check in expressions_evaluator::run() from the (pre-existing) source check
-        // in store_operand().
-        tensor_t a = m.contiguous();
-        tensor_t b = m.contiguous();
-        EXPECT_TRUE(a.is_contiguous());
-        EXPECT_TRUE(b.is_contiguous());
+        // Independent sources, so the write into m's storage aliases nothing.
+        tensor_t a = m.clone();
+        tensor_t b = m.clone();
+
+        // tv is [3, 2]; a.t() + b.t() is [3, 2], so tv(i, j) = m(j, i) = 2 * m(j, i).
+        EXPECT_NO_THROW({ tv = a.t() + b.t(); });
+        for (size_t i = 0; i < 2; ++i)
+        {
+            for (size_t j = 0; j < 3; ++j)
+            {
+                EXPECT_EQ(m.at(i, j), static_cast<T>(2 * (i + j)));
+            }
+        }
 
         logging::set_exception_mode(logging::exception_mode::THROW);
+        // [2, 3] result into a [3, 2] destination: same element count, wrong shape.
         EXPECT_THROW({ tv = a + b; }, logging::exception);
         EXPECT_THROW({ tv = T(1); }, logging::exception);
+        // A stride-0 destination would write the same element repeatedly.
+        auto row = tensor_t(dims_t{3}).expand(dims_t{2, 3});
+        EXPECT_THROW({ row = a + b; }, logging::exception);
     }
 
     // linspace n==1; empty 2-D initializer
@@ -770,19 +780,19 @@ VECTORIZATION_NOINLINE void test_tensor_contiguity()
         EXPECT_TRUE(empty_dim.is_contiguous());
     }
 
-    // Copy construction/assignment recomputes contiguity from the copied
-    // shape/strides -- it mirrors the source, it is not always true.
+    // Copy construction/assignment always produce a contiguous C-order clone.
+    // Views remain non-contiguous; only the COPY is contiguous.
     {
         tensor_t m(dims_t{3, 4});
         tensor_t transposed = m.t();
         EXPECT_FALSE(transposed.is_contiguous());
 
         tensor_t copy_ctor(transposed);
-        EXPECT_FALSE(copy_ctor.is_contiguous());
+        EXPECT_TRUE(copy_ctor.is_contiguous());
 
         tensor_t copy_assign;
         copy_assign = transposed;
-        EXPECT_FALSE(copy_assign.is_contiguous());
+        EXPECT_TRUE(copy_assign.is_contiguous());
 
         tensor_t contiguous_src(dims_t{3, 4});
         tensor_t copy_of_contiguous(contiguous_src);
@@ -981,10 +991,10 @@ VECTORIZATIONTEST(Math, TensorMemoryStorage)
     EXPECT_EQ(owned.data(), original.data());
     EXPECT_EQ(owned.memory_view().id(), original.id());
 
-    // Copies preserve the layout while using independent Memory storage.
+    // Copies always produce a contiguous C-order clone with independent storage.
     auto     transposed = owned.t();
     tensor_t copied(transposed);
-    EXPECT_FALSE(copied.is_contiguous());
+    EXPECT_TRUE(copied.is_contiguous());
     EXPECT_NE(copied.memory_view().id(), original.id());
     for (size_t i = 0; i < copied.size(); ++i)
     {
@@ -993,9 +1003,9 @@ VECTORIZATIONTEST(Math, TensorMemoryStorage)
     tensor_t assigned;
     const auto strided = owned.slice(1, 1, 4, 2);
     assigned = strided;
-    EXPECT_FALSE(assigned.is_contiguous());
+    EXPECT_TRUE(assigned.is_contiguous());
     EXPECT_NE(assigned.memory_view().id(), original.id());
-    EXPECT_EQ(assigned.memory_view().base() + 1, assigned.data());
+    EXPECT_EQ(assigned.memory_view().base(), assigned.data());
     EXPECT_EQ(assigned.to_host_vector(), (std::vector<float>{1, 3, 5, 7, 9, 11}));
 
     END_TEST();

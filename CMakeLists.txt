@@ -118,6 +118,7 @@ option(VECTORIZATION_ENABLE_MEMKIND "Enable Memory's memkind allocator" OFF)
 option(VECTORIZATION_ENABLE_TBB "Enable Memory's TBB allocator" OFF)
 option(VECTORIZATION_ENABLE_MAGICENUM "Enable Logging's magic_enum support" OFF)
 option(VECTORIZATION_ENABLE_PORTABLE_FLOAT_FORMAT "Enable Logging's portable float formatter" OFF)
+option(VECTORIZATION_ENABLE_PARALLEL "Enable Parallel SMP backend (parallel_tools) for tensor evaluation" OFF)
 
 # LibTorch (PyTorch C++ frontend) comparison tests/benchmarks — auto-probed via
 # CMAKE_PREFIX_PATH when enabled. Off by default so a plain configure never pays the
@@ -249,6 +250,20 @@ if(NOT TARGET LinearAlgebra::LinearAlgebra)
     FATAL_ERROR
       "Vectorization requires LinearAlgebra::LinearAlgebra. xsigma_add_linearalgebra() should have provided it — is ThirdParty/LinearAlgebra initialized?"
   )
+endif()
+
+# Parallel is optional — SMP thread-pool backend for parallel_for in tensor evaluation.
+# Gated by VECTORIZATION_ENABLE_PARALLEL; when OFF the evaluator falls back to a serial path.
+if(VECTORIZATION_ENABLE_PARALLEL)
+  xsigma_add_parallel()
+  if(NOT TARGET Parallel::Parallel)
+    message(
+      FATAL_ERROR
+        "VECTORIZATION_ENABLE_PARALLEL=ON but Parallel::Parallel was not found. "
+        "Is ThirdParty/Parallel initialized?\n"
+        "  git submodule update --init --recursive ThirdParty/Parallel"
+    )
+  endif()
 endif()
 
 # =============================================================================
@@ -664,6 +679,12 @@ if(_vec_has_profiler)
   target_link_libraries(Vectorization PUBLIC $<BUILD_INTERFACE:Profiler::Profiler>)
 endif()
 target_link_libraries(Vectorization PUBLIC $<BUILD_INTERFACE:LinearAlgebra::LinearAlgebra>)
+if(VECTORIZATION_ENABLE_PARALLEL)
+  target_compile_definitions(Vectorization PUBLIC VECTORIZATION_ENABLE_PARALLEL=1)
+  target_link_libraries(Vectorization PUBLIC $<BUILD_INTERFACE:Parallel::Parallel>)
+else()
+  target_compile_definitions(Vectorization PUBLIC VECTORIZATION_ENABLE_PARALLEL=0)
+endif()
 if(VECTORIZATION_DEPENDENCY_LIBS)
   target_link_libraries(Vectorization PUBLIC ${VECTORIZATION_DEPENDENCY_LIBS})
   message(STATUS "Vectorization: linked dependencies: ${VECTORIZATION_DEPENDENCY_LIBS}")
@@ -784,6 +805,7 @@ message("  Memory              : required (Memory::Memory)")
 message("  Logging             : required (Logging::Logging)")
 message("  Scalars             : required (Scalars::Scalars)")
 message("  LinearAlgebra       : required (LinearAlgebra::LinearAlgebra)")
+message("  Parallel            : ${VECTORIZATION_ENABLE_PARALLEL}")
 message("  Profiler            : ${_vec_has_profiler}")
 message("  Cxx standard        : ${VECTORIZATION_CXX_STANDARD}")
 message("  Cache               : ${VECTORIZATION_ENABLE_CACHE}")

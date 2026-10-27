@@ -3,8 +3,10 @@
 # WORKSPACE.bazel), so `bazel build //...` must not descend into them as
 # packages of the main repository -- their nested BUILD files (e.g.
 # benchmark's Python bindings needing @nanobind_bazel) do not load here.
+ThirdParty/LinearAlgebra
 ThirdParty/Logging
 ThirdParty/Memory
+ThirdParty/Parallel
 ThirdParty/Profiler
 ThirdParty/benchmark
 ThirdParty/googletest

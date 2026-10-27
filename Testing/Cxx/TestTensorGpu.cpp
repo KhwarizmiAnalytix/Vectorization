@@ -524,7 +524,9 @@ VECTORIZATIONTEST(TensorGpu, CopyClonesIndependentStorage)
     tensor<float> slice_copy(interior);
     tensor<float> slice_clone = interior.clone();
     EXPECT_NE(slice_copy.memory_view().id(), src.memory_view().id());
-    EXPECT_EQ(slice_copy.memory_view().base() + 16, slice_copy.data());
+    // Copies hold only the logical elements, packed at offset 0 (design P0).
+    EXPECT_EQ(slice_copy.memory_view().base(), slice_copy.data());
+    EXPECT_EQ(slice_copy.size(), 32u);
     EXPECT_EQ(slice_clone.memory_view().base(), slice_clone.data());
     EXPECT_EQ(slice_copy.to_host_vector(), std::vector<float>(32, 9.0f));
     EXPECT_EQ(slice_clone.to_host_vector(), std::vector<float>(32, 9.0f));

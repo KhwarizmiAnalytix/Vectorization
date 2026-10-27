@@ -127,11 +127,14 @@ symptom sharper: what used to just silently skip an optimization now throws.
 | Operation | Result contiguity | Why |
 |---|---|---|
 | Any fresh-shape constructor | always `true` | `make_contiguous_sas()` builds canonical strides from scratch |
-| Copy ctor / copy assignment | mirrors source shape, recomputed | same strides copied in, contiguity independently re-derived |
+| Copy ctor / copy assignment | always `true` | deep copy through `clone()`: only the logical elements, packed at offset 0 |
 | Move ctor / move assignment | mirrors source's cached flag (not recomputed); moved-from resets to `true`, empty | shape didn't change, no need to redo the O(rank) walk |
 | `clone()` | always `true` | `stamp_contiguous_shape()` rebuilds canonical strides over the packed copy, regardless of the source's contiguity |
 | `contiguous()` | always `true` | borrows (`is_contiguous()` already `true`) or falls back to `clone()` |
-| `view()` / `reshape()` | always `true` | both require an already-contiguous source and call `make_contiguous_sas()` for the new shape |
+| `view()` | depends | strides from PyTorch's `computeStride` rule; packed sources stay packed, strided sources keep their gaps; errors when no view exists |
+| `reshape()` | depends | `view()` when one exists, otherwise a packed copy (`true`) |
+| `expand()` / `broadcast_to()` | `false` when any dimension is expanded | expanded dimensions get stride 0 |
+| `squeeze()` / `unsqueeze()` | unchanged | only size-1 dimensions are removed or inserted |
 | `t()` (rank-2 transpose) | `false` in general; `true` if the tensor is shaped `(N,1)`/`(1,N)` | swaps size/stride pairs verbatim; a vector-shaped tensor's non-unit axis keeps stride 1 either way |
 | `permute()` | `false` if it reorders any two size>1 axes; `true` for the identity permutation or one that only relocates size-1 axes | copies size/stride pairs verbatim in the new order |
 | `slice(dim, start, stop, step)` | depends — see below | shrinks one dimension's size and multiplies its stride by `step`; leaves all other dimensions untouched |
@@ -158,19 +161,19 @@ packed in memory.
 | Site | Check | Debug-only or hard? |
 |---|---|---|
 | `tensor::begin()`/`end()` (const and non-const) | `is_contiguous()` | `VECTORIZATION_CHECK_DEBUG` — debug only |
-| `view()` / `reshape()` (source) | `is_contiguous()` | `VECTORIZATION_CHECK_DEBUG` — debug only |
 | `copy_from_host()` (destination) | `is_contiguous()` | `VECTORIZATION_CHECK_DEBUG` — debug only |
-| `store_operand()` (expression *sources*, `expression_interface.h`) | `x.is_contiguous()` | hard `VECTORIZATION_CHECK` — always |
-| `expressions_evaluator::run()`/`fill()` (expression *destinations*) | `rhs.is_contiguous()` | hard `VECTORIZATION_CHECK` — always, added this session (see [vectorization_backends.md](vectorization_backends.md) for the surrounding device-dispatch guard it sits next to) |
+| `expressions_evaluator::run()` on CPU | none: strided sources, destinations and broadcasting go through the iteration planner (`iteration_plan.h`); only a stride-0 destination is rejected | hard `VECTORIZATION_CHECK` — always |
+| `expressions_evaluator::run()` on CUDA/HIP/Metal (destination) | `rhs.is_contiguous()` | hard `VECTORIZATION_CHECK` — always, until the P4 offset-calculator kernels |
+| `expressions_evaluator::run()` and reductions on Metal (sources) | every leaf packed with the result's element count | hard `VECTORIZATION_CHECK` — always; CUDA/HIP rebase strided leaves instead |
+| `expressions_evaluator::fill()` (destination) | `rhs.is_contiguous()` | hard `VECTORIZATION_CHECK` — always |
 | `logical_offset()` | branches on `contiguous_` (flat passthrough vs. per-dimension divmod) | not a check — always correct either way, just a fast path |
 
-The asymmetry is deliberate: `begin()`/`view()`/`reshape()` are debug-only
-because they're primarily internal-invariant assertions on well-formed
-call sites, while `store_operand()` and `expressions_evaluator::run()`/
-`fill()` sit directly on `data[i]` flat-pointer paths where a silent
-contiguity violation means either dereferencing memory that isn't there or
-writing through a stride pattern the destination doesn't actually have —
-so those stay hard checks in release builds too.
+The asymmetry is deliberate: `begin()` and `copy_from_host()` are
+debug-only because they're primarily internal-invariant assertions on
+well-formed call sites, while the GPU kernels and `fill()` sit directly on
+`data[i]` flat-pointer paths where a silent contiguity violation means
+writing through a stride pattern the destination doesn't actually have — so
+those stay hard checks in release builds too.
 
 ## 6. Forcing contiguity
 
@@ -186,10 +189,12 @@ loop.
   `recompute_cpu_simd_alignment_state()`, `stamp_contiguous_shape()`,
   `logical_offset()`, `t()`/`permute()`/`view()`/`reshape()`/`slice()`/
   `clone()`/`contiguous()`.
-- `Library/Vectorization/expressions/expression_interface.h` —
-  `store_operand()`'s source-side hard check.
+- `Library/Vectorization/expressions/expression_shape.h` — broadcast shape
+  inference and validation, `leaves_flat()`, `rebase_leaves()`.
+- `Library/Vectorization/expressions/iteration_plan.h` — the CPU planner
+  (sort/merge, tiers, `loop2d`).
 - `Library/Vectorization/expressions/expressions_evaluator.h` —
-  `run()`/`fill()`'s destination-side hard check and `check_cpu_reachable()`.
+  `run()`/`fill()` dispatch, the GPU/Metal hard checks and `check_cpu_reachable()`.
 - `Library/Vectorization/Testing/Cxx/TestTensor.cpp` — contiguity test
   coverage (construction, copy/move, `t()`/`permute()`/`view()`/`reshape()`/
   `slice()`/`clone()`/`contiguous()`, the destination hard-check regression).

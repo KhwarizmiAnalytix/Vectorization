@@ -28,8 +28,12 @@ Do_not_include_expression_evaluator_directly_use_expression_it;
 #include <type_traits>
 #include <utility>
 
+#if VECTORIZATION_ENABLE_PARALLEL
+#include "include/tools/parallel_tools.h"
+#endif
 #include "common/vectorization_type_traits.h"
 #include "expressions/expression_interface_loader.h"
+#include "expressions/iteration_plan.h"
 #include "expressions/reduce_op.h"
 
 #if VECTORIZATION_HAS_CUDA || VECTORIZATION_HAS_HIP
@@ -104,6 +108,71 @@ private:
             caller);
     }
 
+    template <typename T>
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE static void check_result_shape(
+        expression_shape const& shape, T const& rhs)
+    {
+        auto const dims  = rhs.dimensions();
+        bool       equal = static_cast<size_t>(shape.rank) == dims.size();
+        for (int d = 0; equal && d < shape.rank; ++d)
+        {
+            equal = shape.sizes[d] == dims[static_cast<size_t>(d)];
+        }
+        if (!equal)
+        {
+            VECTORIZATION_CHECK(
+                false,
+                "expression result shape {} does not match destination shape {}",
+                shape_to_string(shape.rank, shape.sizes),
+                shape_to_string(static_cast<int>(dims.size()), dims.data()));
+        }
+    }
+
+    // SIMD chunk kernel for contiguous sources/destination. Runs the expression
+    // over the flat range [begin, end) of `data[]` using unaligned stores.
+    // Called from run() directly (single-threaded) and via parallel_for (threaded).
+    // VectorLength is simd<value_t>::size — passed as a template arg because this
+    // helper doesn't have access to the destination tensor type.
+    template <typename E, typename value_t, size_t VectorLength>
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE static void run_chunk_contiguous(
+        E const& expr, value_t* data, size_t begin, size_t end) noexcept
+    {
+        size_t i = begin;
+#if VECTORIZATION_VECTORIZED
+        constexpr size_t      length = VectorLength;
+        constexpr std::size_t packet = VECTORIZATION_PACKET_SIZE;
+        constexpr std::size_t block  = length * packet;
+
+        if constexpr (packet > 1)
+        {
+            const size_t loop_peel = begin + ((end - begin) / block) * block;
+            for (; i < loop_peel; i += block)
+            {
+                detail::unroll<packet>(
+                    [&](auto k)
+                    {
+                        constexpr size_t off = decltype(k)::value * length;
+                        const auto       temp =
+                            vectorization::expression_loader<E, true, false>::evaluate(
+                                expr, i + off);
+                        simd<value_t>::storeu(temp, &data[i + off]);
+                    });
+            }
+        }
+        {
+            const size_t loop_peel2 = begin + ((end - begin) / length) * length;
+            for (; i < loop_peel2; i += length)
+            {
+                const auto temp =
+                    vectorization::expression_loader<E, true, false>::evaluate(expr, i);
+                simd<value_t>::storeu(temp, &data[i]);
+            }
+        }
+#endif
+        for (; i < end; ++i)
+            data[i] = vectorization::expression_loader<E, false, false>::evaluate(expr, i);
+    }
+
 public:
     //================================================================================================
     // `stream` is forwarded to run_gpu when rhs is a CUDA/HIP tensor, launching the fused
@@ -114,21 +183,29 @@ public:
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE static void run(
         E const& expr, T& rhs, gpu_stream_t stream = nullptr)
     {
-        VECTORIZATION_CHECK(
-            expr.size() == rhs.size(),
-            "expression has different size {} than destination {}",
-            expr.size(),
-            rhs.size());
-        // Every destination path below -- CPU SIMD store as well as the GPU/Metal kernels
-        // dispatched next -- assumes a packed buffer, matching the equivalent source-operand
-        // check in store_operand().
-        VECTORIZATION_CHECK(
-            rhs.is_contiguous(), "expressions_evaluator::run: destination must be contiguous");
+        // Operands broadcast against each other; the result must have exactly the
+        // destination's shape, which is never broadcast (design §5, planner step 2).
+        const expression_shape shape = expression_result_shape(expr);
+        check_result_shape(shape, rhs);
+        // Every leaf packed with the destination's element count: flat indexing is
+        // exact and no planning is needed (design §5, contiguous fast path).
+        const bool flat = detail::leaves_flat(expr, rhs.size());
 
 #if (VECTORIZATION_HAS_CUDA && defined(__CUDACC__)) || (VECTORIZATION_HAS_HIP && defined(__HIPCC__))
         if (rhs.device() == device_enum::CUDA || rhs.device() == device_enum::HIP)
         {
             using value_t = typename vectorization::scalar_type<T, T>::value;
+            // The kernel writes out[tid]; strided destinations need the P4 offset calculator.
+            check_contiguous(rhs, "expressions_evaluator::run (CUDA/HIP)");
+            if (!flat)
+            {
+                // Strided or broadcast sources: rewrite the leaves into the result's
+                // index space so the kernel's flat index is exact.
+                const auto lowered = flat_lowered(expr, shape);
+                vectorization::run_gpu(
+                    lowered, static_cast<value_t*>(rhs.begin()), rhs.size(), stream);
+                return;
+            }
             // `expr` is already `E const&` here (this overload only ever deduces E without
             // cv/ref — the E&& forwarding overload below strips those before recursing into
             // this one), so no remove_cvref_t cast is needed. Passing `expr` directly (rather
@@ -154,6 +231,12 @@ public:
         {
             if (rhs.device() == device_enum::METAL)
             {
+                // The fused MSL kernel indexes every buffer as in[tid].
+                check_contiguous(rhs, "expressions_evaluator::run (Metal)");
+                VECTORIZATION_CHECK(
+                    flat,
+                    "expressions_evaluator::run (Metal): strided or broadcast operands are not "
+                    "supported on Metal yet; call contiguous() on them first");
                 vectorization::run_metal(expr, rhs);
                 return;
             }
@@ -162,7 +245,14 @@ public:
         check_cpu_reachable(rhs, "expressions_evaluator::run");
         (void)stream;
 
-        auto*  data = rhs.begin();
+        // Strided destination or sources, or broadcasting: planner + loop2d.
+        if (!flat || !rhs.is_contiguous())
+        {
+            run_planned(expr, rhs.to_strided_ref(), shape);
+            return;
+        }
+
+        auto*  data = rhs.data();
         size_t n    = rhs.size();
         size_t i    = 0;
 
@@ -180,6 +270,7 @@ public:
         constexpr std::size_t packet = VECTORIZATION_PACKET_SIZE;
         constexpr std::size_t block  = length * packet;
 
+        // Scalar peel to the first SIMD-aligned destination element.
         const size_t cap = rhs.align_start();
         for (; i < cap; ++i)
             data[i] = vectorization::expression_loader<E, false, false>::evaluate(expr, i);
@@ -187,26 +278,46 @@ public:
         if (i >= n)
             return;
 
-        // Aligned destination body. Source loads are aligned only when the
-        // destination starts at a SIMD boundary and every tensor leaf is
-        // allocator-aligned; otherwise unaligned loads keep views correct.
-        const size_t loop_peel   = rhs.align_end();
-        const bool   src_aligned = cap == 0 && vectorization::expression_operands_aligned(expr);
-        auto const   aligned_dest_loops = [&](auto src_aligned_tag)
+        // Aligned destination body: for large tensors split across threads; each
+        // chunk uses unaligned stores (loadu/storeu on aligned data is free on
+        // current x86 and Arm — C6). For small tensors stay single-threaded.
+        static constexpr int64_t kGrainSize = 32768;  // elements, as in PyTorch
+
+        if (static_cast<int64_t>(n - i) >= kGrainSize)
         {
-            constexpr bool src_al = decltype(src_aligned_tag)::value;
+#if VECTORIZATION_ENABLE_PARALLEL
+            // Parallel path: every chunk is run_chunk_contiguous over [begin, end).
+            // The scalar peel [0, cap) was already handled above, so chunks start at i.
+            const size_t aligned_begin = i;
+            const size_t n_remain      = n - aligned_begin;
+            auto _chunk_fn = [&](size_t begin, size_t end)
+            {
+                run_chunk_contiguous<E, value_t, length>(
+                    expr,
+                    data,
+                    aligned_begin + begin,
+                    aligned_begin + end);
+            };
+            parallel_tools::parallel_for(
+                size_t{0}, n_remain, static_cast<size_t>(kGrainSize), _chunk_fn);
+            i = n;  // scalar tail below will be a no-op
+#endif
+        }
+        else
+        {
+            // Single-threaded path with aligned stores in the destination-aligned body.
+            const size_t loop_peel = rhs.align_end();
             if constexpr (packet > 1)
             {
                 const size_t block_end = i + ((loop_peel - i) / block) * block;
                 for (; i < block_end; i += block)
                 {
-                    vectorization::expression_loader<E, true, src_al>::prefetch(expr, i + block);
                     detail::unroll<packet>(
                         [&](auto k)
                         {
                             constexpr size_t off = decltype(k)::value * length;
                             const auto       temp =
-                                vectorization::expression_loader<E, true, src_al>::evaluate(
+                                vectorization::expression_loader<E, true, false>::evaluate(
                                     expr, i + off);
                             simd<value_t>::store(temp, &data[i + off]);
                         });
@@ -214,45 +325,34 @@ public:
             }
             for (; i < loop_peel; i += length)
             {
-                vectorization::expression_loader<E, true, src_al>::prefetch(expr, i);
                 const auto temp0 =
-                    vectorization::expression_loader<E, true, src_al>::evaluate(expr, i);
+                    vectorization::expression_loader<E, true, false>::evaluate(expr, i);
                 simd<value_t>::store(temp0, &data[i]);
             }
-        };
-        if (src_aligned)
-        {
-            aligned_dest_loops(std::true_type{});
-        }
-        else
-        {
-            aligned_dest_loops(std::false_type{});
-        }
 
-        //unaligned loop
-        const size_t loop_peel2 = i + ((n - i) / (length)) * (length);
-        if constexpr (packet > 1)
-        {
-            const size_t block_end2 = i + ((loop_peel2 - i) / block) * block;
-            for (; i < block_end2; i += block)
+            // Unaligned tail (remainder after aligned body).
+            const size_t loop_peel2 = i + ((n - i) / length) * length;
+            if constexpr (packet > 1)
             {
-                vectorization::expression_loader<E, true, false>::prefetch(expr, i + block);
-                detail::unroll<packet>(
-                    [&](auto k)
-                    {
-                        constexpr size_t off = decltype(k)::value * length;
-                        const auto       temp =
-                            vectorization::expression_loader<E, true, false>::evaluate(
-                                expr, i + off);
-                        simd<value_t>::storeu(temp, &data[i + off]);
-                    });
+                const size_t block_end2 = i + ((loop_peel2 - i) / block) * block;
+                for (; i < block_end2; i += block)
+                {
+                    detail::unroll<packet>(
+                        [&](auto k)
+                        {
+                            constexpr size_t off = decltype(k)::value * length;
+                            const auto       temp =
+                                vectorization::expression_loader<E, true, false>::evaluate(
+                                    expr, i + off);
+                            simd<value_t>::storeu(temp, &data[i + off]);
+                        });
+                }
             }
-        }
-        for (; i < loop_peel2; i += length)
-        {
-            vectorization::expression_loader<E, true, false>::prefetch(expr, i);
-            const auto temp = vectorization::expression_loader<E, true, false>::evaluate(expr, i);
-            simd<value_t>::storeu(temp, &data[i]);
+            for (; i < loop_peel2; i += length)
+            {
+                const auto temp = vectorization::expression_loader<E, true, false>::evaluate(expr, i);
+                simd<value_t>::storeu(temp, &data[i]);
+            }
         }
 #endif
 
@@ -408,6 +508,26 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void accumulate_expression_device(
     }
 }
 
+// True when the GPU reduce kernels can read every operand at flat index i:
+// a packed tensor, or an expression whose leaves are all packed with the
+// result's element count. Validates the expression's shape either way.
+template <typename E>
+VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool reduce_operands_flat(E const& expr)
+{
+    if constexpr (is_pure_expression<E>::value)
+    {
+        return leaves_flat(expr, expression_result_shape(expr).numel());
+    }
+    else if constexpr (is_tensor<E>::value)
+    {
+        return expr.is_contiguous();
+    }
+    else
+    {
+        return true;
+    }
+}
+
 template <typename E, typename value_t, reduce_op Op>
 VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool try_reduce_gpu(E const& expr, value_t& out)
 {
@@ -416,10 +536,31 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool try_reduce_gpu(E const& expr, value_t
     gpu_stream_t stream = nullptr;
     bool         seen   = false;
     accumulate_expression_device(expr, kind, index, stream, seen);
+    if (kind == device_enum::CPU)
+    {
+        return false;
+    }
+    const bool flat = reduce_operands_flat(expr);
 
 #if (VECTORIZATION_HAS_CUDA && defined(__CUDACC__)) || (VECTORIZATION_HAS_HIP && defined(__HIPCC__))
     if (kind == device_enum::CUDA || kind == device_enum::HIP)
     {
+        if constexpr (is_pure_expression<E>::value)
+        {
+            if (!flat)
+            {
+                // Strided or broadcast leaves: rebase them so the kernel's flat index is exact.
+                const auto shape   = expression_result_shape(expr);
+                const auto lowered = flat_lowered(expr, shape);
+                out = reduce_gpu<E, value_t, Op>(lowered, shape.numel(), kind, index, stream);
+                return true;
+            }
+        }
+        else
+        {
+            VECTORIZATION_CHECK(
+                flat, "accumulate/hmin/hmax: strided GPU tensor; call contiguous() first");
+        }
         out = reduce_gpu<E, value_t, Op>(expr, expr.size(), kind, index, stream);
         return true;
     }
@@ -429,17 +570,60 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool try_reduce_gpu(E const& expr, value_t
     {
         if (kind == device_enum::METAL)
         {
+            VECTORIZATION_CHECK(
+                flat,
+                "accumulate/hmin/hmax (Metal): strided or broadcast operands are not supported "
+                "on Metal yet; call contiguous() on them first");
             out = reduce_metal<E, Op>(expr, expr.size());
             return true;
         }
     }
 #endif
+    (void)flat;
     VECTORIZATION_CHECK(
         kind == device_enum::CPU,
         "accumulate/hmin/hmax: GPU expression but this translation unit has no GPU reduce "
         "path (CUDA/HIP require compiling with nvcc/hipcc; Metal requires "
         "VECTORIZATION_HAS_METAL)");
     return false;
+}
+
+// CPU reductions over strided tensors or strided / broadcast expressions:
+// folds `combine` over the logical elements in C order. Returns false when the
+// operands are packed and the SIMD paths of the caller apply.
+template <typename E, typename value_t, typename F>
+VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool reduce_strided(E const& expr, value_t& acc, F&& combine)
+{
+    if constexpr (is_tensor<E>::value)
+    {
+        if (expr.is_contiguous())
+        {
+            return false;
+        }
+        for (size_t i = 0, n = expr.size(); i < n; ++i)
+        {
+            acc = combine(acc, expr[i]);
+        }
+        return true;
+    }
+    else if constexpr (is_pure_expression<E>::value)
+    {
+        const auto shape = expression_result_shape(expr);
+        if (leaves_flat(expr, shape.numel()))
+        {
+            return false;
+        }
+        const auto lowered = flat_lowered(expr, shape);
+        for (size_t i = 0, n = shape.numel(); i < n; ++i)
+        {
+            acc = combine(acc, expression_loader<E, false, false>::evaluate(lowered, i));
+        }
+        return true;
+    }
+    else
+    {
+        return false;
+    }
 }
 }  // namespace detail
 
@@ -461,8 +645,13 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto accumulate(EXPR&& expression)
     }
 
     value_t sum = 0;
-    size_t  i   = 0;
-    size_t  n   = expression.size();
+    if (detail::reduce_strided(
+            static_cast<E const&>(expression), sum, [](value_t a, value_t b) { return a + b; }))
+    {
+        return sum;
+    }
+    size_t i = 0;
+    size_t n = expression.size();
 
 #if VECTORIZATION_VECTORIZED
     constexpr auto        length = E::length();
@@ -624,8 +813,15 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmin(EXPR&& expression)
     }
 
     value_t ret = std::numeric_limits<value_t>::max();
-    size_t  i   = 0;
-    size_t  n   = expression.size();
+    if (detail::reduce_strided(
+            static_cast<E const&>(expression),
+            ret,
+            [](value_t a, value_t b) { return std::fmin(a, b); }))
+    {
+        return ret;
+    }
+    size_t i = 0;
+    size_t n = expression.size();
 
 #if VECTORIZATION_VECTORIZED
     constexpr auto        length = E::length();
@@ -804,8 +1000,15 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmax(EXPR&& expression)
     // Use -max(), not min(): for floats std::numeric_limits<float>::min() is the
     // smallest *positive* value (~1.2e-38), not the most negative one.
     value_t ret = -std::numeric_limits<value_t>::max();
-    size_t  i   = 0;
-    size_t  n   = expression.size();
+    if (detail::reduce_strided(
+            static_cast<E const&>(expression),
+            ret,
+            [](value_t a, value_t b) { return std::fmax(a, b); }))
+    {
+        return ret;
+    }
+    size_t i = 0;
+    size_t n = expression.size();
 
 #if VECTORIZATION_VECTORIZED
     constexpr auto        length = E::length();

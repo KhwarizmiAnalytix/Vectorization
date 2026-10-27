@@ -858,3 +858,13 @@ function(xsigma_add_logging)
     xsigma_add_logging_product()
 endfunction()
 
+# =============================================================================
+# Parallel — sibling XSigma repo, compiled from ThirdParty/Parallel
+# (ThirdParty/parallel.cmake). Called by Vectorization when
+# VECTORIZATION_ENABLE_PARALLEL=ON, before if(TARGET Parallel::Parallel) — idempotent.
+# =============================================================================
+function(xsigma_add_parallel)
+    include("${XSIGMA_THIRDPARTY_DIR}/parallel.cmake")
+    xsigma_add_parallel_product()
+endfunction()
+

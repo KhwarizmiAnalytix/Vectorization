@@ -14,7 +14,9 @@ endif()
 # VectorizationCxxTests executable
 # =============================================================================
 
-file(GLOB_RECURSE test_sources LIST_DIRECTORIES false "${CMAKE_CURRENT_SOURCE_DIR}/Test*.cpp")
+file(GLOB_RECURSE test_sources CONFIGURE_DEPENDS LIST_DIRECTORIES false
+     "${CMAKE_CURRENT_SOURCE_DIR}/Test*.cpp"
+)
 
 # Include CUDA/HIP unit tests when a GPU backend is active, and compile every
 # Test*.cpp that touches tensor<T> expressions as that backend's device
@@ -62,7 +64,9 @@ if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda" OR VECTORIZATION_GPU_BACKEND STREQU
   endforeach()
   unset(_vec_src)
 
-  file(GLOB_RECURSE cuda_test_sources LIST_DIRECTORIES false "${CMAKE_CURRENT_SOURCE_DIR}/Test*.cu")
+  file(GLOB_RECURSE cuda_test_sources CONFIGURE_DEPENDS LIST_DIRECTORIES false
+       "${CMAKE_CURRENT_SOURCE_DIR}/Test*.cu"
+  )
   list(APPEND test_sources ${cuda_test_sources})
   list(APPEND _vec_tensor_test_sources ${cuda_test_sources})
   vectorization_tag_gpu_expression_sources(${_vec_tensor_test_sources})
@@ -96,7 +100,9 @@ if(VECTORIZATION_GPU_BACKEND STREQUAL "metal")
   # *.mm (not just Test*.mm): also picks up metal_device_probe.mm, the tiny Objective-C++
   # shim TestTensorGpu.cpp calls into for a device-count query (that file itself must
   # stay plain .cpp, shared textually with the CUDA/HIP path).
-  file(GLOB_RECURSE metal_test_sources LIST_DIRECTORIES false "${CMAKE_CURRENT_SOURCE_DIR}/*.mm")
+  file(GLOB_RECURSE metal_test_sources CONFIGURE_DEPENDS LIST_DIRECTORIES false
+       "${CMAKE_CURRENT_SOURCE_DIR}/*.mm"
+  )
   list(APPEND test_sources ${metal_test_sources})
   set_source_files_properties(${metal_test_sources} PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
   message(STATUS "VectorizationCxxTests: Metal-specific tests (*.mm) included")
@@ -635,7 +641,7 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
   # would fail in that configuration (the bare "benchmark" target only
   # exists on the vendored path).
 
-  file(GLOB_RECURSE bench_sources LIST_DIRECTORIES false
+  file(GLOB_RECURSE bench_sources CONFIGURE_DEPENDS LIST_DIRECTORIES false
        "${CMAKE_CURRENT_SOURCE_DIR}/Benchmark*.cpp"
   )
 

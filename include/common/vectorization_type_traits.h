@@ -209,6 +209,12 @@ class binary_expression;
 template <typename LHS, typename MHS, typename RHS, typename EVALUATOR>
 class trinary_expression;
 
+template <typename T, int MaxRank>
+struct strided_ref;
+
+template <typename T>
+struct row_ref;
+
 }  // namespace vectorization
 
 // ---------------------------------------------------------------------------
@@ -231,6 +237,18 @@ struct is_base_expression<tensor<value_t>>
 
 template <typename value_t>
 struct is_base_expression<memory::data_view<value_t>>
+{
+    static constexpr bool value = true;
+};
+
+template <typename value_t, int MaxRank>
+struct is_base_expression<strided_ref<value_t, MaxRank>>
+{
+    static constexpr bool value = true;
+};
+
+template <typename value_t>
+struct is_base_expression<row_ref<value_t>>
 {
     static constexpr bool value = true;
 };
@@ -351,6 +369,27 @@ struct scalar_type<tensor<value_t>, T>
 
 template <typename value_t, typename T>
 struct scalar_type<memory::data_view<value_t>, T>
+{
+    using value = value_t;
+};
+
+template <typename value_t, int MaxRank, typename T>
+struct scalar_type<strided_ref<value_t, MaxRank>, T>
+{
+    using value = value_t;
+};
+
+template <typename value_t, typename T>
+struct scalar_type<row_ref<value_t>, T>
+{
+    using value = value_t;
+};
+
+template <typename T, typename value_t>
+struct scalar_type<
+    T,
+    row_ref<value_t>,
+    typename std::enable_if_t<vectorization::is_fundamental<T>::value>>
 {
     using value = value_t;
 };

@@ -15,6 +15,15 @@ function(xsigma_add_linearalgebra_product)
     set(LINALG_ENABLE_BENCHMARK OFF CACHE BOOL "Dependency benchmarks disabled" FORCE)
     set(LINALG_BUILD_EXAMPLES OFF CACHE BOOL "Dependency examples disabled" FORCE)
 
+    # When no CPU SIMD backend is active the simd<T> types that LinearAlgebra's
+    # vectorized scalar GEMM instantiates are not compiled in, so disable that
+    # path to avoid build failures with VECTORIZATION_CPU_BACKEND=no.
+    if(VECTORIZATION_CPU_BACKEND STREQUAL "no")
+        set(LINALG_ENABLE_VECTORIZATION OFF CACHE BOOL "Configured by Vectorization" FORCE)
+    else()
+        set(LINALG_ENABLE_VECTORIZATION ON  CACHE BOOL "Configured by Vectorization" FORCE)
+    endif()
+
     # --- CPU BLAS backends: forward from Vectorization public flags ---
     foreach(_linalg_feature IN ITEMS MKL BLAS BLIS)
         if(DEFINED VECTORIZATION_ENABLE_${_linalg_feature})

@@ -16,3 +16,6 @@
 [submodule "ThirdParty/LinearAlgebra"]
 	path = ThirdParty/LinearAlgebra
 	url = https://github.com/KhwarizmiAnalytix/LinearAlgebra.git
+[submodule "ThirdParty/Parallel"]
+	path = ThirdParty/Parallel
+	url = https://github.com/KhwarizmiAnalytix/Parallel.git

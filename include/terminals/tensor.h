@@ -32,7 +32,9 @@
 #include <initializer_list>
 #include <limits>
 #include <numeric>
+#include <optional>
 #include <sstream>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -43,6 +45,7 @@
 
 #include <backend/simd.h>
 #include "expressions/expressions.h"
+#include "expressions/strided_ref.h"
 #include "sizes_and_strides.h"
 #include "stream_guard.h"
 
@@ -507,16 +510,12 @@ public:
     // materializes an owned buffer. Move transfers owner_ when present.
     // -----------------------------------------------------------------------
 
-    VECTORIZATION_FUNCTION_ATTRIBUTE tensor(tensor const& rhs)
-        : sizes_and_strides_(rhs.sizes_and_strides_),
-          owner_(rhs.view_.base(),
-              storage_offset(rhs.view_) + rhs.view_.size(),
-              rhs.device(),
-              rhs.device_index(),
-              static_cast<typename owner_t::stream_t>(rhs.stream())),
-          view_(owner_.view(storage_offset(rhs.view_), rhs.view_.size()))
+    // Deep copy: always allocates numel_ elements at offset 0, regardless of
+    // whether rhs was a view with non-zero storage_offset. Non-contiguous sources
+    // are gathered into C-order. Delegate via move to avoid duplicating clone().
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor(tensor const& rhs)
+        : tensor(rhs.clone())
     {
-        recompute_cpu_simd_alignment_state();
     }
 
     VECTORIZATION_FUNCTION_ATTRIBUTE tensor(tensor&& rhs) noexcept
@@ -918,6 +917,31 @@ public:
     // C-order contiguity: cached at construction / shape change.
     VECTORIZATION_FUNCTION_ATTRIBUTE bool is_contiguous() const noexcept { return contiguous_; }
 
+    // Build a strided_ref describing the current view's shape and strides.
+    // Used by store_operand() to capture the tensor as an expression leaf.
+    VECTORIZATION_FUNCTION_ATTRIBUTE strided_ref<value_t> to_strided_ref() const
+    {
+        VECTORIZATION_CHECK_IF_NOT_ON_CUDA(
+            rank() <= static_cast<size_t>(kMaxRank),
+            "tensors of rank {} cannot be expression operands (limit {})",
+            rank(),
+            kMaxRank);
+        strided_ref<value_t> s;
+        s.view_       = view_;
+        s.rank        = static_cast<int>(rank());
+        s.numel       = numel_;
+        s.contiguous  = contiguous_;
+        s.align_start = align_start_;
+        s.align_end   = align_end_;
+        const int n   = s.rank;
+        for (int i = 0; i < n; ++i)
+        {
+            s.sizes[i]   = sizes_and_strides_.size_at_unchecked(static_cast<size_t>(i));
+            s.strides[i] = sizes_and_strides_.stride_at_unchecked(static_cast<size_t>(i));
+        }
+        return s;
+    }
+
     // -----------------------------------------------------------------------
     // Element access
     // -----------------------------------------------------------------------
@@ -975,7 +999,7 @@ public:
 
     VECTORIZATION_FUNCTION_ATTRIBUTE tensor t() const
     {
-        VECTORIZATION_CHECK_DEBUG_IF_NOT_ON_CUDA(rank() == 2, "t() requires a rank-2 tensor");
+        VECTORIZATION_CHECK_IF_NOT_ON_CUDA(rank() == 2, "t() requires a rank-2 tensor");
         sizes_and_strides sas = sizes_and_strides_;
         std::swap(sas.size_at_unchecked(0), sas.size_at_unchecked(1));
         std::swap(sas.stride_at_unchecked(0), sas.stride_at_unchecked(1));
@@ -985,17 +1009,17 @@ public:
     VECTORIZATION_FUNCTION_ATTRIBUTE tensor permute(const dimensions_type& order) const
     {
         const size_t n = rank();
-        VECTORIZATION_CHECK_DEBUG_IF_NOT_ON_CUDA(
+        VECTORIZATION_CHECK_IF_NOT_ON_CUDA(
             order.size() == n, "permute: order length must equal rank");
         sizes_and_strides sas;
         sas.resize(n);
         for (size_t i = 0; i < n; ++i)
         {
             auto const src = order[i];
-            VECTORIZATION_CHECK_DEBUG_IF_NOT_ON_CUDA(src < n, "permute: axis out of range");
+            VECTORIZATION_CHECK_IF_NOT_ON_CUDA(src < n, "permute: axis out of range");
             for (size_t j = 0; j < i; ++j)
             {
-                VECTORIZATION_CHECK_DEBUG_IF_NOT_ON_CUDA(order[j] != src, "permute: repeated axis");
+                VECTORIZATION_CHECK_IF_NOT_ON_CUDA(order[j] != src, "permute: repeated axis");
             }
             sas.size_at_unchecked(i)   = sizes_and_strides_.size_at_unchecked(src);
             sas.stride_at_unchecked(i) = sizes_and_strides_.stride_at_unchecked(src);
@@ -1003,64 +1027,198 @@ public:
         return tensor(view_, std::move(sas));
     }
 
-    VECTORIZATION_FUNCTION_ATTRIBUTE tensor view(const dimensions_type& new_dims) const
+    // Metadata-only reshape. Strides follow PyTorch's computeStride rule, so a
+    // non-contiguous tensor can be viewed whenever the new dimensions split or
+    // merge only dimensions that are adjacent in memory. Never copies.
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor view(const dimensions_type& new_dims) const
     {
-        VECTORIZATION_CHECK_DEBUG_IF_NOT_ON_CUDA(
-            is_contiguous(), "view() requires a contiguous tensor");
-        VECTORIZATION_CHECK_DEBUG_IF_NOT_ON_CUDA(
-            compute_total(new_dims) == size(), "view: element count must not change");
+        VECTORIZATION_CHECK(
+            compute_total(new_dims) == size(),
+            "view: shape {} has {} elements, tensor has {}",
+            dims_to_string(new_dims),
+            compute_total(new_dims),
+            size());
         sizes_and_strides sas;
-        make_contiguous_sas(sas, new_dims);
+        VECTORIZATION_CHECK(
+            compute_view_strides(new_dims, sas),
+            "view: shape {} is not compatible with the tensor's strides; use reshape()",
+            dims_to_string(new_dims));
         return tensor(view_, std::move(sas));
     }
 
-    VECTORIZATION_FUNCTION_ATTRIBUTE tensor reshape(const dimensions_type& new_dims) const
+    // view() when the strides allow it, otherwise a packed copy with the new shape.
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor reshape(const dimensions_type& new_dims) const
     {
-        VECTORIZATION_CHECK_DEBUG_IF_NOT_ON_CUDA(
-            is_contiguous(), "reshape: call contiguous() first for non-contiguous tensors");
-        VECTORIZATION_CHECK_DEBUG_IF_NOT_ON_CUDA(
-            compute_total(new_dims) == size(), "reshape: element count must not change");
+        VECTORIZATION_CHECK(
+            compute_total(new_dims) == size(),
+            "reshape: shape {} has {} elements, tensor has {}",
+            dims_to_string(new_dims),
+            compute_total(new_dims),
+            size());
         sizes_and_strides sas;
-        make_contiguous_sas(sas, new_dims);
+        if (compute_view_strides(new_dims, sas))
+        {
+            return tensor(view_, std::move(sas));
+        }
+        tensor packed = clone();
+        packed.set_shape(new_dims);
+        packed.recompute_cpu_simd_alignment_state();
+        return packed;
+    }
+
+    // 1-D reshape of all elements.
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor flatten() const
+    {
+        return reshape(dimensions_type{size()});
+    }
+
+    // Broadcast view: dimensions are matched from the right; a size-1 dimension
+    // (or a missing leading one) is repeated with stride 0. Expanded tensors are
+    // read-only operands -- assigning into one is an error (design §6).
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor expand(const dimensions_type& new_dims) const
+    {
+        const size_t n = rank();
+        const size_t m = new_dims.size();
+        VECTORIZATION_CHECK(
+            m >= n, "expand: target rank {} is lower than tensor rank {}", m, n);
+        sizes_and_strides sas;
+        sas.resize(m);
+        for (size_t i = 0; i < m; ++i)
+        {
+            const int64_t target = checked_dimension_to_storage(new_dims[i]);
+            if (i < m - n)
+            {
+                sas.size_at_unchecked(i)   = target;
+                sas.stride_at_unchecked(i) = 0;
+                continue;
+            }
+            const size_t  j   = i - (m - n);
+            const int64_t old = sizes_and_strides_.size_at_unchecked(j);
+            VECTORIZATION_CHECK(
+                old == target || old == 1,
+                "expand: dimension {} of size {} cannot be expanded to {}",
+                j,
+                old,
+                target);
+            sas.size_at_unchecked(i) = target;
+            sas.stride_at_unchecked(i) =
+                old == target ? sizes_and_strides_.stride_at_unchecked(j) : 0;
+        }
         return tensor(view_, std::move(sas));
     }
 
-    // Slice along one dimension. stop == -1 (the default) means "to end".
-    // Negative start is wrapped like Python (start += dim_size). step == 0 is invalid.
-    VECTORIZATION_FUNCTION_ATTRIBUTE tensor
-    slice(size_t dim, int64_t start, int64_t stop = -1, int64_t step = 1) const
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor broadcast_to(const dimensions_type& new_dims) const
     {
-        VECTORIZATION_CHECK_DEBUG_IF_NOT_ON_CUDA(dim < rank(), "slice: dim out of range");
-        VECTORIZATION_CHECK_DEBUG_IF_NOT_ON_CUDA(step != 0, "slice: step must not be zero");
+        return expand(new_dims);
+    }
+
+    // Drops every size-1 dimension.
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor squeeze() const
+    {
+        sizes_and_strides sas;
+        size_t            r = 0;
+        for (size_t i = 0; i < rank(); ++i)
+        {
+            r += sizes_and_strides_.size_at_unchecked(i) != 1 ? 1 : 0;
+        }
+        sas.resize(r);
+        for (size_t i = 0, k = 0; i < rank(); ++i)
+        {
+            if (sizes_and_strides_.size_at_unchecked(i) != 1)
+            {
+                sas.size_at_unchecked(k)   = sizes_and_strides_.size_at_unchecked(i);
+                sas.stride_at_unchecked(k) = sizes_and_strides_.stride_at_unchecked(i);
+                ++k;
+            }
+        }
+        return tensor(view_, std::move(sas));
+    }
+
+    // Drops dimension `dim` when its size is 1; otherwise returns an unchanged view.
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor squeeze(size_t dim) const
+    {
+        VECTORIZATION_CHECK(dim < rank(), "squeeze: dim {} out of range for rank {}", dim, rank());
+        if (sizes_and_strides_.size_at_unchecked(dim) != 1)
+        {
+            return tensor(view_, sizes_and_strides_);
+        }
+        sizes_and_strides sas;
+        sas.resize(rank() - 1);
+        for (size_t i = 0, k = 0; i < rank(); ++i)
+        {
+            if (i != dim)
+            {
+                sas.size_at_unchecked(k)   = sizes_and_strides_.size_at_unchecked(i);
+                sas.stride_at_unchecked(k) = sizes_and_strides_.stride_at_unchecked(i);
+                ++k;
+            }
+        }
+        return tensor(view_, std::move(sas));
+    }
+
+    // Inserts a size-1 dimension before `dim` (dim == rank() appends one).
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor unsqueeze(size_t dim) const
+    {
+        const size_t n = rank();
+        VECTORIZATION_CHECK(dim <= n, "unsqueeze: dim {} out of range for rank {}", dim, n);
+        sizes_and_strides sas;
+        sas.resize(n + 1);
+        for (size_t i = 0, k = 0; i <= n; ++i)
+        {
+            if (i == dim)
+            {
+                // Same stride PyTorch picks: the extent of the dimension it precedes.
+                sas.size_at_unchecked(i)   = 1;
+                sas.stride_at_unchecked(i) = dim < n ? sizes_and_strides_.size_at_unchecked(dim) *
+                                                           sizes_and_strides_.stride_at_unchecked(dim)
+                                                     : 1;
+                continue;
+            }
+            sas.size_at_unchecked(i)   = sizes_and_strides_.size_at_unchecked(k);
+            sas.stride_at_unchecked(i) = sizes_and_strides_.stride_at_unchecked(k);
+            ++k;
+        }
+        return tensor(view_, std::move(sas));
+    }
+
+    // Slice along one dimension with Python semantics (design §7): a missing
+    // start or stop means the beginning or end; negative values count from the
+    // end; both are then clamped to [0, size]. `step` must be >= 1 -- strides
+    // are never negative; use flip() for reversal.
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor slice(
+        size_t                 dim,
+        std::optional<int64_t> start,
+        std::optional<int64_t> stop = std::nullopt,
+        int64_t                step = 1) const
+    {
+        VECTORIZATION_CHECK(dim < rank(), "slice: dim {} out of range for rank {}", dim, rank());
+        VECTORIZATION_CHECK(
+            step >= 1,
+            "slice: step must be >= 1, got {} (negative strides are not supported; use flip())",
+            step);
         const int64_t dim_size = sizes_and_strides_.size_at_unchecked(dim);
-        if (start < 0)
+        auto const    clamp    = [dim_size](int64_t v)
         {
-            start += dim_size;
-        }
-        if (start < 0)
-        {
-            start = 0;
-        }
-        if (stop < 0)
-        {
-            stop = dim_size;
-        }
-        stop                         = std::min(stop, dim_size);
-        start                        = std::min(start, dim_size);
-        const int64_t     span       = stop - start;
-        const int64_t     new_size   = (span > 0 && step > 0) || (span < 0 && step < 0)
-                                           ? (std::abs(span) + std::abs(step) - 1) / std::abs(step)
-                                           : 0;
+            if (v < 0)
+            {
+                v += dim_size;
+            }
+            return std::min(std::max<int64_t>(v, 0), dim_size);
+        };
+        const int64_t first    = clamp(start.value_or(0));
+        const int64_t last     = clamp(stop.value_or(dim_size));
+        const int64_t new_size = last > first ? (last - first + step - 1) / step : 0;
+
         sizes_and_strides sas        = sizes_and_strides_;
         sas.size_at_unchecked(dim)   = new_size;
         sas.stride_at_unchecked(dim) = sizes_and_strides_.stride_at_unchecked(dim) * step;
-        const size_t offset          = static_cast<size_t>(start) *
+        const size_t offset          = static_cast<size_t>(first) *
                               static_cast<size_t>(sizes_and_strides_.stride_at_unchecked(dim));
         const size_t storage_size = view_.size() > offset ? view_.size() - offset : 0;
         // Memory returns a default CPU view for an out-of-range subview. An
         // empty tensor slice still belongs to the source allocation/device.
-        return tensor(storage_size == 0 ? view_ : view_.subview(offset, storage_size),
-            std::move(sas));
+        return tensor(
+            storage_size == 0 ? view_ : view_.subview(offset, storage_size), std::move(sas));
     }
 
 #if 0
@@ -1336,6 +1494,97 @@ private:
     tensor(view_t view, sizes_and_strides sas) : sizes_and_strides_(std::move(sas)), view_(view)
     {
         recompute_cpu_simd_alignment_state();
+        check_view_geometry();
+    }
+
+    // Design §7: strides are never negative, and a non-empty view touches
+    // [offset, offset + sum((n_i - 1) * s_i)], which must lie inside the storage.
+    void check_view_geometry() const
+    {
+        if (numel_ == 0)
+        {
+            return;
+        }
+        size_t extent = 0;
+        for (size_t i = 0; i < rank(); ++i)
+        {
+            const int64_t stride = sizes_and_strides_.stride_at_unchecked(i);
+            VECTORIZATION_CHECK(stride >= 0, "view has negative stride {} in dimension {}", stride, i);
+            extent += static_cast<size_t>(sizes_and_strides_.size_at_unchecked(i) - 1) *
+                      static_cast<size_t>(stride);
+        }
+        VECTORIZATION_CHECK(
+            extent < view_.size(),
+            "view reaches element {} past its start, but its storage holds {}",
+            extent,
+            view_.size());
+    }
+
+    static std::string dims_to_string(const dimensions_type& dims)
+    {
+        std::string s = "[";
+        for (size_t i = 0; i < dims.size(); ++i)
+        {
+            s += (i ? ", " : "") + std::to_string(dims[i]);
+        }
+        return s + "]";
+    }
+
+    // PyTorch's computeStride: strides for viewing this tensor as `new_dims`
+    // without copying, or false when no such strides exist. Walks the old
+    // dimensions from the inside out in chunks that are contiguous in memory;
+    // each chunk must be covered exactly by consecutive new dimensions.
+    bool compute_view_strides(const dimensions_type& new_dims, sizes_and_strides& sas) const
+    {
+        const int old_rank = static_cast<int>(rank());
+        const int new_rank = static_cast<int>(new_dims.size());
+        sas.resize(static_cast<size_t>(new_rank));
+        for (int i = 0; i < new_rank; ++i)
+        {
+            sas.size_at_unchecked(static_cast<size_t>(i)) =
+                checked_dimension_to_storage(new_dims[static_cast<size_t>(i)]);
+        }
+        if (numel_ == 0 || old_rank == 0 || contiguous_)
+        {
+            make_contiguous_sas(sas, new_dims);
+            return true;
+        }
+        auto const old_size   = [this](int d) { return sizes_and_strides_.size_at_unchecked(static_cast<size_t>(d)); };
+        auto const old_stride = [this](int d) { return sizes_and_strides_.stride_at_unchecked(static_cast<size_t>(d)); };
+
+        int     view_d            = new_rank - 1;
+        int64_t chunk_base_stride = old_stride(old_rank - 1);
+        int64_t tensor_numel      = 1;
+        int64_t view_numel        = 1;
+        for (int tensor_d = old_rank - 1; tensor_d >= 0; --tensor_d)
+        {
+            tensor_numel *= old_size(tensor_d);
+            if (tensor_d == 0 ||
+                (old_size(tensor_d - 1) != 1 &&
+                 old_stride(tensor_d - 1) != tensor_numel * chunk_base_stride))
+            {
+                while (view_d >= 0 &&
+                       (view_numel < tensor_numel ||
+                        sas.size_at_unchecked(static_cast<size_t>(view_d)) == 1))
+                {
+                    sas.stride_at_unchecked(static_cast<size_t>(view_d)) =
+                        view_numel * chunk_base_stride;
+                    view_numel *= sas.size_at_unchecked(static_cast<size_t>(view_d));
+                    --view_d;
+                }
+                if (view_numel != tensor_numel)
+                {
+                    return false;
+                }
+                if (tensor_d > 0)
+                {
+                    chunk_base_stride = old_stride(tensor_d - 1);
+                    tensor_numel      = 1;
+                    view_numel        = 1;
+                }
+            }
+        }
+        return view_d == -1;
     }
 
     // -----------------------------------------------------------------------
@@ -1439,11 +1688,17 @@ private:
         // whatever stream the first operand happened to carry -- otherwise a freshly
         // constructed tensor could be allocated on one stream and evaluated on another.
         auto const stream = resolve_ambient_stream(expr, p.index);
-        owner_ =
-            owner_t(expr.size(), p.kind, p.index, static_cast<typename owner_t::stream_t>(stream));
-        view_                                     = owner_.view();
-        sizes_and_strides_.size_at_unchecked(0)   = static_cast<int64_t>(expr.size());
-        sizes_and_strides_.stride_at_unchecked(0) = 1;
+        // The result takes the operands' broadcast shape (design §5, planner step 2).
+        const expression_shape shape = expression_result_shape(expr);
+        dimensions_type        dims(static_cast<size_t>(shape.rank));
+        for (int d = 0; d < shape.rank; ++d)
+        {
+            dims[static_cast<size_t>(d)] = static_cast<size_type>(shape.sizes[d]);
+        }
+        owner_ = owner_t(
+            compute_total(dims), p.kind, p.index, static_cast<typename owner_t::stream_t>(stream));
+        view_ = owner_.view();
+        set_shape(dims);
         recompute_cpu_simd_alignment_state();
         evaluator::template run<E, tensor>(expr, *this, stream);
     }
@@ -1538,6 +1793,28 @@ private:
         gather_logical(window.data() + offset, dst);
     }
 
+    // Copy a 2-D transposed view (column-major → row-major) using cache-friendly
+    // 8×8 tiles. src has physical layout [nrows × ncols] row-major; the logical
+    // tensor is its transpose, so dst[i*ncols + j] = src[j*nrows + i].
+    // Called only from gather_logical when rank==2, stride[0]==1, stride[1]==nrows.
+    static void tiled_transpose_2d(
+        value_t const* src, value_t* dst,
+        int64_t nrows, int64_t ncols) noexcept
+    {
+        static constexpr int64_t T = 8;
+        for (int64_t io = 0; io < nrows; io += T)
+        {
+            const int64_t i_end = std::min(io + T, nrows);
+            for (int64_t jo = 0; jo < ncols; jo += T)
+            {
+                const int64_t j_end = std::min(jo + T, ncols);
+                for (int64_t i = io; i < i_end; ++i)
+                    for (int64_t j = jo; j < j_end; ++j)
+                        dst[i * ncols + j] = src[j * nrows + i];
+            }
+        }
+    }
+
     void gather_logical(value_t const* storage, value_t* dst) const
     {
         const size_t total = numel_;
@@ -1553,6 +1830,24 @@ private:
         const size_t     n        = rank();
         constexpr size_t kMaxRank = 16;
         VECTORIZATION_CHECK(n <= kMaxRank, "gather_logical: rank exceeds 16");
+
+        // Fast path for the common 2-D transpose: a.t().contiguous() where a was
+        // row-major [M, N]. After t(): logical [N, M], strides [1, N].
+        // Tiled 8×8 copy is cache-friendly vs. element-by-element gather.
+        if (n == 2)
+        {
+            const int64_t s0 = sizes_and_strides_.stride_at_unchecked(0);
+            const int64_t s1 = sizes_and_strides_.stride_at_unchecked(1);
+            const int64_t d0 = sizes_and_strides_.size_at_unchecked(0);
+            const int64_t d1 = sizes_and_strides_.size_at_unchecked(1);
+            if (s0 == 1 && s1 == d0)
+            {
+                // Logical: [d0 rows, d1 cols]; physical src has d0-element rows.
+                tiled_transpose_2d(storage, dst, d0, d1);
+                return;
+            }
+        }
+
         size_t coord[kMaxRank] = {};
         size_t off             = 0;
         for (size_t i = 0; i < total; ++i)
@@ -1609,7 +1904,8 @@ private:
         const size_t n = rank();
         if (n == 0)
         {
-            numel_       = 0;
+            // A 0-d tensor holds one element (empty product), as in PyTorch and NumPy.
+            numel_       = 1;
             contiguous_  = true;
             align_start_ = 0;
             align_end_   = 0;

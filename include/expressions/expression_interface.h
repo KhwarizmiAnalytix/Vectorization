@@ -28,14 +28,15 @@
 #include "common/vectorization_macros.h"
 #include "common/vectorization_type_traits.h"
 #include "expressions/expression_interface_loader.h"
+#include "expressions/expression_shape.h"
 #include <backend/simd.h>
 #include <math/scalar_helper_functions.h>
 
 namespace vectorization
 {
 // std::conditional_t instantiates both branches, so a helper trait is required:
-// tensor leaves become a data_view (pointer alias, GPU-memcpy-safe); nested
-// expression nodes stay by value.
+// tensor leaves become a strided_ref (pointer, shape and strides; GPU-memcpy-safe);
+// nested expression nodes stay by value.
 template <typename T, bool = is_tensor<vectorization::remove_cvref_t<T>>::value>
 struct stored_operand
 {
@@ -45,7 +46,7 @@ struct stored_operand
 template <typename T>
 struct stored_operand<T, true>
 {
-    using type = memory::data_view<typename vectorization::remove_cvref_t<T>::value_type>;
+    using type = strided_ref<typename vectorization::remove_cvref_t<T>::value_type>;
 };
 
 template <typename T>
@@ -60,12 +61,7 @@ VECTORIZATION_FUNCTION_ATTRIBUTE stored_operand_t<T> store_operand(T&& x)
     using raw = vectorization::remove_cvref_t<T>;
     if constexpr (is_tensor<raw>::value)
     {
-#if !VECTORIZATION_ON_GPU_DEVICE
-        VECTORIZATION_CHECK(
-            x.is_contiguous(), "expression operands must be contiguous; call contiguous() first");
-#endif
-        auto view = x.memory_view();
-        return view.size() == x.size() ? view : view.subview(0, x.size());
+        return x.to_strided_ref();
     }
     else
     {
@@ -86,7 +82,8 @@ class unary_expression final
     stored_lhs lhs_;
 
 public:
-    VECTORIZATION_FUNCTION_ATTRIBUTE size_t size() const noexcept { return lhs_.size(); }
+    // Element count of the broadcast result (see expression_shape.h).
+    VECTORIZATION_FUNCTION_ATTRIBUTE size_t size() const noexcept { return expression_numel(*this); }
 
     static constexpr size_t length() { return rmv_lhs::length(); }
 
@@ -111,6 +108,10 @@ public:
     VECTORIZATION_FUNCTION_ATTRIBUTE unary_expression& operator=(unary_expression&& e) = delete;
 
     VECTORIZATION_FUNCTION_ATTRIBUTE const auto& rhs() const { return lhs_; }
+
+    // Planner access for rewriting the leaves of a local copy (expression_shape.h,
+    // iteration_plan.h); user code cannot assign expression nodes.
+    VECTORIZATION_FUNCTION_ATTRIBUTE auto& mutable_rhs() { return lhs_; }
 
     template <bool vectorize, bool aligned>
     VECTORIZATION_FUNCTION_ATTRIBUTE static auto evaluate(
@@ -147,15 +148,8 @@ class binary_expression final
     stored_rhs rhs_;
 
 public:
-    VECTORIZATION_FUNCTION_ATTRIBUTE size_t size() const noexcept
-    {
-        if constexpr (vectorization::is_expression<rmv_rhs>::value)  // NOLINT
-            return rhs_.size();
-        else if constexpr (vectorization::is_expression<rmv_lhs>::value)  // NOLINT
-            return lhs_.size();
-        else
-            return 0;
-    }
+    // Element count of the broadcast result (see expression_shape.h).
+    VECTORIZATION_FUNCTION_ATTRIBUTE size_t size() const noexcept { return expression_numel(*this); }
 
     VECTORIZATION_FUNCTION_ATTRIBUTE static constexpr size_t length()
     {
@@ -206,6 +200,10 @@ public:
     VECTORIZATION_FUNCTION_ATTRIBUTE const auto& lhs() const { return lhs_; }
     VECTORIZATION_FUNCTION_ATTRIBUTE const auto& rhs() const { return rhs_; }
 
+    // Planner access for rewriting the leaves of a local copy.
+    VECTORIZATION_FUNCTION_ATTRIBUTE auto& mutable_lhs() { return lhs_; }
+    VECTORIZATION_FUNCTION_ATTRIBUTE auto& mutable_rhs() { return rhs_; }
+
     template <bool vectorize, bool aligned>
     VECTORIZATION_FUNCTION_ATTRIBUTE static auto evaluate(
         binary_expression const& expr, size_t index) noexcept
@@ -247,23 +245,15 @@ class trinary_expression final
     stored_rhs rhs_;
 
 public:
+    // Element count of the broadcast result (see expression_shape.h).
     VECTORIZATION_FUNCTION_ATTRIBUTE size_t size() const noexcept
     {
-        if constexpr (vectorization::is_expression<rmv_lhs>::value)
-            return lhs_.size();
-        else if constexpr (vectorization::is_expression<rmv_mhs>::value)
-            return mhs_.size();
-        else if constexpr (vectorization::is_expression<rmv_rhs>::value)
-            return rhs_.size();
-        else
-        {
-            static_assert(
-                vectorization::is_expression<rmv_lhs>::value ||
-                    vectorization::is_expression<rmv_mhs>::value ||
-                    vectorization::is_expression<rmv_rhs>::value,
-                "trinary_expression: no operand is an expression");
-            return 0;  // unreachable; satisfies the compiler
-        }
+        static_assert(
+            vectorization::is_expression<rmv_lhs>::value ||
+                vectorization::is_expression<rmv_mhs>::value ||
+                vectorization::is_expression<rmv_rhs>::value,
+            "trinary_expression: no operand is an expression");
+        return expression_numel(*this);
     }
 
     VECTORIZATION_FUNCTION_ATTRIBUTE static constexpr size_t length()
@@ -309,6 +299,11 @@ public:
     VECTORIZATION_FUNCTION_ATTRIBUTE const auto& lhs() const { return lhs_; }
     VECTORIZATION_FUNCTION_ATTRIBUTE const auto& mhs() const { return mhs_; };
     VECTORIZATION_FUNCTION_ATTRIBUTE const auto& rhs() const { return rhs_; }
+
+    // Planner access for rewriting the leaves of a local copy.
+    VECTORIZATION_FUNCTION_ATTRIBUTE auto& mutable_lhs() { return lhs_; }
+    VECTORIZATION_FUNCTION_ATTRIBUTE auto& mutable_mhs() { return mhs_; }
+    VECTORIZATION_FUNCTION_ATTRIBUTE auto& mutable_rhs() { return rhs_; }
 
     template <bool vectorize, bool aligned>
     VECTORIZATION_FUNCTION_ATTRIBUTE static auto evaluate(

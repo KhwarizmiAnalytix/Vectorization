@@ -25,11 +25,20 @@
 #include <math/scalar_helper_functions.h>
 #include "common/vectorization_macros.h"
 #include "common/vectorization_type_traits.h"
+#include "expressions/strided_ref.h"
 
 namespace vectorization
 {
 template <typename value_t>
 class tensor;
+
+// Generic fallback: contiguous leaves (data_view, scalars) map flat index to flat.
+// The strided_ref overload in strided_ref.h overrides this via ADL.
+template <typename L>
+VECTORIZATION_FUNCTION_ATTRIBUTE size_t leaf_offset(L const&, size_t idx) noexcept
+{
+    return idx;
+}
 
 template <typename LHS, bool vectorize, bool aligned>
 class expression_loader final
@@ -40,7 +49,25 @@ public:
     VECTORIZATION_FUNCTION_ATTRIBUTE static auto evaluate(
         rmv_lhs const& expr, size_t index) noexcept
     {
-        if constexpr (vectorization::is_base_expression<rmv_lhs>::value)
+        if constexpr (vectorization::is_row_ref<rmv_lhs>::value)
+        {
+            // Row-relative leaf produced by the planner: `index` is the position in the
+            // current row. The planner only vectorizes rows whose leaves all have inner
+            // stride 0 (splat) or 1 (unit-stride load).
+#if VECTORIZATION_VECTORIZED
+            if constexpr (vectorize)
+            {
+                using value_t = typename rmv_lhs::value_type;
+                return expr.stride == 0 ? simd<value_t>::set(expr.ptr[0])
+                                        : simd<value_t>::loadu(expr.ptr + index);
+            }
+            else
+#endif
+            {
+                return expr.ptr[static_cast<int64_t>(index) * expr.stride];
+            }
+        }
+        else if constexpr (vectorization::is_base_expression<rmv_lhs>::value)
         {
             if constexpr (vectorize)
             {
@@ -59,7 +86,7 @@ public:
             }
             else
             {
-                return expr.data()[index];
+                return expr.data()[leaf_offset(expr, index)];
             }
         }
         else if constexpr (vectorization::is_pure_expression<rmv_lhs>::value)
@@ -79,7 +106,11 @@ public:
     VECTORIZATION_FUNCTION_ATTRIBUTE static void prefetch(
         rmv_lhs const& expr, size_t index) noexcept
     {
-        if constexpr (vectorization::is_base_expression<rmv_lhs>::value)
+        if constexpr (vectorization::is_row_ref<rmv_lhs>::value)
+        {
+            // The planner owns prefetch for row kernels.
+        }
+        else if constexpr (vectorization::is_base_expression<rmv_lhs>::value)
         {
             if constexpr (vectorize)
             {

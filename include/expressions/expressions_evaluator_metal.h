@@ -169,6 +169,12 @@ struct metal_expr_fusable<tensor<V>> : std::bool_constant<std::is_same_v<V, floa
 {
 };
 
+template <typename V, int MaxRank>
+struct metal_expr_fusable<strided_ref<V, MaxRank>>
+    : std::bool_constant<std::is_same_v<std::remove_cv_t<V>, float>>
+{
+};
+
 template <typename S>
 struct metal_expr_fusable<S, std::enable_if_t<std::is_fundamental<S>::value>> : std::true_type
 {
@@ -230,6 +236,26 @@ void metal_fuse_emit(memory::data_view<Value> const& t, metal_fuse_state& st)
     VECTORIZATION_CHECK_DEBUG(
         t.device() == memory::device_enum::METAL,
         "Metal expression mixes a non-METAL tensor operand");
+    st.body += "in";
+    st.body += std::to_string(st.n_buffers);
+    st.body += "[tid]";
+    st.buffers[st.n_buffers++] = t.data();
+}
+
+// Tensor leaf. run()/reduce paths only reach the emitter once leaves_flat()
+// holds, so every leaf is packed and in[tid] reads its tid-th logical element.
+template <typename Value, int MaxRank>
+void metal_fuse_emit(strided_ref<Value, MaxRank> const& t, metal_fuse_state& st)
+{
+    if (!st.ok || st.n_buffers >= metal_fuse_state::kMaxSlots)
+    {
+        metal_fuse_fail(st);
+        return;
+    }
+    VECTORIZATION_CHECK_DEBUG(
+        t.device() == memory::device_enum::METAL,
+        "Metal expression mixes a non-METAL tensor operand");
+    VECTORIZATION_CHECK_DEBUG(t.is_contiguous(), "Metal expression operand is not packed");
     st.body += "in";
     st.body += std::to_string(st.n_buffers);
     st.body += "[tid]";

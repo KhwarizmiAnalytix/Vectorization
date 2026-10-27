@@ -35,6 +35,7 @@ vectorization_forward_dependency(LOGGING Logging::Logging)
 vectorization_forward_dependency(MEMORY Memory::Memory)
 vectorization_forward_dependency(SCALARS Scalars::Scalars)
 vectorization_forward_dependency(LINALG LinearAlgebra::LinearAlgebra)
+vectorization_forward_dependency(PARALLEL Parallel::Parallel)
 
 if(NOT TARGET Logging::Logging)
   foreach(feature IN ITEMS MAGICENUM PORTABLE_FLOAT_FORMAT)

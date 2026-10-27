@@ -385,6 +385,108 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
   # ---------------------------------------------------------------------------
+  # Compiler cache + Icecream, cross-platform: toolchain-axes above only covers
+  # ccache on Linux. This job exercises VECTORIZATION_ENABLE_CACHE (ccache,
+  # sccache) and VECTORIZATION_ENABLE_ICECC on Linux, macOS, and Windows.
+  # buildcache is intentionally not covered -- it needs a separate pinned
+  # installer, out of scope here. Icecream has no Windows port, so icecc is
+  # Linux/macOS only.
+  # ---------------------------------------------------------------------------
+  cache-icecc:
+    name: Cache/Icecc / ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-ccache
+            os: ubuntu-latest
+            cmake_flags: -DVECTORIZATION_ENABLE_CACHE=ON -DVECTORIZATION_CACHE_BACKEND=ccache
+          - name: linux-sccache
+            os: ubuntu-latest
+            cmake_flags: -DVECTORIZATION_ENABLE_CACHE=ON -DVECTORIZATION_CACHE_BACKEND=sccache
+            use_sccache_action: true
+          - name: linux-icecc
+            os: ubuntu-latest
+            cmake_flags: -DVECTORIZATION_ENABLE_ICECC=ON
+          - name: macos-ccache
+            os: macos-latest
+            cmake_flags: -DVECTORIZATION_ENABLE_CACHE=ON -DVECTORIZATION_CACHE_BACKEND=ccache
+          - name: macos-sccache
+            os: macos-latest
+            cmake_flags: -DVECTORIZATION_ENABLE_CACHE=ON -DVECTORIZATION_CACHE_BACKEND=sccache
+            use_sccache_action: true
+          - name: macos-icecc
+            os: macos-latest
+            cmake_flags: -DVECTORIZATION_ENABLE_ICECC=ON
+          - name: windows-ccache
+            os: windows-latest
+            cmake_flags: -DVECTORIZATION_ENABLE_CACHE=ON -DVECTORIZATION_CACHE_BACKEND=ccache
+          - name: windows-sccache
+            os: windows-latest
+            cmake_flags: -DVECTORIZATION_ENABLE_CACHE=ON -DVECTORIZATION_CACHE_BACKEND=sccache
+            use_sccache_action: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Ninja + ccache + icecc (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build ccache icecc
+
+      - name: Install ccache + icecream (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja ccache icecream
+
+      - name: Install ccache (Windows)
+        if: runner.os == 'Windows'
+        run: choco install -y ccache
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+        if: matrix.use_sccache_action
+        with:
+          version: v0.12.0
+
+      - name: Configure (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DVECTORIZATION_CPU_BACKEND=avx2
+          -DVECTORIZATION_GPU_BACKEND=none
+          -DVECTORIZATION_ENABLE_TESTING=ON
+          -DVECTORIZATION_ENABLE_BENCHMARK=OFF
+          ${{ matrix.cmake_flags }}
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: >
+          cmake -S . -B build
+          -DVECTORIZATION_CPU_BACKEND=avx2
+          -DVECTORIZATION_GPU_BACKEND=none
+          -DVECTORIZATION_ENABLE_TESTING=ON
+          -DVECTORIZATION_ENABLE_BENCHMARK=OFF
+          ${{ matrix.cmake_flags }}
+
+      - name: Build (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: cmake --build build
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release
+
+      - name: Test (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: ctest --test-dir build --build-config Release --output-on-failure
+
+  # ---------------------------------------------------------------------------
   # Static analysis: clang-tidy and include-what-you-use, each their own job
   # so a failure in one doesn't mask the other. Default CPU backend (avx2),
   # GPU backend none.

@@ -52,7 +52,6 @@ Confirmed by source inspection and Release-build probes:
 | Views borrow storage | `t()`, `slice()`, `permute()`, `contiguous()`, `to_cpu()` | A view returned from a function can dangle |
 | Expression leaves borrow `data_view` | `store_operand()` | `auto e = tensor(n) + a` dangles |
 | Expression operands must be contiguous | `store_operand()` | A transpose must be materialized before arithmetic |
-| Copying a slice copies `offset + size` elements | copy constructor | A 4-element slice of 1,024 elements copies 1,024 |
 | GPU `clone()` of any slice is staged through host memory | `tensor::clone()` | Device → host → device for an interior slice |
 | Negative slice steps are accepted, and with the default `stop` the result is empty | `slice()` | `stop = -1` means "to end", so a reverse slice can't reach index 0; negative strides then reach code that casts strides to `size_t` |
 | Matrix operations are under `#if 0`; the class comment says `*` is matrix multiplication | `tensor.h` | `*` is elementwise; there is no tensor-level GEMM |
@@ -702,7 +701,7 @@ before each phase begins.
 
 | Phase | Repository | Scope | Correctness gate | Performance gate |
 |---|---|---|---|---|
-| P0 | Vectorization | Result shape when leaf shapes are equal; validate every leaf's shape; Release checks on view operations; overlap classifier raising errors; copy constructor copies logical elements only | Every probe in [section 1](#1-problems-with-the-current-tensor) has a passing Release test | Release benchmarks at today's speed; shape checks run outside the inner loop |
+| P0 | Vectorization | Result shape when leaf shapes are equal; validate every leaf's shape; Release checks on view operations; overlap classifier raising errors; copy constructor keeps source strides and copies the view span at offset 0 (`clone()` packs) | Every probe in [section 1](#1-problems-with-the-current-tensor) has a passing Release test | Release benchmarks at today's speed; shape checks run outside the inner loop |
 | P1 | Vectorization | `retained_ptr` storage, explicit offset, views retain storage | Lifetime tests (view outlives owner, deferred expression) clean under AddressSanitizer | Construction and destruction of a tensor: one heap allocation after U1 |
 | P2 | Vectorization | `tensor` / `tensor_view` split, rvalue capture into expressions, `noalias()` proxy for elementwise assignment | View assignment writes through; `noalias()` overlap caught in Debug; existing tests pass unchanged | Expression building with `tensor<T>` leaves adds no atomic operations |
 | P3 | Vectorization | CPU planner tiers 0–2 with `iteration_plan` and `run_range`; `parallel_for` above grain size; contiguous fast path; `loop2d`; tiled transpose; lane-reversing `flip`; tier-2 specialization; planner-owned prefetch; broadcasting; PyTorch reshape rule; CPU reductions ([section 10](#10-reductions)) | Tier 0 benchmark within noise of today; strided, broadcast and `flip` tests pass | Tier 0 ≥ 90% of STREAM triad bandwidth on one thread and scales with threads; tier 1 ≥ 80% for rows ≥ 256 elements; latency at n ≤ 64 within 10% of today; `t().contiguous()` ≥ 50% of tier-0 copy bandwidth |

@@ -780,19 +780,26 @@ VECTORIZATION_NOINLINE void test_tensor_contiguity()
         EXPECT_TRUE(empty_dim.is_contiguous());
     }
 
-    // Copy construction/assignment always produce a contiguous C-order clone.
-    // Views remain non-contiguous; only the COPY is contiguous.
+    // Copy construction/assignment recomputes contiguity from the copied
+    // shape/strides -- it mirrors the source, it is not always true.
     {
         tensor_t m(dims_t{3, 4});
         tensor_t transposed = m.t();
         EXPECT_FALSE(transposed.is_contiguous());
 
         tensor_t copy_ctor(transposed);
-        EXPECT_TRUE(copy_ctor.is_contiguous());
+        EXPECT_FALSE(copy_ctor.is_contiguous());
+        EXPECT_NE(copy_ctor.data(), transposed.data());
+        EXPECT_EQ(copy_ctor.dimension(0), transposed.dimension(0));
+        EXPECT_EQ(copy_ctor.dimension(1), transposed.dimension(1));
+        EXPECT_EQ(copy_ctor.stride(0), transposed.stride(0));
+        EXPECT_EQ(copy_ctor.stride(1), transposed.stride(1));
 
         tensor_t copy_assign;
         copy_assign = transposed;
-        EXPECT_TRUE(copy_assign.is_contiguous());
+        EXPECT_FALSE(copy_assign.is_contiguous());
+        EXPECT_EQ(copy_assign.stride(0), transposed.stride(0));
+        EXPECT_EQ(copy_assign.stride(1), transposed.stride(1));
 
         tensor_t contiguous_src(dims_t{3, 4});
         tensor_t copy_of_contiguous(contiguous_src);
@@ -991,10 +998,13 @@ VECTORIZATIONTEST(Math, TensorMemoryStorage)
     EXPECT_EQ(owned.data(), original.data());
     EXPECT_EQ(owned.memory_view().id(), original.id());
 
-    // Copies always produce a contiguous C-order clone with independent storage.
+    // Copies keep the source layout on independent storage. The owned buffer
+    // starts at offset 0 (the prefix before an interior view is not copied).
     auto     transposed = owned.t();
     tensor_t copied(transposed);
-    EXPECT_TRUE(copied.is_contiguous());
+    EXPECT_FALSE(copied.is_contiguous());
+    EXPECT_EQ(copied.stride(0), transposed.stride(0));
+    EXPECT_EQ(copied.stride(1), transposed.stride(1));
     EXPECT_NE(copied.memory_view().id(), original.id());
     for (size_t i = 0; i < copied.size(); ++i)
     {
@@ -1003,7 +1013,9 @@ VECTORIZATIONTEST(Math, TensorMemoryStorage)
     tensor_t assigned;
     const auto strided = owned.slice(1, 1, 4, 2);
     assigned = strided;
-    EXPECT_TRUE(assigned.is_contiguous());
+    EXPECT_FALSE(assigned.is_contiguous());
+    EXPECT_EQ(assigned.stride(0), strided.stride(0));
+    EXPECT_EQ(assigned.stride(1), strided.stride(1));
     EXPECT_NE(assigned.memory_view().id(), original.id());
     EXPECT_EQ(assigned.memory_view().base(), assigned.data());
     EXPECT_EQ(assigned.to_host_vector(), (std::vector<float>{1, 3, 5, 7, 9, 11}));

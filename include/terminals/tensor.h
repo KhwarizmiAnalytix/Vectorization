@@ -505,17 +505,23 @@ public:
     }
 
     // -----------------------------------------------------------------------
-    // Copy / move — copy always deep-clones into a new data_ptr (same contract
-    // as memory::data_ptr). Wrap / t() / slice results borrow; copying them
-    // materializes an owned buffer. Move transfers owner_ when present.
+    // Copy / move — copy materializes an owned buffer with the source's sizes
+    // and strides. Contiguity is recomputed from that shape, so a
+    // non-contiguous view stays non-contiguous. Wrap / t() / slice results
+    // borrow; copying them owns storage. Move transfers owner_ when present.
+    // clone() is the operation that packs into C-order.
     // -----------------------------------------------------------------------
 
-    // Deep copy: always allocates numel_ elements at offset 0, regardless of
-    // whether rhs was a view with non-zero storage_offset. Non-contiguous sources
-    // are gathered into C-order. Delegate via move to avoid duplicating clone().
+    // Deep copy of the view's physical span (elements from data() through the
+    // last one the strides touch), placed at offset 0. The prefix before an
+    // interior view and the unused tail after it are not copied. Sizes and
+    // strides are then installed and contiguity is re-derived.
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor(tensor const& rhs)
-        : tensor(rhs.clone())
+        : tensor(rhs.physical_span(), rhs.device(), rhs.device_index(), rhs.stream())
     {
+        copy_physical_span_from(rhs);
+        sizes_and_strides_ = rhs.sizes_and_strides_;
+        recompute_cpu_simd_alignment_state();
     }
 
     VECTORIZATION_FUNCTION_ATTRIBUTE tensor(tensor&& rhs) noexcept
@@ -1480,8 +1486,73 @@ public:
     }
 
 private:
-    // Memory's GPU copy API tracks allocation bases. Copy the prefix before an
-    // interior view too, then recreate that view over the independent owner.
+    // Elements occupied by this view, counting gaps the strides leave in place.
+    // Empty tensors occupy nothing. Non-negative strides make data() the first
+    // address, so the span is [data(), data() + physical_span()).
+    size_t physical_span() const noexcept
+    {
+        if (numel_ == 0 || data() == nullptr)
+        {
+            return 0;
+        }
+        size_t extent = 0;
+        for (size_t i = 0; i < rank(); ++i)
+        {
+            const int64_t n = sizes_and_strides_.size_at_unchecked(i);
+            if (n <= 0)
+            {
+                return 0;
+            }
+            const int64_t stride = sizes_and_strides_.stride_at_unchecked(i);
+            extent += static_cast<size_t>(n - 1) * static_cast<size_t>(stride);
+        }
+        return extent + 1;
+    }
+
+    // *this is a flat buffer of src.physical_span() elements. Fill it with the
+    // bytes of src's span. GPU copies must name an allocation base, so an
+    // interior view is staged through host from that base and only the span
+    // is uploaded.
+    void copy_physical_span_from(tensor const& src)
+    {
+        const size_t span = src.physical_span();
+        if (span == 0)
+        {
+            return;
+        }
+        if (src.device() == device_enum::CPU)
+        {
+            std::copy_n(src.data(), span, data());
+            return;
+        }
+        const size_t offset = storage_offset(src.view_);
+        if (offset == 0)
+        {
+            allocator_t::copy_sync(
+                src.data(),
+                span,
+                data(),
+                src.device(),
+                device(),
+                src.device_index(),
+                device_index(),
+                static_cast<typename allocator_t::stream_t>(stream()));
+            return;
+        }
+        owner_t window(offset + span, device_enum::CPU);
+        allocator_t::copy_sync(
+            src.view_.base(),
+            offset + span,
+            window.data(),
+            src.device(),
+            device_enum::CPU,
+            src.device_index(),
+            0,
+            static_cast<typename allocator_t::stream_t>(src.stream()));
+        copy_from_host(window.data() + offset, span);
+    }
+
+    // Memory's GPU copy API tracks allocation bases.
     static size_t storage_offset(view_t view) noexcept
     {
         return view.data() == nullptr ? 0 :

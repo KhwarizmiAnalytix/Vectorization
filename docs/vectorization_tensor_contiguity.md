@@ -127,7 +127,7 @@ symptom sharper: what used to just silently skip an optimization now throws.
 | Operation | Result contiguity | Why |
 |---|---|---|
 | Any fresh-shape constructor | always `true` | `make_contiguous_sas()` builds canonical strides from scratch |
-| Copy ctor / copy assignment | always `true` | deep copy through `clone()`: only the logical elements, packed at offset 0 |
+| Copy ctor / copy assignment | mirrors source shape, recomputed | same sizes and strides are copied in; contiguity is re-derived from that shape, not taken from the source flag. The owned buffer is the view's physical span at offset 0 |
 | Move ctor / move assignment | mirrors source's cached flag (not recomputed); moved-from resets to `true`, empty | shape didn't change, no need to redo the O(rank) walk |
 | `clone()` | always `true` | `stamp_contiguous_shape()` rebuilds canonical strides over the packed copy, regardless of the source's contiguity |
 | `contiguous()` | always `true` | borrows (`is_contiguous()` already `true`) or falls back to `clone()` |

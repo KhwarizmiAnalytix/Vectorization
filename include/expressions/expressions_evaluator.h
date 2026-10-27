@@ -67,8 +67,7 @@ VECTORIZATION_FUNCTION_ATTRIBUTE void unroll_impl(F&& f, std::index_sequence<Is.
     (f(std::integral_constant<std::size_t, Is>{}), ...);
 }
 
-template <std::size_t N, typename F>
-VECTORIZATION_FUNCTION_ATTRIBUTE void unroll(F&& f) noexcept
+template <std::size_t N, typename F> VECTORIZATION_FUNCTION_ATTRIBUTE void unroll(F&& f) noexcept
 {
     unroll_impl<N>(std::forward<F>(f), std::make_index_sequence<N>{});
 }
@@ -87,8 +86,7 @@ private:
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE static void check_cpu_reachable(
         T const& rhs, const char* caller)
     {
-        VECTORIZATION_CHECK(
-            rhs.device() == device_enum::CPU,
+        VECTORIZATION_CHECK(rhs.device() == device_enum::CPU,
             "{}: destination device() is not CPU, and no GPU/Metal dispatch handled it in this "
             "translation unit (CUDA/HIP require compiling with nvcc/hipcc; Metal requires "
             "VECTORIZATION_HAS_METAL)",
@@ -102,8 +100,7 @@ private:
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE static void check_contiguous(
         T const& rhs, const char* caller)
     {
-        VECTORIZATION_CHECK(
-            rhs.is_contiguous(),
+        VECTORIZATION_CHECK(rhs.is_contiguous(),
             "{}: destination must be contiguous; call contiguous() first",
             caller);
     }
@@ -120,8 +117,7 @@ private:
         }
         if (!equal)
         {
-            VECTORIZATION_CHECK(
-                false,
+            VECTORIZATION_CHECK(false,
                 "expression result shape {} does not match destination shape {}",
                 shape_to_string(shape.rank, shape.sizes),
                 shape_to_string(static_cast<int>(dims.size()), dims.data()));
@@ -233,8 +229,7 @@ public:
             {
                 // The fused MSL kernel indexes every buffer as in[tid].
                 check_contiguous(rhs, "expressions_evaluator::run (Metal)");
-                VECTORIZATION_CHECK(
-                    flat,
+                VECTORIZATION_CHECK(flat,
                     "expressions_evaluator::run (Metal): strided or broadcast operands are not "
                     "supported on Metal yet; call contiguous() on them first");
                 vectorization::run_metal(expr, rhs);
@@ -259,8 +254,7 @@ public:
 #if VECTORIZATION_VECTORIZED
         using value_t  = typename vectorization::scalar_type<T, T>::value;
         using raw_dest = vectorization::remove_cvref_t<T>;
-        static_assert(
-            vectorization::is_base_expression<raw_dest>::value,
+        static_assert(vectorization::is_base_expression<raw_dest>::value,
             "expressions_evaluator::run (vectorized) requires a tensor destination");
 
         // length == simd<value_t>::size: one SIMD register per loop step.
@@ -283,27 +277,24 @@ public:
         // current x86 and Arm — C6). For small tensors stay single-threaded.
         static constexpr int64_t kGrainSize = 32768;  // elements, as in PyTorch
 
+#if VECTORIZATION_ENABLE_PARALLEL
         if (static_cast<int64_t>(n - i) >= kGrainSize)
         {
-#if VECTORIZATION_ENABLE_PARALLEL
             // Parallel path: every chunk is run_chunk_contiguous over [begin, end).
             // The scalar peel [0, cap) was already handled above, so chunks start at i.
             const size_t aligned_begin = i;
             const size_t n_remain      = n - aligned_begin;
-            auto _chunk_fn = [&](size_t begin, size_t end)
+            auto         _chunk_fn     = [&](size_t begin, size_t end)
             {
                 run_chunk_contiguous<E, value_t, length>(
-                    expr,
-                    data,
-                    aligned_begin + begin,
-                    aligned_begin + end);
+                    expr, data, aligned_begin + begin, aligned_begin + end);
             };
             parallel_tools::parallel_for(
                 size_t{0}, n_remain, static_cast<size_t>(kGrainSize), _chunk_fn);
             i = n;  // scalar tail below will be a no-op
-#endif
         }
         else
+#endif
         {
             // Single-threaded path with aligned stores in the destination-aligned body.
             const size_t loop_peel = rhs.align_end();
@@ -350,7 +341,8 @@ public:
             }
             for (; i < loop_peel2; i += length)
             {
-                const auto temp = vectorization::expression_loader<E, true, false>::evaluate(expr, i);
+                const auto temp =
+                    vectorization::expression_loader<E, true, false>::evaluate(expr, i);
                 simd<value_t>::storeu(temp, &data[i]);
             }
         }
@@ -410,8 +402,7 @@ public:
         if (rhs.device() == device_enum::CUDA || rhs.device() == device_enum::HIP)
         {
             using value_t = typename vectorization::scalar_type<T, T>::value;
-            vectorization::fill_gpu(
-                static_cast<value_t*>(rhs.begin()),
+            vectorization::fill_gpu(static_cast<value_t*>(rhs.begin()),
                 static_cast<value_t>(value),
                 rhs.size(),
                 stream);
@@ -501,8 +492,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void accumulate_expression_device(
         }
         else
         {
-            VECTORIZATION_CHECK(
-                expr.device() == kind && expr.device_index() == index,
+            VECTORIZATION_CHECK(expr.device() == kind && expr.device_index() == index,
                 "expression mixes devices or device indices");
         }
     }
@@ -511,8 +501,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void accumulate_expression_device(
 // True when the GPU reduce kernels can read every operand at flat index i:
 // a packed tensor, or an expression whose leaves are all packed with the
 // result's element count. Validates the expression's shape either way.
-template <typename E>
-VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool reduce_operands_flat(E const& expr)
+template <typename E> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool reduce_operands_flat(E const& expr)
 {
     if constexpr (is_pure_expression<E>::value)
     {
@@ -570,8 +559,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool try_reduce_gpu(E const& expr, value_t
     {
         if (kind == device_enum::METAL)
         {
-            VECTORIZATION_CHECK(
-                flat,
+            VECTORIZATION_CHECK(flat,
                 "accumulate/hmin/hmax (Metal): strided or broadcast operands are not supported "
                 "on Metal yet; call contiguous() on them first");
             out = reduce_metal<E, Op>(expr, expr.size());
@@ -580,8 +568,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool try_reduce_gpu(E const& expr, value_t
     }
 #endif
     (void)flat;
-    VECTORIZATION_CHECK(
-        kind == device_enum::CPU,
+    VECTORIZATION_CHECK(kind == device_enum::CPU,
         "accumulate/hmin/hmax: GPU expression but this translation unit has no GPU reduce "
         "path (CUDA/HIP require compiling with nvcc/hipcc; Metal requires "
         "VECTORIZATION_HAS_METAL)");
@@ -631,8 +618,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool reduce_strided(E const& expr, value_t
 // accumulate: returns value_t (not hardcoded double) to avoid implicit widening
 // for float expressions. Not noexcept: the GPU path can VECTORIZATION_CHECK /
 // allocate.
-template <typename EXPR>
-VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto accumulate(EXPR&& expression)
+template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto accumulate(EXPR&& expression)
 {
     using E       = vectorization::remove_cvref_t<EXPR>;
     using value_t = typename vectorization::scalar_type<E, E>::value;
@@ -669,8 +655,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto accumulate(EXPR&& expression)
         if (i < n)
         {
             simd_t sum_packet[packet];
-            detail::unroll<packet>(
-                [&](auto k)
+            detail::unroll<packet>([&](auto k)
                 { sum_packet[decltype(k)::value] = simd<value_t>::set(static_cast<value_t>(0.)); });
 
             const size_t loop_peel = expression.align_end();
@@ -747,8 +732,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto accumulate(EXPR&& expression)
         if (loop_peel > 0)
         {
             simd_t sum_packet[packet];
-            detail::unroll<packet>(
-                [&](auto k)
+            detail::unroll<packet>([&](auto k)
                 { sum_packet[decltype(k)::value] = simd<value_t>::set(static_cast<value_t>(0.)); });
 
             if constexpr (packet > 1)
@@ -799,8 +783,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto accumulate(EXPR&& expression)
 }
 
 //================================================================================================
-template <typename EXPR>
-VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmin(EXPR&& expression)
+template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmin(EXPR&& expression)
 {
     using E       = vectorization::remove_cvref_t<EXPR>;
     using value_t = typename vectorization::scalar_type<E, E>::value;
@@ -813,8 +796,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmin(EXPR&& expression)
     }
 
     value_t ret = std::numeric_limits<value_t>::max();
-    if (detail::reduce_strided(
-            static_cast<E const&>(expression),
+    if (detail::reduce_strided(static_cast<E const&>(expression),
             ret,
             [](value_t a, value_t b) { return std::fmin(a, b); }))
     {
@@ -833,8 +815,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmin(EXPR&& expression)
     {
         const size_t cap = expression.align_start();
         for (; i < cap; ++i)
-            ret = std::fmin(
-                ret,
+            ret = std::fmin(ret,
                 vectorization::expression_loader<E, false, false>::evaluate(
                     static_cast<E const&>(expression), i));
 
@@ -975,8 +956,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmin(EXPR&& expression)
     }
 #endif
     for (; i < n; ++i)
-        ret = std::fmin(
-            ret,
+        ret = std::fmin(ret,
             vectorization::expression_loader<E, false, false>::evaluate(
                 static_cast<E const&>(expression), i));
 
@@ -984,8 +964,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmin(EXPR&& expression)
 }
 
 //================================================================================================
-template <typename EXPR>
-VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmax(EXPR&& expression)
+template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmax(EXPR&& expression)
 {
     using E       = vectorization::remove_cvref_t<EXPR>;
     using value_t = typename vectorization::scalar_type<E, E>::value;
@@ -1000,8 +979,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmax(EXPR&& expression)
     // Use -max(), not min(): for floats std::numeric_limits<float>::min() is the
     // smallest *positive* value (~1.2e-38), not the most negative one.
     value_t ret = -std::numeric_limits<value_t>::max();
-    if (detail::reduce_strided(
-            static_cast<E const&>(expression),
+    if (detail::reduce_strided(static_cast<E const&>(expression),
             ret,
             [](value_t a, value_t b) { return std::fmax(a, b); }))
     {
@@ -1020,8 +998,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmax(EXPR&& expression)
     {
         const size_t cap = expression.align_start();
         for (; i < cap; ++i)
-            ret = std::fmax(
-                ret,
+            ret = std::fmax(ret,
                 vectorization::expression_loader<E, false, false>::evaluate(
                     static_cast<E const&>(expression), i));
 
@@ -1162,8 +1139,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmax(EXPR&& expression)
     }
 #endif
     for (; i < n; ++i)
-        ret = std::fmax(
-            ret,
+        ret = std::fmax(ret,
             vectorization::expression_loader<E, false, false>::evaluate(
                 static_cast<E const&>(expression), i));
 

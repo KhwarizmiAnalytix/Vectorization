@@ -47,8 +47,8 @@ jobs:
         shell: bash
         run: python .github/scripts/install_buildcache.py --prefix "$RUNNER_TEMP/buildcache-tool"
 
-      - name: Check MSVC debug flag regression
-        run: python -m unittest discover -s Testing/CMake -p test_platform.py -v
+      - name: Check CMake option and MSVC debug flag regressions
+        run: python -m unittest discover -s Testing/CMake -v
 
       - name: Configure
         run: >
@@ -59,7 +59,6 @@ jobs:
           -DVECTORIZATION_ENABLE_TESTING=ON
           -DVECTORIZATION_ENABLE_BENCHMARK=OFF
           -DVECTORIZATION_CPU_BACKEND=no
-          -DLINALG_CPU_BACKEND=no
           -DVECTORIZATION_GPU_BACKEND=none
 
       - name: Verify BuildCache is the compiler launcher

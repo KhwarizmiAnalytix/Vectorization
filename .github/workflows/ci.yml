@@ -64,7 +64,7 @@ jobs:
         run: cmake --build build
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: python3 .github/scripts/ctest_cpu.py --backend=${{ matrix.cpu_backend }} --config=${{ matrix.build_type }}
 
   # ---------------------------------------------------------------------------
   # Linux AArch64 CPU: NEON and SVE, via QEMU-backed cross toolchain is out of
@@ -143,7 +143,7 @@ jobs:
           # Keep hipcc and the SDK on the same AMD release; Ubuntu also ships hipcc.
           printf 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600\n' | sudo tee /etc/apt/preferences.d/rocm-pin-600
           sudo apt-get update
-          sudo apt-get install -y hip-dev hipcc
+          sudo apt-get install -y hip-dev hipcc hipblas-dev hipsolver-dev
           echo "ROCM_PATH=/opt/rocm" >> "$GITHUB_ENV"
           echo "/opt/rocm/bin" >> "$GITHUB_PATH"
 
@@ -157,6 +157,7 @@ jobs:
           -DVECTORIZATION_CPU_BACKEND=avx2
           -DVECTORIZATION_GPU_BACKEND=hip
           -DCMAKE_HIP_ARCHITECTURES=gfx90a
+          -DCMAKE_PREFIX_PATH=/opt/rocm
           -DPROJECT_HIP_ARCH_OPTIONS=gfx90a
           -DVECTORIZATION_ENABLE_TESTING=ON
           -DVECTORIZATION_ENABLE_BENCHMARK=OFF
@@ -262,7 +263,7 @@ jobs:
         run: cmake --build build --config Release
 
       - name: Test
-        run: ctest --test-dir build --build-config Release --output-on-failure
+        run: python .github/scripts/ctest_cpu.py --backend=${{ matrix.cpu_backend }}
 
   # ---------------------------------------------------------------------------
   # Optional numerical backends: SLEEF (NEON, macOS), Apple Accelerate vForce

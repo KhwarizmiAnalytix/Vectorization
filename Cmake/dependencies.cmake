@@ -8,23 +8,30 @@ function(vectorization_forward_dependency prefix target)
     feature IN
     ITEMS CACHE
           ICECC
-          CLANGTIDY
-          FIX
-          IWYU
           SANITIZER
           COVERAGE
-          SPELL
           VALGRIND
   )
     set(${prefix}_ENABLE_${feature} "${VECTORIZATION_ENABLE_${feature}}"
         CACHE BOOL "Configured by Vectorization" FORCE
     )
   endforeach()
+  # Analyze this project's sources; vendored projects own their lint policies.
+  foreach(feature IN ITEMS CLANGTIDY FIX IWYU SPELL)
+    set(${prefix}_ENABLE_${feature} OFF CACHE BOOL "Dependency analysis disabled" FORCE)
+  endforeach()
   foreach(setting IN ITEMS CACHE_BACKEND SANITIZER_TYPE LINKER_CHOICE LTO_MODE)
     set(${prefix}_${setting} "${VECTORIZATION_${setting}}"
         CACHE STRING "Configured by Vectorization" FORCE
     )
   endforeach()
+  # Scalars and LinearAlgebra require C++20 even when an older standard is
+  # requested for Vectorization. Forward newer standards consistently.
+  set(_dependency_standard "${VECTORIZATION_CXX_STANDARD}")
+  if(_dependency_standard LESS 20)
+    set(_dependency_standard 20)
+  endif()
+  set(${prefix}_CXX_STANDARD "${_dependency_standard}" CACHE STRING "Configured by Vectorization" FORCE)
   # This repository's testing and benchmark switches apply to its own targets.
   foreach(feature IN ITEMS TESTING BENCHMARK EXAMPLES)
     set(${prefix}_ENABLE_${feature} OFF CACHE BOOL "Dependency targets disabled" FORCE)
@@ -97,10 +104,20 @@ if(NOT TARGET Scalars::Scalars)
   set(SCALARS_ENABLE_SVML "${SCALARS_ENABLE_SVML}"
       CACHE BOOL "Enable Intel SVML short vector math library" FORCE
   )
+  if(TARGET sleef)
+    # The pinned SLEEF generates sleef.h in the top-level binary directory.
+    target_include_directories(sleef INTERFACE "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include>")
+  endif()
   if(SCALARS_ENABLE_SVML AND NOT TARGET SVML::SVML)
     message(
       FATAL_ERROR "VECTORIZATION_ENABLE_SVML=ON requires the SVML runtime in Scalars. "
                   "Provide ThirdParty/Scalars/ThirdParty/svml or disable VECTORIZATION_ENABLE_SVML."
     )
+  endif()
+  # Propagate the resolved CPU backend before configuring other consumers.
+  # For example, AVX2 on arm64 must also disable LinearAlgebra SIMD.
+  if(NOT VECTORIZATION_CPU_BACKEND STREQUAL SCALARS_CPU_BACKEND)
+    set(VECTORIZATION_CPU_BACKEND "${SCALARS_CPU_BACKEND}"
+        CACHE STRING "CPU SIMD backend resolved by Scalars" FORCE)
   endif()
 endif()

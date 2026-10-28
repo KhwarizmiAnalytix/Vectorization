@@ -211,6 +211,16 @@ if(VECTORIZATION_PACKET_SIZE GREATER 16)
   )
 endif()
 
+# Resolve automatic LTO before forwarding it to dependencies. CUDA and sccache
+# reject LTO; CMake's MSVC auto-export scanner cannot read /GL object files.
+if(VECTORIZATION_LTO_MODE STREQUAL "auto" AND
+   (VECTORIZATION_GPU_BACKEND STREQUAL "cuda" OR
+    (VECTORIZATION_ENABLE_CACHE AND VECTORIZATION_CACHE_BACKEND STREQUAL "sccache") OR
+    (MSVC AND BUILD_SHARED_LIBS)))
+  message(STATUS "Vectorization: automatic LTO disabled for this GPU/cache/shared-library configuration")
+  set(VECTORIZATION_LTO_MODE off CACHE STRING "LTO mode for Vectorization" FORCE)
+endif()
+
 # Set dependency options only after every public flag has been declared.
 include("${CMAKE_CURRENT_SOURCE_DIR}/Cmake/dependencies.cmake")
 

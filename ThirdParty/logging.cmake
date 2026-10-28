@@ -4,7 +4,7 @@ function(xsigma_add_logging_product)
         return()
     endif()
 
-    set(_logging_src "${XSIGMA_THIRDPARTY_DIR}/Logging")
+    set(_logging_src "${VECTORIZATION_THIRDPARTY_DIR}/Logging")
     if(NOT EXISTS "${_logging_src}/CMakeLists.txt")
         message(FATAL_ERROR "ThirdParty/Logging is missing. Initialize the submodule:\n"
                             "  git submodule update --init --recursive ThirdParty/Logging")

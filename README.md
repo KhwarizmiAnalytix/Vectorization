@@ -60,9 +60,10 @@ python Scripts/setup_bazel.py --help
 
 `.github/workflows/ci.yml` builds every CPU SIMD backend (`no`/`sse`/`avx`/`avx2`/
 `avx512` on Linux+Windows x86_64, `no`/`neon` on macOS AArch64), the Metal GPU
-backend (build + run on macOS's own GPU), and build-only CUDA/HIP jobs (no GPU
-present on GitHub-hosted runners, so `nvcc`/`hipcc` install and configure+build
-only, skipping `ctest`). Sanitizers, coverage, Valgrind, static analysis
+backend (build + run on macOS's own GPU), and CUDA/HIP jobs. CUDA uses Scalars'
+`nvidia/cuda:12.6.2-devel-ubuntu22.04` container to build tests and benchmarks.
+CUDA execution requires the NVIDIA driver library (`libcuda.so.1`); CUDA and HIP
+are build-only on GitHub-hosted runners. Sanitizers, coverage, Valgrind, static analysis
 (clang-tidy/IWYU/cppcheck), the Bazel build, and toolchain axes (LTO, linker,
 C++ standard, compiler cache) each run in their own job rather than a
 combinatorial matrix — see the comments in `ci.yml` for the exact coverage

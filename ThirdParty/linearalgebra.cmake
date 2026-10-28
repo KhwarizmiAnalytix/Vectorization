@@ -5,7 +5,7 @@ function(xsigma_add_linearalgebra_product)
         return()
     endif()
 
-    set(_linalg_src "${XSIGMA_THIRDPARTY_DIR}/LinearAlgebra")
+    set(_linalg_src "${VECTORIZATION_THIRDPARTY_DIR}/LinearAlgebra")
     if(NOT EXISTS "${_linalg_src}/CMakeLists.txt")
         message(FATAL_ERROR "ThirdParty/LinearAlgebra is missing. Initialize the submodule:\n"
                             "  git submodule update --init --recursive ThirdParty/LinearAlgebra")

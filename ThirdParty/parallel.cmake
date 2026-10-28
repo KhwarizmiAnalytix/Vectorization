@@ -6,7 +6,7 @@ function(xsigma_add_parallel_product)
         return()
     endif()
 
-    set(_parallel_src "${XSIGMA_THIRDPARTY_DIR}/Parallel")
+    set(_parallel_src "${VECTORIZATION_THIRDPARTY_DIR}/Parallel")
     if(NOT EXISTS "${_parallel_src}/CMakeLists.txt")
         message(FATAL_ERROR "ThirdParty/Parallel is missing. Initialize the submodule:\n"
                             "  git submodule update --init --recursive ThirdParty/Parallel")

@@ -13,7 +13,7 @@ include_guard(GLOBAL)
 # when they point at /usr. Idempotent. Safe to call from Profiler (configured
 # before Memory) as well as Library/Memory/Cmake/hip.cmake.
 macro(xsigma_setup_rocm_prefix)
-  if(NOT XSIGMA_ROCM_PREFIX)
+  if(NOT VECTORIZATION_ROCM_PREFIX)
     set(_xsigma_rocm_roots)
     foreach(_cand IN ITEMS "$ENV{ROCM_PATH}" "$ENV{HIP_PATH}" "/opt/rocm")
       if(_cand
@@ -45,7 +45,7 @@ macro(xsigma_setup_rocm_prefix)
     if(_xsigma_rocm_found)
       list(PREPEND CMAKE_PREFIX_PATH "${_xsigma_rocm_found}")
       list(REMOVE_DUPLICATES CMAKE_PREFIX_PATH)
-      set(XSIGMA_ROCM_PREFIX "${_xsigma_rocm_found}")
+      set(VECTORIZATION_ROCM_PREFIX "${_xsigma_rocm_found}")
       if(NOT DEFINED ENV{ROCM_PATH} OR "$ENV{ROCM_PATH}" STREQUAL "/usr")
         set(ENV{ROCM_PATH} "${_xsigma_rocm_found}")
       endif()

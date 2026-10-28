@@ -123,7 +123,7 @@ add_executable(VectorizationCxxTests ${test_sources})
 target_compile_definitions(
   VectorizationCxxTests
   PRIVATE VECTORIZATION_HAS_GTEST=1 VECTORIZATION_HAS_MKL=$<BOOL:${VECTORIZATION_ENABLE_MKL}>
-          XSIGMA_HAS_GTEST=1 XSIGMA_GOOGLE_TEST USE_GTEST _VARIADIC_MAX=10
+          VECTORIZATION_GOOGLE_TEST USE_GTEST _VARIADIC_MAX=10
 )
 
 target_link_libraries(
@@ -476,21 +476,6 @@ if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND _vectorization_has_cuda_gpu_tes
       )
     endif()
   else()
-    # nvcc (cicc) forces fmt's FMT_USE_INT128 fallback (fmt::detail::uint128,
-    # no operator~) even for host-only formatting of long double — see
-    # Testing/cuda_fmt_int128_fix.h for the full explanation. The ADL shim is
-    # pulled in via Testing/VectorizationTest.h.in for every GTest-based
-    # source (TestTensor*.cpp, TestTensorGpu.cpp) and #include-d directly at
-    # the top of BenchmarkTensorGpu.cpp (the one
-    # Google-Benchmark source, which doesn't use VectorizationTest.h) rather
-    # than force-included via -include here: nvcc reapplies generic compiler
-    # options (including -include) when it recompiles its own flattened
-    # cudafe1.cpp intermediate, which would re-inject all of <fmt> a second
-    # time with no header guards left (they were already consumed during the
-    # first preprocessing pass) and corrupt the parser's namespace state —
-    # see the git history of this file for the resulting cascade of
-    # "conflicting declaration" / "different namespace" errors.
-
     # GCC 13 + -O3 crashes (internal compiler error in try_forward_edges,
     # cfgcleanup.cc) while recompiling nvcc's generated host stub for the
     # heavily-templated gpu_eval_kernel/tensor.h expression-template
@@ -529,15 +514,13 @@ endif()
 if(VECTORIZATION_GPU_BACKEND STREQUAL "hip" AND _vectorization_hip_gpu_sources)
   add_executable(VectorizationHipCxxTests ${_vectorization_hip_gpu_sources})
   target_compile_definitions(
-    VectorizationHipCxxTests PRIVATE XSIGMA_HAS_GTEST=1 XSIGMA_GOOGLE_TEST USE_GTEST
-                                     _VARIADIC_MAX=10
+    VectorizationHipCxxTests
+    PRIVATE VECTORIZATION_HAS_GTEST=1 VECTORIZATION_GOOGLE_TEST USE_GTEST
+            _VARIADIC_MAX=10
   )
   target_link_libraries(
     VectorizationHipCxxTests PRIVATE Gtest::gtest Gtest::gtest_main Vectorization::Vectorization
   )
-  if(TARGET hip::device)
-    target_link_libraries(VectorizationHipCxxTests PRIVATE hip::device)
-  endif()
   set_target_properties(
     VectorizationHipCxxTests PROPERTIES HIP_STANDARD ${VECTORIZATION_CXX_STANDARD}
                                         HIP_ARCHITECTURES "${VECTORIZATION_GPU_ARCHITECTURES}"
@@ -588,7 +571,7 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
   # --- Google Benchmark setup ---
   if(NOT TARGET benchmark)
     set(_bench_external_found FALSE)
-    if(XSIGMA_ENABLE_EXTERNAL)
+    if(VECTORIZATION_ENABLE_EXTERNAL)
       find_package(benchmark QUIET)
       if(benchmark_FOUND)
         message(STATUS "Found external Google Benchmark")
@@ -619,7 +602,7 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
       set(BENCHMARK_USE_BUNDLED_GTEST OFF CACHE BOOL "Don't use bundled gtest for benchmark" FORCE)
       set(BENCHMARK_DOWNLOAD_DEPENDENCIES OFF CACHE BOOL "Don't download dependencies" FORCE)
       add_subdirectory(
-        "${XSIGMA_THIRDPARTY_DIR}/benchmark" "${CMAKE_BINARY_DIR}/ThirdParty/benchmark_build"
+        "${VECTORIZATION_THIRDPARTY_DIR}/benchmark" "${CMAKE_BINARY_DIR}/ThirdParty/benchmark_build"
         EXCLUDE_FROM_ALL
       )
       _set_third_party_folder_properties(
@@ -699,21 +682,6 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
                    CUDA_ARCHITECTURES "${VECTORIZATION_CUDA_ARCHITECTURES}"
                    CUDA_SEPARABLE_COMPILATION OFF
       )
-      # nvcc (cicc) fmt int128 fallback issue — same ADL shim as
-      # VectorizationCxxTests above (see Testing/cuda_fmt_int128_fix.h). Pulled
-      # in via a plain #include at the top of BenchmarkTensorGpu.cpp (it's a
-      # Google Benchmark target, not GTest, so it doesn't get the shim for
-      # free via VectorizationTest.h the way VectorizationCxxTests sources
-      # do), NOT force-included here via -include: nvcc reapplies -include
-      # when it recompiles its own
-      # flattened cudafe1.cpp intermediate, which duplicates all of <fmt> with
-      # no header guards left and corrupts the parser's namespace state —
-      # confirmed via GCC+nvcc build: every gpu_eval_kernel<E,T> device-stub
-      # specialization landed in "fmt::v12::detail" instead of "vectorization",
-      # producing cascading "specialization ... in different namespace" /
-      # "call ... is ambiguous" errors. Matches the exact failure mode already
-      # documented (and avoided) in TestTensorGpu.cpp — this target just
-      # hadn't been switched to that same safe pattern yet.
       # Same Clang CUDA + MSVC C++20 std::fma ambiguity as VectorizationCxxTests
       # above (see the detailed comment there) — Clang implicitly marks
       # std::lerp's internal std::fma call __host__ __device__, colliding with

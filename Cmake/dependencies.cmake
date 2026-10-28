@@ -75,7 +75,7 @@ if(NOT TARGET Memory::Memory)
   # Tensor allocation and expression evaluation must use the same GPU runtime.
   set(MEMORY_GPU_BACKEND "${VECTORIZATION_GPU_BACKEND}" CACHE STRING "Memory GPU backend" FORCE)
   add_subdirectory(
-    "${XSIGMA_THIRDPARTY_DIR}/Memory" "${CMAKE_CURRENT_BINARY_DIR}/ThirdParty/Memory"
+    "${VECTORIZATION_THIRDPARTY_DIR}/Memory" "${CMAKE_CURRENT_BINARY_DIR}/ThirdParty/Memory"
     EXCLUDE_FROM_ALL
   )
 endif()
@@ -98,7 +98,7 @@ if(NOT TARGET Scalars::Scalars)
   set(SCALARS_CPU_BACKEND "${VECTORIZATION_CPU_BACKEND}" CACHE STRING "Scalars CPU backend" FORCE)
   set(SCALARS_GPU_BACKEND "${VECTORIZATION_GPU_BACKEND}" CACHE STRING "Scalars GPU backend" FORCE)
   add_subdirectory(
-    "${XSIGMA_THIRDPARTY_DIR}/Scalars" "${CMAKE_CURRENT_BINARY_DIR}/ThirdParty/Scalars"
+    "${VECTORIZATION_THIRDPARTY_DIR}/Scalars" "${CMAKE_CURRENT_BINARY_DIR}/ThirdParty/Scalars"
     EXCLUDE_FROM_ALL
   )
   set(SCALARS_ENABLE_SVML "${SCALARS_ENABLE_SVML}"

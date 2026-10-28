@@ -9,7 +9,8 @@ Checks: >
   modernize-use-equals-default,
   readability-braces-around-statements,
   -bugprone-easily-swappable-parameters,
-  -bugprone-narrowing-conversions
+  -bugprone-narrowing-conversions,
+  -portability-avoid-pragma-once
 WarningsAsErrors: ''
 HeaderFilterRegex: ''
 FormatStyle: none

@@ -76,31 +76,27 @@ jobs:
   # ---------------------------------------------------------------------------
 
   # ---------------------------------------------------------------------------
-  # Linux CUDA: build-only. GitHub-hosted runners have no NVIDIA GPU, so this
-  # job installs nvcc (no driver/device required to compile) and configures
-  # + builds against explicit CUDA_ARCHITECTURES, then skips ctest -- there is
-  # no device to run the tests on. Requires a self-hosted GPU runner to
-  # actually execute VectorizationCxxTests under CUDA.
+  # Match Scalars' CUDA toolchain and compile tests and benchmarks for a fixed
+  # architecture. Memory links the CUDA driver, so executing even CPU-only
+  # tests requires libcuda.so.1, which is absent from this driverless container.
   # ---------------------------------------------------------------------------
   linux-cuda:
     name: Linux GPU / CUDA (build-only)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      # Ubuntu's CUDA 12.0 toolkit requires GCC 12 or older.
-      CC: gcc-12
-      CXX: g++-12
-      CUDAHOSTCXX: g++-12
+    container: nvidia/cuda:12.6.2-devel-ubuntu22.04
+    timeout-minutes: 60
     steps:
+      - name: Install build tools
+        # Scalars requires CMake 3.24; Ubuntu 22.04 packages CMake 3.22.
+        run: |
+          apt-get update && apt-get install -y ninja-build git python3-pip
+          python3 -m pip install "cmake>=3.24,<4"
+          cmake --version
+          nvcc --version
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Install Ninja + CUDA toolkit (nvcc only, no driver/device needed)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build nvidia-cuda-toolkit gcc-12 g++-12
-          nvcc --version
 
       - name: Configure
         run: >
@@ -108,28 +104,36 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DVECTORIZATION_CPU_BACKEND=avx2
           -DVECTORIZATION_GPU_BACKEND=cuda
+          -DVECTORIZATION_LTO_MODE=off
           -DCMAKE_CUDA_ARCHITECTURES=75
           -DVECTORIZATION_ENABLE_TESTING=ON
-          -DVECTORIZATION_ENABLE_BENCHMARK=OFF
+          -DVECTORIZATION_ENABLE_BENCHMARK=ON
 
       - name: Build
-        run: cmake --build build
+        run: cmake --build build --parallel 4
 
       - name: Note on test execution
         run: |
-          echo "Skipping ctest: no NVIDIA GPU on this runner. Build-only verification of the CUDA backend."
+          echo "Skipping ctest: Memory requires the NVIDIA driver library (libcuda.so.1), which is absent from this container."
 
   # ---------------------------------------------------------------------------
-  # Linux HIP: build-only. GitHub-hosted runners have no AMD GPU, so this job
-  # installs hipcc/ROCm from AMD's apt repo (compiler only, no driver/device
-  # required) and skips ctest. Requires a self-hosted GPU runner to actually
-  # execute VectorizationCxxTests under HIP. HIP is Unix-only in this project.
+  # Match Scalars' ROCm toolchain, compile tests and benchmarks for a fixed
+  # architecture, and run unit tests with GPU cases skipping without a device.
+  # HIP is Unix-only in this project.
   # ---------------------------------------------------------------------------
   linux-hip:
-    name: Linux GPU / HIP (build-only)
+    name: Linux GPU / HIP (compile + skip-aware test)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    container: rocm/dev-ubuntu-22.04:6.3.1
+    timeout-minutes: 60
     steps:
+      - name: Install build tools and GPU math dependencies
+        run: |
+          apt-get update && apt-get install -y ninja-build git python3-pip rocthrust-dev hipblas-dev hipsolver-dev
+          python3 -m pip install "cmake>=3.24,<4"
+          cmake --version
+          /opt/rocm/bin/hipcc --version
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -150,24 +154,27 @@ jobs:
       - name: Verify hipcc
         run: hipcc --version
 
+
       - name: Configure
         run: >
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DVECTORIZATION_CPU_BACKEND=avx2
           -DVECTORIZATION_GPU_BACKEND=hip
+          -DVECTORIZATION_LTO_MODE=off
           -DCMAKE_HIP_ARCHITECTURES=gfx90a
           -DCMAKE_PREFIX_PATH=/opt/rocm
           -DPROJECT_HIP_ARCH_OPTIONS=gfx90a
           -DVECTORIZATION_ENABLE_TESTING=ON
-          -DVECTORIZATION_ENABLE_BENCHMARK=OFF
+          -DVECTORIZATION_ENABLE_BENCHMARK=ON
 
       - name: Build
-        run: cmake --build build
+        run: cmake --build build --parallel 4
 
-      - name: Note on test execution
-        run: |
-          echo "Skipping ctest: no AMD GPU on this runner. Build-only verification of the HIP backend."
+      - name: Test (GPU cases self-skip without a device)
+        run: >
+          ctest --test-dir build --output-on-failure --no-tests=error
+          --timeout 300 -LE Benchmark
 
   # ---------------------------------------------------------------------------
   # macOS AArch64 CPU: 'no' and NEON. macos-latest runners are Apple Silicon

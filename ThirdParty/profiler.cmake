@@ -1,6 +1,6 @@
 # Profiler is a sibling XSigma repo (KhwarizmiAnalytix/Profiler), not a vendored
 # third-party library — it is never bundled or built from source here. Resolved
-# exclusively via find_package(Profiler), independent of XSIGMA_ENABLE_EXTERNAL
+# exclusively via find_package(Profiler), independent of VECTORIZATION_ENABLE_EXTERNAL
 # (that flag governs vendored ThirdParty/ copies, which Profiler no longer is).
 # Install it first (cmake --install) and point CMAKE_PREFIX_PATH at it. Optional:
 # callers gate on TARGET Profiler::Profiler, so a missing install just disables

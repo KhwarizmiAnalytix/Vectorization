@@ -32,15 +32,6 @@
 #ifndef VECTORIZATION_TEST_H
 #define VECTORIZATION_TEST_H
 
-#if VECTORIZATION_HAS_CUDA
-// nvcc (cicc) forces fmt's FMT_USE_INT128 fallback (fmt::detail::uint128, no
-// operator~) even for host-only formatting -- see cuda_fmt_int128_fix.h for
-// the full explanation. Included here, first, so every GTest-based file under
-// Testing/Cxx that includes this header (directly or transitively, before
-// pulling in <fmt> some other way) gets the fix without repeating it itself.
-#include "cuda_fmt_int128_fix.h"
-#endif
-
 #include <cmath>
 #include <cstdlib>
 #include <cstdint>

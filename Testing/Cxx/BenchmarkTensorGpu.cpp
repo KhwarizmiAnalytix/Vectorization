@@ -86,15 +86,6 @@
  * Target: benchmark_tensorgpu
  */
 
-#if VECTORIZATION_HAS_CUDA
-// nvcc (cicc) forces fmt's FMT_USE_INT128 fallback (fmt::detail::uint128, no
-// operator~) even for host-only formatting -- see cuda_fmt_int128_fix.h (in
-// Testing/, not Testing/Cxx/) for the full explanation. Included directly
-// here rather than via VectorizationTest.h: this file is a Google Benchmark
-// target, not GTest, so it doesn't include that header.
-#include "cuda_fmt_int128_fix.h"
-#endif
-
 #include <benchmark/benchmark.h>
 
 #if VECTORIZATION_HAS_CUDA || VECTORIZATION_HAS_HIP || VECTORIZATION_HAS_METAL

@@ -29,9 +29,6 @@
  * since this file itself must stay plain .cpp.
  */
 
-// VectorizationTest.h pulls in the nvcc fmt/int128 ADL shim itself (guarded
-// by VECTORIZATION_HAS_CUDA) -- see Testing/VectorizationTest.h.in and
-// cuda_fmt_int128_fix.h for the full explanation.
 #include "VectorizationTest.h"
 
 #if VECTORIZATION_HAS_CUDA || VECTORIZATION_HAS_HIP || VECTORIZATION_HAS_METAL

@@ -43,8 +43,8 @@ message(STATUS "clang-tidy: ${CLANG_TIDY_PATH} (major ${CLANG_TIDY_VERSION_MAJOR
 # enable_fix — pass the caller's XXX_ENABLE_FIX variable value as the second argument. WARNING: fix
 # mode modifies source files. Use with caution in version control.
 function(xsigma_target_clang_tidy target_name enable_fix)
-  set(XSIGMA_CLANG_TIDY_HEADER_FILTER "^${PROJECT_SOURCE_DIR}/(include|src|Cmake|Testing)/.*")
-  set(XSIGMA_CLANG_TIDY_EXCLUDE_FILTER ".*/(ThirdParty|third_party|3rdparty|third-party)/.*")
+  set(VECTORIZATION_CLANG_TIDY_HEADER_FILTER "^${PROJECT_SOURCE_DIR}/(include|src|Cmake|Testing)/.*")
+  set(VECTORIZATION_CLANG_TIDY_EXCLUDE_FILTER ".*/(ThirdParty|third_party|3rdparty|third-party)/.*")
 
   set(_tidy_args "${CLANG_TIDY_PATH}")
   if(enable_fix)
@@ -52,10 +52,10 @@ function(xsigma_target_clang_tidy target_name enable_fix)
     list(APPEND _tidy_args -fix-errors -fix)
   endif()
   list(APPEND _tidy_args "-warnings-as-errors=*"
-       "--header-filter=${XSIGMA_CLANG_TIDY_HEADER_FILTER}"
+       "--header-filter=${VECTORIZATION_CLANG_TIDY_HEADER_FILTER}"
   )
   if(CLANG_TIDY_VERSION_MAJOR GREATER_EQUAL 19)
-    list(APPEND _tidy_args "--exclude-header-filter=${XSIGMA_CLANG_TIDY_EXCLUDE_FILTER}")
+    list(APPEND _tidy_args "--exclude-header-filter=${VECTORIZATION_CLANG_TIDY_EXCLUDE_FILTER}")
   endif()
 
   set_target_properties(

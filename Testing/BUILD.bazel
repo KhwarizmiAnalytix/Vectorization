@@ -16,7 +16,6 @@ cc_library(
     name = "vectorizationTest_header",
     hdrs = [
         ":vectorization_test_header_gen",
-        "cuda_fmt_int128_fix.h",
     ],
     includes = ["."],
     deps = ["//:Vectorization"],

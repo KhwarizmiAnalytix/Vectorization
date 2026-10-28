@@ -545,7 +545,7 @@ if(VECTORIZATION_GPU_BACKEND STREQUAL "hip")
   set(VECTORIZATION_GPU_ARCHITECTURES "gfx900;gfx906;gfx908;gfx90a;gfx1030;gfx1100"
       CACHE STRING "HIP GPU architectures (gfxXXX for AMD, smXX for CUDA offload via hipcc)"
   )
-  # CI passes -DCMAKE_HIP_ARCHITECTURES=gfx90a (no device at configure time).
+  # CI passes explicit CMAKE_HIP_ARCHITECTURES (no device at configure time).
   # Honor that instead of compiling every gfx* default.
   if(CMAKE_HIP_ARCHITECTURES AND NOT CMAKE_HIP_ARCHITECTURES STREQUAL "native")
     set(VECTORIZATION_GPU_ARCHITECTURES "${CMAKE_HIP_ARCHITECTURES}"
@@ -561,9 +561,8 @@ if(VECTORIZATION_GPU_BACKEND STREQUAL "hip")
   if(TARGET hip::host)
     target_link_libraries(Vectorization PUBLIC hip::host)
   endif()
-  if(TARGET hip::device)
-    target_link_libraries(Vectorization PRIVATE hip::device)
-  endif()
+  # CMake's HIP language supplies device compilation and linking. hip::device
+  # would also pass Clang-only -x hip/--offload-arch flags to ordinary GCC TUs.
   message(
     STATUS "Vectorization: HIP GPU backend enabled (archs: ${VECTORIZATION_GPU_ARCHITECTURES})"
   )

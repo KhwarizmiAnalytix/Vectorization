@@ -53,15 +53,15 @@ jobs:
 
       - name: Configure
         run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-          -DVECTORIZATION_CPU_BACKEND=${{ matrix.cpu_backend }}
-          -DVECTORIZATION_GPU_BACKEND=none
-          -DVECTORIZATION_ENABLE_TESTING=ON
-          -DVECTORIZATION_ENABLE_BENCHMARK=ON
+          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          --build-type=${{ matrix.build_type }}
+          --cpu-backend=${{ matrix.cpu_backend }}
+          --gpu-backend=none
+          --testing=ON
+          --benchmark=ON
 
       - name: Build
-        run: cmake --build build
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
 
       - name: Test
         run: python3 .github/scripts/ctest_cpu.py --backend=${{ matrix.cpu_backend }} --config=${{ matrix.build_type }}
@@ -100,17 +100,17 @@ jobs:
 
       - name: Configure
         run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DVECTORIZATION_CPU_BACKEND=avx2
-          -DVECTORIZATION_GPU_BACKEND=cuda
-          -DVECTORIZATION_LTO_MODE=off
-          -DCMAKE_CUDA_ARCHITECTURES=75
-          -DVECTORIZATION_ENABLE_TESTING=ON
-          -DVECTORIZATION_ENABLE_BENCHMARK=ON
+          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          --build-type=Release
+          --cpu-backend=avx2
+          --gpu-backend=cuda
+          --lto-mode=off
+          --cuda-architectures=75
+          --testing=ON
+          --benchmark=ON
 
       - name: Build
-        run: cmake --build build --parallel 4
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build --parallel 4
 
       - name: Note on test execution
         run: |
@@ -157,24 +157,24 @@ jobs:
 
       - name: Configure
         run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DVECTORIZATION_CPU_BACKEND=avx2
-          -DVECTORIZATION_GPU_BACKEND=hip
-          -DVECTORIZATION_LTO_MODE=off
-          -DCMAKE_HIP_ARCHITECTURES=gfx90a
-          -DCMAKE_PREFIX_PATH=/opt/rocm
-          -DPROJECT_HIP_ARCH_OPTIONS=gfx90a
-          -DVECTORIZATION_ENABLE_TESTING=ON
-          -DVECTORIZATION_ENABLE_BENCHMARK=ON
+          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          --build-type=Release
+          --cpu-backend=avx2
+          --gpu-backend=hip
+          --lto-mode=off
+          --hip-architectures=gfx90a
+          --prefix-path=/opt/rocm
+          --hip-arch-options=gfx90a
+          --testing=ON
+          --benchmark=ON
 
       - name: Build
-        run: cmake --build build --parallel 4
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build --parallel 4
 
       - name: Test (GPU cases self-skip without a device)
         run: >
-          ctest --test-dir build --output-on-failure --no-tests=error
-          --timeout 300 -LE Benchmark
+          python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build
+          --test-timeout 300 -LE Benchmark
 
   # ---------------------------------------------------------------------------
   # macOS AArch64 CPU: 'no' and NEON. macos-latest runners are Apple Silicon
@@ -198,18 +198,18 @@ jobs:
 
       - name: Configure
         run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DVECTORIZATION_CPU_BACKEND=${{ matrix.cpu_backend }}
-          -DVECTORIZATION_GPU_BACKEND=none
-          -DVECTORIZATION_ENABLE_TESTING=ON
-          -DVECTORIZATION_ENABLE_BENCHMARK=ON
+          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          --build-type=Release
+          --cpu-backend=${{ matrix.cpu_backend }}
+          --gpu-backend=none
+          --testing=ON
+          --benchmark=ON
 
       - name: Build
-        run: cmake --build build
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build
 
   # ---------------------------------------------------------------------------
   # macOS Metal: real GPU backend, fully build + run on-device. Apple Silicon
@@ -229,18 +229,18 @@ jobs:
 
       - name: Configure
         run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DVECTORIZATION_CPU_BACKEND=neon
-          -DVECTORIZATION_GPU_BACKEND=metal
-          -DVECTORIZATION_ENABLE_TESTING=ON
-          -DVECTORIZATION_ENABLE_BENCHMARK=OFF
+          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          --build-type=Release
+          --cpu-backend=neon
+          --gpu-backend=metal
+          --testing=ON
+          --benchmark=OFF
 
       - name: Build
-        run: cmake --build build
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build
 
   # ---------------------------------------------------------------------------
   # Windows x86_64 CPU: MSVC, every x86 CPU SIMD backend, Release.
@@ -260,14 +260,14 @@ jobs:
 
       - name: Configure
         run: >
-          cmake -S . -B build
-          -DVECTORIZATION_CPU_BACKEND=${{ matrix.cpu_backend }}
-          -DVECTORIZATION_GPU_BACKEND=none
-          -DVECTORIZATION_ENABLE_TESTING=ON
-          -DVECTORIZATION_ENABLE_BENCHMARK=ON
+          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --generator=default --source-dir . --build-dir build
+          --cpu-backend=${{ matrix.cpu_backend }}
+          --gpu-backend=none
+          --testing=ON
+          --benchmark=ON
 
       - name: Build
-        run: cmake --build build --config Release
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build --build-type Release
 
       - name: Test
         run: python .github/scripts/ctest_cpu.py --backend=${{ matrix.cpu_backend }}
@@ -292,19 +292,19 @@ jobs:
         include:
           - name: sleef-neon
             os: macos-latest
-            cmake_flags: -DVECTORIZATION_CPU_BACKEND=neon -DVECTORIZATION_ENABLE_SLEEF=ON
+            cmake_flags: --cpu-backend=neon --sleef=ON
           - name: accelerate-neon
             os: macos-latest
-            cmake_flags: -DVECTORIZATION_CPU_BACKEND=neon -DVECTORIZATION_ENABLE_ACCELERATE=ON
+            cmake_flags: --cpu-backend=neon --accelerate=ON
           - name: native-arch
             os: ubuntu-latest
-            cmake_flags: -DVECTORIZATION_CPU_BACKEND=avx2 -DUSE_NATIVE_ARCH=ON
+            cmake_flags: --cpu-backend=avx2 --native-arch=ON
           - name: packet-size-4
             os: ubuntu-latest
-            cmake_flags: -DVECTORIZATION_CPU_BACKEND=avx2 -DVECTORIZATION_PACKET_SIZE=4
+            cmake_flags: --cpu-backend=avx2 --packet-size=4
           - name: sve-256
             os: ubuntu-latest
-            cmake_flags: -DVECTORIZATION_CPU_BACKEND=sve -DVECTORIZATION_SVE_VECTOR_BITS=256
+            cmake_flags: --cpu-backend=sve --sve-vector-bits=256
     steps:
       - uses: actions/checkout@v4
         with:
@@ -320,18 +320,18 @@ jobs:
 
       - name: Configure
         run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DVECTORIZATION_GPU_BACKEND=none
-          -DVECTORIZATION_ENABLE_TESTING=ON
-          -DVECTORIZATION_ENABLE_BENCHMARK=OFF
+          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          --build-type=Release
+          --gpu-backend=none
+          --testing=ON
+          --benchmark=OFF
           ${{ matrix.cmake_flags }}
 
       - name: Build
-        run: cmake --build build
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build
 
   # ---------------------------------------------------------------------------
   # Toolchain axes: LTO mode, linker choice, C++ standard, compiler cache.
@@ -350,20 +350,20 @@ jobs:
       matrix:
         include:
           - name: lto-thin
-            cmake_flags: -DVECTORIZATION_LTO_MODE=thin
+            cmake_flags: --lto-mode=thin
           - name: lto-full
-            cmake_flags: -DVECTORIZATION_LTO_MODE=full
+            cmake_flags: --lto-mode=full
           - name: cxx17
-            cmake_flags: -DVECTORIZATION_CXX_STANDARD=17
+            cmake_flags: --cxx-standard=17
           - name: cxx23
-            cmake_flags: -DVECTORIZATION_CXX_STANDARD=23
+            cmake_flags: --cxx-standard=23
           - name: linker-lld
-            cmake_flags: -DVECTORIZATION_LINKER_CHOICE=lld
+            cmake_flags: --linker-choice=lld
           - name: cache-ccache
-            cmake_flags: -DVECTORIZATION_ENABLE_CACHE=ON -DVECTORIZATION_CACHE_BACKEND=ccache
+            cmake_flags: --cache=ON --cache-backend=ccache
             install: ccache
           - name: static-libs
-            cmake_flags: -DBUILD_SHARED_LIBS=OFF
+            cmake_flags: --shared=OFF
     steps:
       - uses: actions/checkout@v4
         with:
@@ -378,19 +378,19 @@ jobs:
 
       - name: Configure
         run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DVECTORIZATION_CPU_BACKEND=avx2
-          -DVECTORIZATION_GPU_BACKEND=none
-          -DVECTORIZATION_ENABLE_TESTING=ON
-          -DVECTORIZATION_ENABLE_BENCHMARK=OFF
+          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          --build-type=Release
+          --cpu-backend=avx2
+          --gpu-backend=none
+          --testing=ON
+          --benchmark=OFF
           ${{ matrix.cmake_flags }}
 
       - name: Build
-        run: cmake --build build
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build
 
   # ---------------------------------------------------------------------------
   # Compiler cache + Icecream, cross-platform: toolchain-axes above only covers
@@ -409,30 +409,30 @@ jobs:
         include:
           - name: linux-ccache
             os: ubuntu-latest
-            cmake_flags: -DVECTORIZATION_ENABLE_CACHE=ON -DVECTORIZATION_CACHE_BACKEND=ccache
+            cmake_flags: --cache=ON --cache-backend=ccache
           - name: linux-sccache
             os: ubuntu-latest
-            cmake_flags: -DVECTORIZATION_ENABLE_CACHE=ON -DVECTORIZATION_CACHE_BACKEND=sccache
+            cmake_flags: --cache=ON --cache-backend=sccache
             use_sccache_action: true
           - name: linux-icecc
             os: ubuntu-latest
-            cmake_flags: -DVECTORIZATION_ENABLE_ICECC=ON
+            cmake_flags: --icecc=ON
           - name: macos-ccache
             os: macos-latest
-            cmake_flags: -DVECTORIZATION_ENABLE_CACHE=ON -DVECTORIZATION_CACHE_BACKEND=ccache
+            cmake_flags: --cache=ON --cache-backend=ccache
           - name: macos-sccache
             os: macos-latest
-            cmake_flags: -DVECTORIZATION_ENABLE_CACHE=ON -DVECTORIZATION_CACHE_BACKEND=sccache
+            cmake_flags: --cache=ON --cache-backend=sccache
             use_sccache_action: true
           - name: macos-icecc
             os: macos-latest
-            cmake_flags: -DVECTORIZATION_ENABLE_ICECC=ON
+            cmake_flags: --icecc=ON
           - name: windows-ccache
             os: windows-latest
-            cmake_flags: -DVECTORIZATION_ENABLE_CACHE=ON -DVECTORIZATION_CACHE_BACKEND=ccache
+            cmake_flags: --cache=ON --cache-backend=ccache
           - name: windows-sccache
             os: windows-latest
-            cmake_flags: -DVECTORIZATION_ENABLE_CACHE=ON -DVECTORIZATION_CACHE_BACKEND=sccache
+            cmake_flags: --cache=ON --cache-backend=sccache
             use_sccache_action: true
     steps:
       - uses: actions/checkout@v4
@@ -459,39 +459,39 @@ jobs:
       - name: Configure (Linux/macOS)
         if: runner.os != 'Windows'
         run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DVECTORIZATION_CPU_BACKEND=avx2
-          -DVECTORIZATION_GPU_BACKEND=none
-          -DVECTORIZATION_ENABLE_TESTING=ON
-          -DVECTORIZATION_ENABLE_BENCHMARK=OFF
+          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          --build-type=Release
+          --cpu-backend=avx2
+          --gpu-backend=none
+          --testing=ON
+          --benchmark=OFF
           ${{ matrix.cmake_flags }}
 
       - name: Configure (Windows)
         if: runner.os == 'Windows'
         run: >
-          cmake -S . -B build
-          -DVECTORIZATION_CPU_BACKEND=avx2
-          -DVECTORIZATION_GPU_BACKEND=none
-          -DVECTORIZATION_ENABLE_TESTING=ON
-          -DVECTORIZATION_ENABLE_BENCHMARK=OFF
+          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --generator=default --source-dir . --build-dir build
+          --cpu-backend=avx2
+          --gpu-backend=none
+          --testing=ON
+          --benchmark=OFF
           ${{ matrix.cmake_flags }}
 
       - name: Build (Linux/macOS)
         if: runner.os != 'Windows'
-        run: cmake --build build
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: cmake --build build --config Release
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build --build-type Release
 
       - name: Test (Linux/macOS)
         if: runner.os != 'Windows'
-        run: ctest --test-dir build --output-on-failure
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build
 
       - name: Test (Windows)
         if: runner.os == 'Windows'
-        run: ctest --test-dir build --build-config Release --output-on-failure
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build --build-type Release
 
   # ---------------------------------------------------------------------------
   # Static analysis: clang-tidy and include-what-you-use, each their own job
@@ -510,10 +510,10 @@ jobs:
       matrix:
         include:
           - tool: clang-tidy
-            cmake_flags: -DVECTORIZATION_ENABLE_CLANGTIDY=ON
+            cmake_flags: --clangtidy=ON
             install: clang-tidy
           - tool: iwyu
-            cmake_flags: -DVECTORIZATION_ENABLE_IWYU=ON
+            cmake_flags: --iwyu=ON
             install: iwyu
           - tool: cppcheck
             cmake_flags: ""
@@ -529,17 +529,17 @@ jobs:
       - name: Configure
         if: matrix.tool != 'cppcheck'
         run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DVECTORIZATION_CPU_BACKEND=avx2
-          -DVECTORIZATION_GPU_BACKEND=none
-          -DVECTORIZATION_ENABLE_TESTING=OFF
-          -DVECTORIZATION_ENABLE_BENCHMARK=OFF
+          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          --build-type=Release
+          --cpu-backend=avx2
+          --gpu-backend=none
+          --testing=OFF
+          --benchmark=OFF
           ${{ matrix.cmake_flags }}
 
       - name: Build (clang-tidy / iwyu run inline during compilation)
         if: matrix.tool != 'cppcheck'
-        run: cmake --build build
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
 
       - name: Cppcheck (via Scripts/setup.py)
         if: matrix.tool == 'cppcheck'
@@ -565,19 +565,19 @@ jobs:
 
       - name: Configure
         run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Debug
-          -DVECTORIZATION_CPU_BACKEND=avx2
-          -DVECTORIZATION_GPU_BACKEND=none
-          -DVECTORIZATION_ENABLE_TESTING=ON
-          -DVECTORIZATION_ENABLE_BENCHMARK=OFF
-          -DVECTORIZATION_ENABLE_VALGRIND=ON
+          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          --build-type=Debug
+          --cpu-backend=avx2
+          --gpu-backend=none
+          --testing=ON
+          --benchmark=OFF
+          --valgrind=ON
 
       - name: Build
-        run: cmake --build build
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
 
       - name: Test under Valgrind
-        run: ctest --test-dir build --output-on-failure
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build
 
   # ---------------------------------------------------------------------------
   # Bazel: builds/tests the whole tree, cross-platform, plus a small CPU
@@ -620,27 +620,27 @@ jobs:
 
       - name: Build (default backend)
         if: matrix.cpu_backend == 'no'
-        run: bazel build //...
+        run: python3 "${{ github.workspace }}/Scripts/setup_bazel.py" build --compiler=default --compilation-mode=fastbuild --target=//...
 
       - name: Test (default backend)
         if: matrix.cpu_backend == 'no'
-        run: bazel test //... --test_output=errors
+        run: python3 "${{ github.workspace }}/Scripts/setup_bazel.py" test --compiler=default --compilation-mode=fastbuild --target=//... --test-output=errors
 
       - name: Build (CPU backend)
         if: matrix.cpu_backend != 'no' && matrix.cpu_backend != 'metal'
-        run: bazel build //... --define=vectorization_cpu_backend=${{ matrix.cpu_backend }}
+        run: python3 "${{ github.workspace }}/Scripts/setup_bazel.py" build --compiler=default --compilation-mode=fastbuild --target=//... --cpu-backend=${{ matrix.cpu_backend }}
 
       - name: Test (CPU backend)
         if: matrix.cpu_backend != 'no' && matrix.cpu_backend != 'metal'
-        run: bazel test //... --define=vectorization_cpu_backend=${{ matrix.cpu_backend }} --test_output=errors
+        run: python3 "${{ github.workspace }}/Scripts/setup_bazel.py" test --compiler=default --compilation-mode=fastbuild --target=//... --cpu-backend=${{ matrix.cpu_backend }} --test-output=errors
 
       - name: Build (Metal GPU backend)
         if: matrix.cpu_backend == 'metal'
-        run: bazel build //... --define=vectorization_gpu_backend=metal --define=memory_gpu_backend=metal
+        run: python3 "${{ github.workspace }}/Scripts/setup_bazel.py" build --compiler=default --compilation-mode=fastbuild --target=//... --gpu-backend=metal
 
       - name: Test (Metal GPU backend)
         if: matrix.cpu_backend == 'metal'
-        run: bazel test //... --define=vectorization_gpu_backend=metal --define=memory_gpu_backend=metal --test_output=errors
+        run: python3 "${{ github.workspace }}/Scripts/setup_bazel.py" test --compiler=default --compilation-mode=fastbuild --target=//... --gpu-backend=metal --test-output=errors
 
   # ---------------------------------------------------------------------------
   # Sanitizers: Clang ASan and UBSan, default CPU backend (avx2), Debug.
@@ -676,23 +676,23 @@ jobs:
 
       - name: Configure
         run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Debug
-          -DVECTORIZATION_CPU_BACKEND=avx2
-          -DVECTORIZATION_GPU_BACKEND=none
-          -DVECTORIZATION_ENABLE_TESTING=ON
-          -DVECTORIZATION_ENABLE_BENCHMARK=OFF
-          -DVECTORIZATION_ENABLE_SANITIZER=ON
-          -DVECTORIZATION_SANITIZER_TYPE=${{ matrix.sanitizer }}
+          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          --build-type=Debug
+          --cpu-backend=avx2
+          --gpu-backend=none
+          --testing=ON
+          --benchmark=OFF
+          --sanitizer=ON
+          --sanitizer-types=${{ matrix.sanitizer }}
 
       - name: Build
-        run: cmake --build build
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
 
       - name: Test
         env:
           ASAN_OPTIONS: halt_on_error=1:abort_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: ctest --test-dir build --output-on-failure
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build
 
   # ---------------------------------------------------------------------------
   # Coverage: gcc/gcov+lcov (Linux), Homebrew LLVM/clang (macOS), MSVC/OpenCppCoverage
@@ -725,7 +725,7 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           brew install ninja llvm
-          LLVM_PREFIX="$(brew --prefix llvm)"
+          LLVM_PREFIX="$(brew --install-prefix llvm)"
           echo "${LLVM_PREFIX}/bin" >> "$GITHUB_PATH"
           echo "CC=${LLVM_PREFIX}/bin/clang" >> "$GITHUB_ENV"
           echo "CXX=${LLVM_PREFIX}/bin/clang++" >> "$GITHUB_ENV"
@@ -744,39 +744,39 @@ jobs:
       - name: Configure (Linux/macOS)
         if: matrix.os != 'windows-latest'
         run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Debug
-          -DVECTORIZATION_CPU_BACKEND=avx2
-          -DVECTORIZATION_GPU_BACKEND=none
-          -DVECTORIZATION_ENABLE_TESTING=ON
-          -DVECTORIZATION_ENABLE_BENCHMARK=OFF
-          -DVECTORIZATION_ENABLE_COVERAGE=ON
+          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          --build-type=Debug
+          --cpu-backend=avx2
+          --gpu-backend=none
+          --testing=ON
+          --benchmark=OFF
+          --coverage=ON
 
       - name: Configure (Windows)
         if: matrix.os == 'windows-latest'
         run: >
-          cmake -S . -B build
-          -DVECTORIZATION_CPU_BACKEND=avx2
-          -DVECTORIZATION_GPU_BACKEND=none
-          -DVECTORIZATION_ENABLE_TESTING=ON
-          -DVECTORIZATION_ENABLE_BENCHMARK=OFF
-          -DVECTORIZATION_ENABLE_COVERAGE=ON
+          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --generator=default --source-dir . --build-dir build
+          --cpu-backend=avx2
+          --gpu-backend=none
+          --testing=ON
+          --benchmark=OFF
+          --coverage=ON
 
       - name: Build (Linux/macOS)
         if: matrix.os != 'windows-latest'
-        run: cmake --build build
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
 
       - name: Build (Windows)
         if: matrix.os == 'windows-latest'
-        run: cmake --build build --config Release
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build --build-type Release
 
       - name: Test (Linux/macOS)
         if: matrix.os != 'windows-latest'
-        run: ctest --test-dir build --output-on-failure
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build
 
       - name: Test (Windows)
         if: matrix.os == 'windows-latest'
-        run: ctest --test-dir build --build-config Release --output-on-failure
+        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build --build-type Release
 
       - name: Collect coverage
         run: >

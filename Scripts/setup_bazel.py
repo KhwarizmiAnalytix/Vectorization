@@ -563,7 +563,8 @@ class VectorizationBazelConfiguration:
                     f"Tests completed successfully ({elapsed:.2f}s)", "SUCCESS"
                 )
             elif result.returncode == 4:
-                print_status(f"No test targets found ({elapsed:.2f}s)", "WARNING")
+                print_status("No test targets found", "ERROR")
+                sys.exit(4)
             else:
                 print_status(
                     f"Tests failed with exit code {result.returncode}", "ERROR"
@@ -600,7 +601,8 @@ class VectorizationBazelConfiguration:
                 print_status(f"Coverage report (LCOV): {dat_path}", "INFO")
                 self._generate_coverage_html(dat_path)
             elif result.returncode == 4:
-                print_status(f"No coverage targets found ({elapsed:.2f}s)", "WARNING")
+                print_status("No test targets found", "ERROR")
+                sys.exit(4)
             else:
                 print_status(
                     f"Coverage failed with exit code {result.returncode}", "ERROR"
@@ -976,6 +978,12 @@ def print_help() -> None:
 
 
 def main() -> None:
+    from helpers.cli import dispatch_bazel
+
+    forwarded = dispatch_bazel(sys.argv[1:])
+    if forwarded is not None:
+        sys.exit(forwarded)
+
     if len(sys.argv) == 2 and sys.argv[1] == "--help":
         print_help()
         return

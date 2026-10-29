@@ -396,8 +396,7 @@ jobs:
   # Compiler cache + Icecream, cross-platform: toolchain-axes above only covers
   # ccache on Linux. This job exercises VECTORIZATION_ENABLE_CACHE (ccache,
   # sccache) and VECTORIZATION_ENABLE_ICECC on Linux, macOS, and Windows.
-  # BuildCache runs in buildcache.yml. Icecream has no Windows port, so icecc is
-  # Linux/macOS only.
+  # Icecream has no Windows port, so icecc is Linux/macOS only.
   # ---------------------------------------------------------------------------
   cache-icecc:
     name: Cache/Icecc / ${{ matrix.name }}
@@ -434,6 +433,18 @@ jobs:
             os: windows-latest
             cmake_flags: --cache=ON --cache-backend=sccache
             use_sccache_action: true
+          - name: linux-buildcache
+            os: ubuntu-latest
+            cmake_flags: --cache=ON --cache-backend=buildcache
+            use_buildcache: true
+          - name: macos-buildcache
+            os: macos-latest
+            cmake_flags: --cache=ON --cache-backend=buildcache
+            use_buildcache: true
+          - name: windows-buildcache
+            os: windows-latest
+            cmake_flags: --cache=ON --cache-backend=buildcache
+            use_buildcache: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -455,6 +466,16 @@ jobs:
         if: matrix.use_sccache_action
         with:
           version: v0.12.0
+
+      - name: Set BuildCache directory
+        if: matrix.use_buildcache
+        shell: bash
+        run: echo "BUILDCACHE_DIR=$RUNNER_TEMP/buildcache-data" >> "$GITHUB_ENV"
+
+      - name: Install BuildCache
+        if: matrix.use_buildcache
+        shell: bash
+        run: python3 .github/scripts/install_buildcache.py --install-prefix "$RUNNER_TEMP/buildcache-tool"
 
       - name: Configure (Linux/macOS)
         if: runner.os != 'Windows'

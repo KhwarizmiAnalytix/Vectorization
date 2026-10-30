@@ -1,9 +1,8 @@
-# Keep WORKSPACE mode working alongside Bzlmod (same approach as XSigma).
-# Requires Bazel 7/8 — WORKSPACE-based repos (local_repository / new_local_repository
-# in WORKSPACE.bazel, wiring every ThirdParty/ submodule) are unsupported starting
-# with Bazel 9. See .bazelversion; bump only after migrating WORKSPACE.bazel to
-# bzlmod (MODULE.bazel) equivalents (e.g. local_path_override / a repo rule).
-build --enable_workspace
+# Pure Bzlmod (no WORKSPACE.bazel) — matches the sibling Logging and
+# LinearAlgebra repos. Every ThirdParty/ submodule is wired via MODULE.bazel
+# (use_repo_rule), so Bazel 9's removal of WORKSPACE-based repos
+# (local_repository / new_local_repository in a WORKSPACE file) doesn't
+# affect this repo. See .bazelversion.
 
 # Auto-select the build:<os>/test:<os> blocks below for the host platform
 # (linux/macos/windows), so cross-platform flags don't need --config.

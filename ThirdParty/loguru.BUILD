@@ -1,3 +1,4 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
 # BUILD file for Loguru logging library
 # Copied from ThirdParty/Logging/ThirdParty/loguru.BUILD: provides build rules for the
 # third-party Loguru library without modifying the submodule itself.

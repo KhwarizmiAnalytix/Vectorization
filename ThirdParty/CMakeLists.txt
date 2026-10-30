@@ -385,9 +385,12 @@ function(add_third_party_library name)
         TPL                                                           # Prefix
         "DISABLE_WARNINGS;AUTO_ADD_TO_DEPENDENCIES;EXCLUDE_FROM_ALL" # Options (boolean flags)
         "SOURCE_DIR;EXTERNAL_NAME;CONDITION;LIBRARY_TYPE;LIBRARY_TYPE_VAR;INCLUDE_DIR;BINARY_DIR" # One-value keywords
-        "FILTER_FLAGS;EXTRA_FLAGS;ALIASES;VECTORIZATION_TARGETS"             # Multi-value keywords
+        "FILTER_FLAGS;EXTRA_FLAGS;ALIASES;VECTORIZATION_TARGETS;XSIGMA_TARGETS" # Multi-value keywords
         ${ARGN}                                                       # Arguments to parse
     )
+
+    # Pinned dependencies still call the shared helper with its original keyword.
+    list(APPEND TPL_VECTORIZATION_TARGETS ${TPL_XSIGMA_TARGETS})
 
     # Set default values for optional parameters
     if(NOT DEFINED TPL_EXTERNAL_NAME)

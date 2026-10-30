@@ -2,6 +2,7 @@
 # live under include/, which is also the include root (e.g. "terminals/tensor.h",
 # "backend/simd.h"). CPU SIMD backend and GPU backend are independent --define=
 # flags -- see bazel/BUILD.bazel and docs/vectorization_backends.md.
+load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_pkg//pkg:install.bzl", "pkg_install")
 load("@rules_pkg//pkg:mappings.bzl", "pkg_files", "strip_prefix")
 load("@rules_pkg//pkg:pkg.bzl", "pkg_tar")

@@ -1,3 +1,4 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
 # Scalars owns scalar types and the CPU/GPU SIMD implementations.
 load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("@xsigma_vectorization//bazel:scalars.bzl", "scalars_copts", "scalars_defines")

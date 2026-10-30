@@ -1,3 +1,4 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
 # =============================================================================
 # Overlay BUILD for the KhwarizmiAnalytix/Profiler submodule (ThirdParty/Profiler).
 # Do not edit files inside that submodule — this overlay lives in XSigma.

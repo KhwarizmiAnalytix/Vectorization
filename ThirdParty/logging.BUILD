@@ -1,3 +1,4 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
 # Overlay BUILD for the KhwarizmiAnalytix/Logging submodule (ThirdParty/Logging).
 # Do not edit files inside that submodule — this overlay lives in this repo, mirroring
 # the same technique XSigma itself uses for its own ThirdParty/logging.BUILD.
@@ -58,10 +59,8 @@ cc_library(
     }),
     deps = [
         "@fmt//:fmt",
+        "@magic_enum//:magic_enum",
     ] + select({
-        "//bazel:disable_magic_enum": [],
-        "//conditions:default": ["@magic_enum//:magic_enum"],
-    }) + select({
         "//bazel:logging_glog": ["@glog//:glog"],
         "//bazel:logging_loguru": ["@loguru//:loguru"],
         "//bazel:logging_native": [],

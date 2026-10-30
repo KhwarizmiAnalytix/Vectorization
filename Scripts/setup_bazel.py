@@ -20,7 +20,7 @@ backend — this mirrors CMakeLists.txt's own
 
 CUDA/HIP are wired the same way Memory's own bazel/BUILD.bazel wires them
 (select() on @local_config_cuda / @local_config_hip) but neither this repo's
-WORKSPACE.bazel nor Memory's defines those external repositories yet, so
+MODULE.bazel nor Memory's defines those external repositories yet, so
 `--gpu_backend=cuda` / `--gpu_backend=hip` will fail to resolve until a CUDA/
 HIP Bazel toolchain is added — same limitation Memory itself currently has.
 Metal is fully wired (Apple frameworks only, no external toolchain repo
@@ -670,7 +670,6 @@ class VectorizationBazelConfiguration:
                     "query",
                     f"kind(cc_test, {targets_expr})",
                     "--output=label",
-                    "--enable_workspace",
                 ],
                 check=True,
                 capture_output=True,

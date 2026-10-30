@@ -49,7 +49,7 @@ def argument_parser(bazel: bool = False) -> argparse.ArgumentParser:
         parser.add_argument("--batch", action="store_true", help="Run Bazel without a persistent server")
         parser.add_argument("--output-root", help="Directory for Bazel's output/cache state")
         parser.add_argument("--cxx-standard", choices=("17", "20", "23"), help="C++ language standard")
-        project = Path(__file__).resolve().parents[2].name
+        project = "Vectorization"
         if project in ("Vectorization",):
             parser.add_argument("--cpu-backend", choices=("no", "sse", "avx", "avx2", "avx512", "neon", "sve"), help="CPU SIMD backend")
         if project in ("Vectorization", "Memory"):
@@ -71,6 +71,7 @@ def argument_parser(bazel: bool = False) -> argparse.ArgumentParser:
     parser.add_argument("--install-prefix", help="Installation prefix for config/install actions")
     parser.add_argument("--test-filter", help="Only run tests matching this regular expression")
     parser.add_argument("--test-label", help="Only run tests with a matching label")
+    parser.add_argument("--exclude-test-label", help="Skip tests with a matching label")
     parser.add_argument("--test-timeout", type=positive, default=300, help="Per-test timeout in seconds (default: 300)")
     parser.add_argument("--memcheck", action="store_true", help="Run the CTest memory-check dashboard")
     parser.add_argument("--verbose", action="store_true", help="Show verbose build/test output")
@@ -288,6 +289,8 @@ def dispatch(arguments, root, flags_factory, configuration_factory, parse_legacy
                     command.extend(["-R", options.test_filter])
                 if options.test_label:
                     command.extend(["-L", options.test_label])
+                if options.exclude_test_label:
+                    command.extend(["-LE", options.exclude_test_label])
                 if options.memcheck or "valgrind" in tokens:
                     command.extend(["-T", "memcheck"])
                 if options.verbose:
@@ -354,10 +357,10 @@ def dispatch_bazel(arguments, root=None, force=False) -> Optional[int]:
     for name in ("cpu_backend", "gpu_backend", "backend"):
         value = getattr(options, name, None)
         if value is not None:
-            project = {"Vectorization": "vectorization", "Memory": "memory", "Logging": "logging", "Parallel": "parallel"}[root.name]
+            project = "vectorization"
             setting = project + ("_backend" if name == "backend" else "_" + name)
             settings.append(f"--define={setting}={value}")
-            if root.name == "Vectorization" and name == "gpu_backend":
+            if name == "gpu_backend":
                 settings.append("--define=memory_gpu_backend=" + value)
     targets = options.target or ["//..."]
     try:

@@ -45,8 +45,8 @@ python setup.py config.build.test.metal         # macOS Metal GPU backend
 python setup.py --help                          # full option list
 ```
 
-`Scripts/setup_bazel.py` drives the equivalent Bazel build (`WORKSPACE.bazel`,
-`MODULE.bazel`, `BUILD.bazel`, `bazel/`). CPU SIMD backends and the Metal GPU
+`Scripts/setup_bazel.py` drives the equivalent Bazel build (`MODULE.bazel`,
+`BUILD.bazel`, `bazel/`). CPU SIMD backends and the Metal GPU
 backend are fully wired; CUDA/HIP select a `@local_config_{cuda,hip}` label
 that this workspace does not define yet (see the script's `--help`):
 
@@ -160,7 +160,8 @@ Logging is **required** (`Logging::Logging`). Memory is **required**
 ### Reproducing CI with the setup helper
 
 CI and local builds use the documented dotted actions and named options from
-`python Scripts/setup.py --help`:
+`python Scripts/setup.py --help`. Use `--parallel N` to set build jobs and
+`--enable-parallel on` to enable the Parallel backend:
 
 ```sh
 python Scripts/setup.py config.build.test.release.ninja.clang --build-dir build

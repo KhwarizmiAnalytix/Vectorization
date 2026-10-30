@@ -1,3 +1,4 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
 # Standalone Memory library (KhwarizmiAnalytix/Memory). Public headers live under
 # memory/, which is also the include root (e.g. "include/allocator.h",
 # "include/common/data_ptr.h") — the submodule was restructured from a flat

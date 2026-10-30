@@ -24,7 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         compiler: [gcc, clang]
-        cpu_backend: [no, sse, avx, avx2, avx512]
+        cpu_backend: ["no", sse, avx, avx2, avx512]
         build_type: [Release]
         include:
           - compiler: gcc
@@ -53,7 +53,7 @@ jobs:
 
       - name: Configure
         run: >
-          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          python3 Scripts/setup.py config --compiler=default --source-dir . --build-dir build --generator Ninja
           --build-type=${{ matrix.build_type }}
           --cpu-backend=${{ matrix.cpu_backend }}
           --gpu-backend=none
@@ -61,7 +61,7 @@ jobs:
           --benchmark=ON
 
       - name: Build
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
+        run: python3 Scripts/setup.py build --build-dir build
 
       - name: Test
         run: python3 .github/scripts/ctest_cpu.py --backend=${{ matrix.cpu_backend }} --config=${{ matrix.build_type }}
@@ -100,7 +100,7 @@ jobs:
 
       - name: Configure
         run: >
-          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          python3 Scripts/setup.py config --compiler=default --source-dir . --build-dir build --generator Ninja
           --build-type=Release
           --cpu-backend=avx2
           --gpu-backend=cuda
@@ -110,7 +110,7 @@ jobs:
           --benchmark=ON
 
       - name: Build
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build --parallel 4
+        run: python3 Scripts/setup.py build --build-dir build --parallel 4
 
       - name: Note on test execution
         run: |
@@ -138,26 +138,9 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Ninja + ROCm/hipcc (compiler only, no driver/device needed)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build wget gnupg
-          wget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/rocm.gpg
-          echo "deb [signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/latest $(. /etc/os-release && echo "$UBUNTU_CODENAME") main" | sudo tee /etc/apt/sources.list.d/rocm.list
-          # Keep hipcc and the SDK on the same AMD release; Ubuntu also ships hipcc.
-          printf 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600\n' | sudo tee /etc/apt/preferences.d/rocm-pin-600
-          sudo apt-get update
-          sudo apt-get install -y hip-dev hipcc hipblas-dev hipsolver-dev
-          echo "ROCM_PATH=/opt/rocm" >> "$GITHUB_ENV"
-          echo "/opt/rocm/bin" >> "$GITHUB_PATH"
-
-      - name: Verify hipcc
-        run: hipcc --version
-
-
       - name: Configure
         run: >
-          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          python3 Scripts/setup.py config --compiler=default --source-dir . --build-dir build --generator Ninja
           --build-type=Release
           --cpu-backend=avx2
           --gpu-backend=hip
@@ -169,12 +152,12 @@ jobs:
           --benchmark=ON
 
       - name: Build
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build --parallel 4
+        run: python3 Scripts/setup.py build --build-dir build --parallel 4
 
       - name: Test (GPU cases self-skip without a device)
         run: >
-          python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build
-          --test-timeout 300 -LE Benchmark
+          python3 Scripts/setup.py test --build-dir build
+          --test-timeout 300 --exclude-test-label Benchmark
 
   # ---------------------------------------------------------------------------
   # macOS AArch64 CPU: 'no' and NEON. macos-latest runners are Apple Silicon
@@ -187,7 +170,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cpu_backend: [no, neon]
+        cpu_backend: ["no", neon]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -198,7 +181,7 @@ jobs:
 
       - name: Configure
         run: >
-          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          python3 Scripts/setup.py config --compiler=default --source-dir . --build-dir build --generator Ninja
           --build-type=Release
           --cpu-backend=${{ matrix.cpu_backend }}
           --gpu-backend=none
@@ -206,10 +189,10 @@ jobs:
           --benchmark=ON
 
       - name: Build
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
+        run: python3 Scripts/setup.py build --build-dir build
 
       - name: Test
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build
+        run: python3 Scripts/setup.py test --build-dir build
 
   # ---------------------------------------------------------------------------
   # macOS Metal: real GPU backend, fully build + run on-device. Apple Silicon
@@ -229,7 +212,7 @@ jobs:
 
       - name: Configure
         run: >
-          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          python3 Scripts/setup.py config --compiler=default --source-dir . --build-dir build --generator Ninja
           --build-type=Release
           --cpu-backend=neon
           --gpu-backend=metal
@@ -237,10 +220,10 @@ jobs:
           --benchmark=OFF
 
       - name: Build
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
+        run: python3 Scripts/setup.py build --build-dir build
 
       - name: Test
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build
+        run: python3 Scripts/setup.py test --build-dir build
 
   # ---------------------------------------------------------------------------
   # Windows x86_64 CPU: MSVC, every x86 CPU SIMD backend, Release.
@@ -252,7 +235,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cpu_backend: [no, sse, avx, avx2, avx512]
+        cpu_backend: ["no", sse, avx, avx2, avx512]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -260,14 +243,14 @@ jobs:
 
       - name: Configure
         run: >
-          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --generator=default --source-dir . --build-dir build
+          python3 Scripts/setup.py config --compiler=default --generator=default --source-dir . --build-dir build
           --cpu-backend=${{ matrix.cpu_backend }}
           --gpu-backend=none
           --testing=ON
           --benchmark=ON
 
       - name: Build
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build --build-type Release
+        run: python3 Scripts/setup.py build --build-dir build --build-type Release
 
       - name: Test
         run: python .github/scripts/ctest_cpu.py --backend=${{ matrix.cpu_backend }}
@@ -320,7 +303,7 @@ jobs:
 
       - name: Configure
         run: >
-          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          python3 Scripts/setup.py config --compiler=default --source-dir . --build-dir build --generator Ninja
           --build-type=Release
           --gpu-backend=none
           --testing=ON
@@ -328,10 +311,10 @@ jobs:
           ${{ matrix.cmake_flags }}
 
       - name: Build
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
+        run: python3 Scripts/setup.py build --build-dir build
 
       - name: Test
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build
+        run: python3 Scripts/setup.py test --build-dir build
 
   # ---------------------------------------------------------------------------
   # Toolchain axes: LTO mode, linker choice, C++ standard, compiler cache.
@@ -378,7 +361,7 @@ jobs:
 
       - name: Configure
         run: >
-          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          python3 Scripts/setup.py config --compiler=default --source-dir . --build-dir build --generator Ninja
           --build-type=Release
           --cpu-backend=avx2
           --gpu-backend=none
@@ -387,10 +370,10 @@ jobs:
           ${{ matrix.cmake_flags }}
 
       - name: Build
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
+        run: python3 Scripts/setup.py build --build-dir build
 
       - name: Test
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build
+        run: python3 Scripts/setup.py test --build-dir build
 
   # ---------------------------------------------------------------------------
   # Compiler cache + Icecream, cross-platform: toolchain-axes above only covers
@@ -475,14 +458,14 @@ jobs:
       - name: Install BuildCache
         if: matrix.use_buildcache
         shell: bash
-        run: python3 .github/scripts/install_buildcache.py --install-prefix "$RUNNER_TEMP/buildcache-tool"
+        run: python3 .github/scripts/install_buildcache.py --prefix "$RUNNER_TEMP/buildcache-tool"
 
       - name: Configure (Linux/macOS)
         if: runner.os != 'Windows'
         run: >
-          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          python3 Scripts/setup.py config --compiler=default --source-dir . --build-dir build --generator Ninja
           --build-type=Release
-          --cpu-backend=avx2
+          --cpu-backend=${{ runner.os == 'macOS' && 'neon' || 'avx2' }}
           --gpu-backend=none
           --testing=ON
           --benchmark=OFF
@@ -491,7 +474,7 @@ jobs:
       - name: Configure (Windows)
         if: runner.os == 'Windows'
         run: >
-          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --generator=default --source-dir . --build-dir build
+          python3 Scripts/setup.py config --compiler=default --generator=default --source-dir . --build-dir build
           --cpu-backend=avx2
           --gpu-backend=none
           --testing=ON
@@ -500,19 +483,19 @@ jobs:
 
       - name: Build (Linux/macOS)
         if: runner.os != 'Windows'
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
+        run: python3 Scripts/setup.py build --build-dir build
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build --build-type Release
+        run: python3 Scripts/setup.py build --build-dir build --build-type Release
 
       - name: Test (Linux/macOS)
         if: runner.os != 'Windows'
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build
+        run: python3 Scripts/setup.py test --build-dir build
 
       - name: Test (Windows)
         if: runner.os == 'Windows'
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build --build-type Release
+        run: python3 Scripts/setup.py test --build-dir build --build-type Release
 
   # ---------------------------------------------------------------------------
   # Static analysis: clang-tidy and include-what-you-use, each their own job
@@ -550,7 +533,7 @@ jobs:
       - name: Configure
         if: matrix.tool != 'cppcheck'
         run: >
-          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          python3 Scripts/setup.py config --compiler=default --source-dir . --build-dir build --generator Ninja
           --build-type=Release
           --cpu-backend=avx2
           --gpu-backend=none
@@ -560,7 +543,7 @@ jobs:
 
       - name: Build (clang-tidy / iwyu run inline during compilation)
         if: matrix.tool != 'cppcheck'
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
+        run: python3 Scripts/setup.py build --build-dir build
 
       - name: Cppcheck (via Scripts/setup.py)
         if: matrix.tool == 'cppcheck'
@@ -586,7 +569,7 @@ jobs:
 
       - name: Configure
         run: >
-          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          python3 Scripts/setup.py config --compiler=default --source-dir . --build-dir build --generator Ninja
           --build-type=Debug
           --cpu-backend=avx2
           --gpu-backend=none
@@ -595,10 +578,10 @@ jobs:
           --valgrind=ON
 
       - name: Build
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
+        run: python3 Scripts/setup.py build --build-dir build
 
       - name: Test under Valgrind
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build
+        run: python3 Scripts/setup.py test --build-dir build --memcheck
 
   # ---------------------------------------------------------------------------
   # Bazel: builds/tests the whole tree, cross-platform, plus a small CPU
@@ -615,7 +598,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        cpu_backend: [no]
+        cpu_backend: ["no"]
         include:
           - os: ubuntu-latest
             cpu_backend: avx2
@@ -634,34 +617,34 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/bazel
-          key: bazel-${{ runner.os }}-${{ matrix.cpu_backend }}-${{ hashFiles('MODULE.bazel', 'WORKSPACE.bazel', 'BUILD.bazel', 'bazel/**') }}
+          key: bazel-${{ runner.os }}-${{ matrix.cpu_backend }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'BUILD.bazel', 'bazel/**') }}
           restore-keys: |
             bazel-${{ runner.os }}-${{ matrix.cpu_backend }}-
             bazel-${{ runner.os }}-
 
       - name: Build (default backend)
         if: matrix.cpu_backend == 'no'
-        run: python3 "${{ github.workspace }}/Scripts/setup_bazel.py" build --compiler=default --compilation-mode=fastbuild --target=//...
+        run: python3 Scripts/setup_bazel.py build --compiler=default --compilation-mode=fastbuild --target=//... --cpu-backend=no
 
       - name: Test (default backend)
         if: matrix.cpu_backend == 'no'
-        run: python3 "${{ github.workspace }}/Scripts/setup_bazel.py" test --compiler=default --compilation-mode=fastbuild --target=//... --test-output=errors
+        run: python3 Scripts/setup_bazel.py test --compiler=default --compilation-mode=fastbuild --target=//... --cpu-backend=no --test-output=errors
 
       - name: Build (CPU backend)
         if: matrix.cpu_backend != 'no' && matrix.cpu_backend != 'metal'
-        run: python3 "${{ github.workspace }}/Scripts/setup_bazel.py" build --compiler=default --compilation-mode=fastbuild --target=//... --cpu-backend=${{ matrix.cpu_backend }}
+        run: python3 Scripts/setup_bazel.py build --compiler=default --compilation-mode=fastbuild --target=//... --cpu-backend=${{ matrix.cpu_backend }}
 
       - name: Test (CPU backend)
         if: matrix.cpu_backend != 'no' && matrix.cpu_backend != 'metal'
-        run: python3 "${{ github.workspace }}/Scripts/setup_bazel.py" test --compiler=default --compilation-mode=fastbuild --target=//... --cpu-backend=${{ matrix.cpu_backend }} --test-output=errors
+        run: python3 Scripts/setup_bazel.py test --compiler=default --compilation-mode=fastbuild --target=//... --cpu-backend=${{ matrix.cpu_backend }} --test-output=errors
 
       - name: Build (Metal GPU backend)
         if: matrix.cpu_backend == 'metal'
-        run: python3 "${{ github.workspace }}/Scripts/setup_bazel.py" build --compiler=default --compilation-mode=fastbuild --target=//... --gpu-backend=metal
+        run: python3 Scripts/setup_bazel.py build --compiler=default --compilation-mode=fastbuild --target=//... --gpu-backend=metal
 
       - name: Test (Metal GPU backend)
         if: matrix.cpu_backend == 'metal'
-        run: python3 "${{ github.workspace }}/Scripts/setup_bazel.py" test --compiler=default --compilation-mode=fastbuild --target=//... --gpu-backend=metal --test-output=errors
+        run: python3 Scripts/setup_bazel.py test --compiler=default --compilation-mode=fastbuild --target=//... --gpu-backend=metal --test-output=errors
 
   # ---------------------------------------------------------------------------
   # Sanitizers: Clang ASan and UBSan, default CPU backend (avx2), Debug.
@@ -697,9 +680,9 @@ jobs:
 
       - name: Configure
         run: >
-          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          python3 Scripts/setup.py config --compiler=default --source-dir . --build-dir build --generator Ninja
           --build-type=Debug
-          --cpu-backend=avx2
+          --cpu-backend=${{ runner.os == 'macOS' && 'neon' || 'avx2' }}
           --gpu-backend=none
           --testing=ON
           --benchmark=OFF
@@ -707,13 +690,13 @@ jobs:
           --sanitizer-types=${{ matrix.sanitizer }}
 
       - name: Build
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
+        run: python3 Scripts/setup.py build --build-dir build
 
       - name: Test
         env:
           ASAN_OPTIONS: halt_on_error=1:abort_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build
+        run: python3 Scripts/setup.py test --build-dir build
 
   # ---------------------------------------------------------------------------
   # Coverage: gcc/gcov+lcov (Linux), Homebrew LLVM/clang (macOS), MSVC/OpenCppCoverage
@@ -746,7 +729,7 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           brew install ninja llvm
-          LLVM_PREFIX="$(brew --install-prefix llvm)"
+          LLVM_PREFIX="$(brew --prefix llvm)"
           echo "${LLVM_PREFIX}/bin" >> "$GITHUB_PATH"
           echo "CC=${LLVM_PREFIX}/bin/clang" >> "$GITHUB_ENV"
           echo "CXX=${LLVM_PREFIX}/bin/clang++" >> "$GITHUB_ENV"
@@ -765,9 +748,9 @@ jobs:
       - name: Configure (Linux/macOS)
         if: matrix.os != 'windows-latest'
         run: >
-          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --source-dir . --build-dir build --generator Ninja
+          python3 Scripts/setup.py config --compiler=default --source-dir . --build-dir build --generator Ninja
           --build-type=Debug
-          --cpu-backend=avx2
+          --cpu-backend=${{ runner.os == 'macOS' && 'neon' || 'avx2' }}
           --gpu-backend=none
           --testing=ON
           --benchmark=OFF
@@ -776,7 +759,7 @@ jobs:
       - name: Configure (Windows)
         if: matrix.os == 'windows-latest'
         run: >
-          python3 "${{ github.workspace }}/Scripts/setup.py" config --compiler=default --generator=default --source-dir . --build-dir build
+          python3 Scripts/setup.py config --compiler=default --generator=default --source-dir . --build-dir build
           --cpu-backend=avx2
           --gpu-backend=none
           --testing=ON
@@ -785,19 +768,19 @@ jobs:
 
       - name: Build (Linux/macOS)
         if: matrix.os != 'windows-latest'
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build
+        run: python3 Scripts/setup.py build --build-dir build
 
       - name: Build (Windows)
         if: matrix.os == 'windows-latest'
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" build --build-dir build --build-type Release
+        run: python3 Scripts/setup.py build --build-dir build --build-type Release
 
       - name: Test (Linux/macOS)
         if: matrix.os != 'windows-latest'
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build
+        run: python3 Scripts/setup.py test --build-dir build
 
       - name: Test (Windows)
         if: matrix.os == 'windows-latest'
-        run: python3 "${{ github.workspace }}/Scripts/setup.py" test --build-dir . --build-dir build --build-type Release
+        run: python3 Scripts/setup.py test --build-dir build --build-type Release
 
       - name: Collect coverage
         run: >

@@ -3,9 +3,110 @@ module(
     version = "1.0.0",
 )
 
-bazel_dep(name = "rules_cc", version = "0.2.17")
-# rules_cc's WORKSPACE compatibility initialization loads bazel_features.
-bazel_dep(name = "bazel_features", version = "1.28.0")
-bazel_dep(name = "platforms", version = "0.0.11")
-bazel_dep(name = "bazel_skylib", version = "1.7.1")
-bazel_dep(name = "rules_pkg", version = "1.0.1")
+bazel_dep(name = "rules_cc", version = "0.2.27")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+bazel_dep(name = "rules_pkg", version = "1.3.0")
+
+# =============================================================================
+# Pure Bzlmod — no WORKSPACE.bazel. Every ThirdParty/ submodule is wired here
+# directly via use_repo_rule, with paths relative to this workspace root (so
+# MODULE.bazel.lock stays portable across machines/CI, unlike a module
+# extension that bakes in absolute paths). Mirrors the sibling
+# KhwarizmiAnalytix/Logging and KhwarizmiAnalytix/LinearAlgebra repos, which
+# migrated off WORKSPACE.bazel the same way ahead of Bazel 9's removal of
+# WORKSPACE-based repos (local_repository / new_local_repository in a
+# WORKSPACE file still work under Bzlmod when declared this way instead).
+# =============================================================================
+
+local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.bzl", "local_repository")
+new_local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.bzl", "new_local_repository")
+
+# --- Transitive dependencies owned by Logging and Memory ---
+new_local_repository(
+    name = "fmt",
+    path = "ThirdParty/Logging/ThirdParty/fmt",
+    build_file = "//ThirdParty:fmt.BUILD",
+)
+
+new_local_repository(
+    name = "mimalloc",
+    path = "ThirdParty/Memory/ThirdParty/mimalloc",
+    build_file = "//ThirdParty:mimalloc.BUILD",
+)
+
+# --- Google Test / Benchmark — vendored nested submodules (ThirdParty/) ---
+local_repository(
+    name = "com_google_googletest",
+    path = "ThirdParty/googletest",
+)
+
+local_repository(
+    name = "com_google_benchmark",
+    path = "ThirdParty/benchmark",
+)
+
+# --- Logging — required sibling dependency (KhwarizmiAnalytix/Logging) ---
+# Logging's own nested submodules for its default LOGURU backend and
+# magic_enum support (mirrors ThirdParty/Logging/MODULE.bazel).
+new_local_repository(
+    name = "loguru",
+    path = "ThirdParty/Logging/ThirdParty/loguru",
+    build_file = "//ThirdParty:loguru.BUILD",
+)
+
+new_local_repository(
+    name = "magic_enum",
+    path = "ThirdParty/Logging/ThirdParty/magic_enum",
+    build_file = "//ThirdParty:magic_enum.BUILD",
+)
+
+local_logging_repository = use_repo_rule("//bazel:logging_repository.bzl", "local_logging_repository")
+
+local_logging_repository(
+    name = "logging",
+    path = "ThirdParty/Logging",
+    build_file = "//ThirdParty:logging.BUILD",
+)
+
+# --- Profiler — optional sibling dependency (KhwarizmiAnalytix/Profiler) ---
+# Disabled by default (see .bazelrc: --define=vectorization_enable_profiler=false)
+# until Profiler's Bazel overlay is fully wired for its kineto/ittapi deps —
+# mirrors Memory's own bazel/BUILD.bazel default.
+local_profiler_repository = use_repo_rule("//bazel:profiler_repository.bzl", "local_profiler_repository")
+
+local_profiler_repository(
+    name = "profiler",
+    path = "ThirdParty/Profiler",
+    build_file = "//ThirdParty:profiler.BUILD",
+)
+
+# --- Memory — required sibling dependency (KhwarizmiAnalytix/Memory) ---
+# Memory's own overlay BUILD.bazel wires MEMORY_GPU_BACKEND to the same
+# cuda/hip/metal shape as Vectorization's own bazel/BUILD.bazel; see
+# Scripts/setup_bazel.py, which passes --define=memory_gpu_backend=... in
+# lockstep with --define=vectorization_gpu_backend=....
+local_memory_repository = use_repo_rule("//bazel:memory_repository.bzl", "local_memory_repository")
+
+local_memory_repository(
+    name = "memory",
+    path = "ThirdParty/Memory",
+    build_file = "//ThirdParty:memory.BUILD",
+)
+
+# Scalars owns scalar types and the CPU/GPU SIMD backends.
+new_local_repository(
+    name = "scalars",
+    path = "ThirdParty/Scalars",
+    build_file = "//ThirdParty:scalars.BUILD",
+)
+
+# --- LinearAlgebra — required sibling dependency (KhwarizmiAnalytix/LinearAlgebra) ---
+# Provides matrix decompositions, linear solvers, BLAS/LAPACK backends.
+local_linear_algebra_repository = use_repo_rule("//bazel:linear_algebra_repository.bzl", "local_linear_algebra_repository")
+
+local_linear_algebra_repository(
+    name = "linear_algebra",
+    path = "ThirdParty/LinearAlgebra",
+    build_file = "//ThirdParty:linearalgebra.BUILD",
+)

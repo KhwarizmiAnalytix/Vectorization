@@ -27,24 +27,36 @@ def main():
         ],
         check=True,
     )
+    configure = [
+        "cmake",
+        "-S",
+        str(source / "src"),
+        "-B",
+        str(build),
+        "-DCMAKE_BUILD_TYPE=Release",
+        # The pinned MinGW thread headers still request CMake 3.0 policies.
+        "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+        # CI uses local storage; avoid runner-specific OpenSSL DLLs.
+        "-DDISABLE_SSL=ON",
+        f"-DCMAKE_INSTALL_PREFIX={prefix}",
+    ]
+    # Let CMake discover Visual Studio on Windows. Ninja otherwise selects the
+    # runner's MinGW compiler, whose bundled thread headers fail on newer GCC.
+    if os.name != "nt":
+        configure.extend(["-G", "Ninja"])
+    subprocess.run(configure, check=True)
     subprocess.run(
         [
             "cmake",
-            "-S",
-            str(source / "src"),
-            "-B",
+            "--build",
             str(build),
-            "-G",
-            "Ninja",
-            "-DCMAKE_BUILD_TYPE=Release",
-            # CI uses local storage; avoid runner-specific OpenSSL DLLs.
-            "-DDISABLE_SSL=ON",
-            f"-DCMAKE_INSTALL_PREFIX={prefix}",
+            "--config",
+            "Release",
+            "--target",
+            "buildcache",
+            "--parallel",
+            "4",
         ],
-        check=True,
-    )
-    subprocess.run(
-        ["cmake", "--build", str(build), "--target", "buildcache", "--parallel", "4"],
         check=True,
     )
     executable = "buildcache.exe" if os.name == "nt" else "buildcache"

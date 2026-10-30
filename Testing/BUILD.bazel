@@ -1,23 +1,16 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
-load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 
 package(default_visibility = ["//visibility:public"])
 
-# VectorizationTest.h.in has no @VAR@ substitution of its own (see
-# CMakeLists.txt's `configure_file(... @ONLY)`); it exists only to
-# land at a predictable, non-".in" include path. copy_file is the Bazel
-# equivalent of that configure_file call.
-copy_file(
-    name = "vectorization_test_header_gen",
-    src = "VectorizationTest.h.in",
-    out = "VectorizationTest.h",
-)
-
+# The checked-in wrapper includes the template without substitutions. Declare
+# both source files so MSVC's include search cannot select an undeclared header
+# instead of a generated file with the same name.
 cc_library(
     name = "vectorizationTest_header",
     hdrs = [
-        ":vectorization_test_header_gen",
+        "VectorizationTest.h",
     ],
+    textual_hdrs = ["VectorizationTest.h.in"],
     includes = ["."],
     deps = ["//:Vectorization"],
 )

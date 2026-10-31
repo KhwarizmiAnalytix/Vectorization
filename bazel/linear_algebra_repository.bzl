@@ -4,7 +4,7 @@ The vendored repo ships its own BUILD.bazel for standalone use (matrix
 decompositions, solvers, BLAS/LAPACK backends). This rule copies first-party
 LinearAlgebra sources, drops nested BUILD/WORKSPACE files and LinearAlgebra's
 own vendored ThirdParty/ (WORKSPACE.bazel resolves transitive dependencies from
-their owning checkouts), and writes //ThirdParty:linearalgebra.BUILD at the
+their owning checkouts), and writes //bazel:linearalgebra.BUILD at the
 root so @xsigma_vectorization//bazel flags apply.
 
 Vectorization depends on @linear_algebra//:LinearAlgebra only.

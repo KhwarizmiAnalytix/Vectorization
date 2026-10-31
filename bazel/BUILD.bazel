@@ -17,8 +17,16 @@
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "fmt.BUILD",
+    "linearalgebra.BUILD",
+    "logging.BUILD",
+    "loguru.BUILD",
+    "magic_enum.BUILD",
+    "memory.BUILD",
+    "mimalloc.BUILD",
+    "profiler.BUILD",
+    "scalars.BUILD",
     "gen_metal_kernels_source.py",
-    "xsigma.bzl",
     "vectorization.bzl",
 ])
 

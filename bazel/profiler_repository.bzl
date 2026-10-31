@@ -2,7 +2,7 @@
 
 The vendored repo ships its own BUILD.bazel for standalone use. This rule
 copies first-party Profiler sources, drops nested BUILD files, and writes
-//ThirdParty:profiler.BUILD at the root so @vectorization//bazel flags apply.
+//bazel:profiler.BUILD at the root so @vectorization//bazel flags apply.
 
 Vectorization depends on @profiler//:Profiler only, and only when
 //bazel:disable_profiler is not set (see .bazelrc; off by default, mirroring

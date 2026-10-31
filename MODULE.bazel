@@ -26,13 +26,13 @@ new_local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.
 new_local_repository(
     name = "fmt",
     path = "ThirdParty/Logging/ThirdParty/fmt",
-    build_file = "//ThirdParty:fmt.BUILD",
+    build_file = "//bazel:fmt.BUILD",
 )
 
 new_local_repository(
     name = "mimalloc",
     path = "ThirdParty/Memory/ThirdParty/mimalloc",
-    build_file = "//ThirdParty:mimalloc.BUILD",
+    build_file = "//bazel:mimalloc.BUILD",
 )
 
 # --- Google Test / Benchmark — vendored nested submodules (ThirdParty/) ---
@@ -52,13 +52,13 @@ local_repository(
 new_local_repository(
     name = "loguru",
     path = "ThirdParty/Logging/ThirdParty/loguru",
-    build_file = "//ThirdParty:loguru.BUILD",
+    build_file = "//bazel:loguru.BUILD",
 )
 
 new_local_repository(
     name = "magic_enum",
     path = "ThirdParty/Logging/ThirdParty/magic_enum",
-    build_file = "//ThirdParty:magic_enum.BUILD",
+    build_file = "//bazel:magic_enum.BUILD",
 )
 
 local_logging_repository = use_repo_rule("//bazel:logging_repository.bzl", "local_logging_repository")
@@ -66,7 +66,7 @@ local_logging_repository = use_repo_rule("//bazel:logging_repository.bzl", "loca
 local_logging_repository(
     name = "logging",
     path = "ThirdParty/Logging",
-    build_file = "//ThirdParty:logging.BUILD",
+    build_file = "//bazel:logging.BUILD",
 )
 
 # --- Profiler — optional sibling dependency (KhwarizmiAnalytix/Profiler) ---
@@ -78,7 +78,7 @@ local_profiler_repository = use_repo_rule("//bazel:profiler_repository.bzl", "lo
 local_profiler_repository(
     name = "profiler",
     path = "ThirdParty/Profiler",
-    build_file = "//ThirdParty:profiler.BUILD",
+    build_file = "//bazel:profiler.BUILD",
 )
 
 # --- Memory — required sibling dependency (KhwarizmiAnalytix/Memory) ---
@@ -91,14 +91,14 @@ local_memory_repository = use_repo_rule("//bazel:memory_repository.bzl", "local_
 local_memory_repository(
     name = "memory",
     path = "ThirdParty/Memory",
-    build_file = "//ThirdParty:memory.BUILD",
+    build_file = "//bazel:memory.BUILD",
 )
 
 # Scalars owns scalar types and the CPU/GPU SIMD backends.
 new_local_repository(
     name = "scalars",
     path = "ThirdParty/Scalars",
-    build_file = "//ThirdParty:scalars.BUILD",
+    build_file = "//bazel:scalars.BUILD",
 )
 
 # --- LinearAlgebra — required sibling dependency (KhwarizmiAnalytix/LinearAlgebra) ---
@@ -108,5 +108,5 @@ local_linear_algebra_repository = use_repo_rule("//bazel:linear_algebra_reposito
 local_linear_algebra_repository(
     name = "linear_algebra",
     path = "ThirdParty/LinearAlgebra",
-    build_file = "//ThirdParty:linearalgebra.BUILD",
+    build_file = "//bazel:linearalgebra.BUILD",
 )

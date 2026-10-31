@@ -1,7 +1,7 @@
 """Local checkout of ThirdParty/Logging with this repo's overlay BUILD.
 
 Copies first-party Logging sources, drops nested BUILD files, and writes
-//ThirdParty:logging.BUILD at the root so @vectorization//bazel flags apply.
+//bazel:logging.BUILD at the root so @vectorization//bazel flags apply.
 
 Vectorization depends on @logging//:Logging only.
 """

@@ -1,10 +1,29 @@
-load("//bazel:xsigma.bzl", "xsigma_copts", "xsigma_defines", "xsigma_linkopts")
-
 # C++ standard for Vectorization — mirrors CMake VECTORIZATION_CXX_STANDARD (default: 20)
 VECTORIZATION_CXX_STD = "c++20"
 
 def vectorization_copts():
-    return xsigma_copts(cxx_std = VECTORIZATION_CXX_STD)
+    return select({
+        "@platforms//os:windows": [
+            "/std:" + VECTORIZATION_CXX_STD,
+            "/Zc:__cplusplus",  # expose correct __cplusplus value (mirrors CMake /Zc:__cplusplus)
+            "/EHsc",            # structured exception handling
+            "/bigobj",          # large object files (mirrors CMake /bigobj)
+            "/utf-8",           # UTF-8 source/output encoding (mirrors CMake /utf-8)
+            "/wd4244",          # narrowing conversion (mirrors CMake /wd4244)
+            "/wd4267",          # size_t → int conversion (mirrors CMake /wd4267)
+            "/wd4715",          # not all control paths return (mirrors CMake /wd4715)
+            "/wd4018",          # signed/unsigned comparison (mirrors CMake /wd4018)
+            "/WX",              # warnings as errors (mirrors CMake /WX)
+        ],
+        "//conditions:default": [
+            "-std=" + VECTORIZATION_CXX_STD,
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-include",
+            "cstdlib",
+        ],
+    })
 
 def vectorization_defines():
     """Returns compile definitions for the Vectorization library.
@@ -13,7 +32,16 @@ def vectorization_defines():
     Optional math providers belong to Scalars. LibTorch comparisons are
     CMake-only and are compiled out here (=0).
     """
-    defines = xsigma_defines()
+    defines = select({
+        "@platforms//os:windows": [
+            "_CRT_SECURE_NO_DEPRECATE",
+            "_CRT_NONSTDC_NO_DEPRECATE",
+            "_CRT_SECURE_NO_WARNINGS",
+            "_SCL_SECURE_NO_DEPRECATE",
+            "_SCL_SECURE_NO_WARNINGS",
+        ],
+        "//conditions:default": [],
+    })
 
     # --- CPU backend -> VECTORIZATION_HAS_* (one-hot, driven by cpu_* config_settings) ---
 
@@ -94,7 +122,17 @@ def vectorization_defines():
     return defines
 
 def vectorization_linkopts():
-    return xsigma_linkopts()
+    return select({
+        "@platforms//os:windows": [],
+        "@platforms//os:macos": [
+            "-undefined",
+            "dynamic_lookup",
+        ],
+        "//conditions:default": [
+            "-lpthread",
+            "-ldl",
+        ],
+    })
 
 def vectorization_arch_copts():
     """Returns the -m.../-march=... ISA compiler flags for the selected CPU

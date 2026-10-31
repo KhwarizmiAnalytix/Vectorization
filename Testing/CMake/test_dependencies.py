@@ -1,5 +1,6 @@
 """Exercise public option forwarding against the pinned dependency projects."""
 
+import json
 from pathlib import Path
 import platform
 import shutil
@@ -10,6 +11,34 @@ import unittest
 
 @unittest.skipUnless(shutil.which("cmake"), "CMake is required")
 class DependencyTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("ninja"), "Ninja is required")
+    def test_optional_dependencies_do_not_add_unused_modules_or_tests(self):
+        source = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([
+                "cmake", "-S", str(source), "-B", directory, "-G", "Ninja",
+                "-DCMAKE_BUILD_TYPE=Release",
+                "-DVECTORIZATION_ENABLE_TESTING=ON",
+                "-DVECTORIZATION_ENABLE_BENCHMARK=OFF",
+                "-DVECTORIZATION_ENABLE_CACHE=OFF",
+                "-DVECTORIZATION_ENABLE_SLEEF=ON",
+                "-DVECTORIZATION_ENABLE_SVML=OFF",
+                # Exercise stale cache values as well as fresh configurations.
+                "-DFMT_MODULE=ON", "-DSLEEF_ENABLE_SSL=ON",
+            ], capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            result = subprocess.run([
+                "ctest", "--test-dir", directory, "--show-only=json-v1",
+            ], capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            tests = {test["name"] for test in json.loads(result.stdout)["tests"]}
+            self.assertEqual(tests, {"VectorizationCxxTests"})
+            result = subprocess.run([
+                "cmake", "--build", directory, "--target", "help",
+            ], capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn("fmt-module", result.stdout)
+
     def test_backend_and_standard_follow_public_options_on_reconfigure(self):
         source = Path(__file__).resolve().parents[2]
         with tempfile.TemporaryDirectory() as directory:

@@ -4,14 +4,7 @@ function(vectorization_forward_dependency prefix target)
   if(TARGET "${target}")
     return()
   endif()
-  foreach(
-    feature IN
-    ITEMS CACHE
-          ICECC
-          SANITIZER
-          COVERAGE
-          VALGRIND
-  )
+  foreach(feature IN ITEMS CACHE ICECC SANITIZER COVERAGE VALGRIND)
     set(${prefix}_ENABLE_${feature} "${VECTORIZATION_ENABLE_${feature}}"
         CACHE BOOL "Configured by Vectorization" FORCE
     )
@@ -31,7 +24,9 @@ function(vectorization_forward_dependency prefix target)
   if(_dependency_standard LESS 20)
     set(_dependency_standard 20)
   endif()
-  set(${prefix}_CXX_STANDARD "${_dependency_standard}" CACHE STRING "Configured by Vectorization" FORCE)
+  set(${prefix}_CXX_STANDARD "${_dependency_standard}" CACHE STRING "Configured by Vectorization"
+                                                             FORCE
+  )
   # This repository's testing and benchmark switches apply to its own targets.
   foreach(feature IN ITEMS TESTING BENCHMARK EXAMPLES)
     set(${prefix}_ENABLE_${feature} OFF CACHE BOOL "Dependency targets disabled" FORCE)
@@ -45,6 +40,10 @@ vectorization_forward_dependency(LINALG LinearAlgebra::LinearAlgebra)
 vectorization_forward_dependency(PARALLEL Parallel::Parallel)
 
 if(NOT TARGET Logging::Logging)
+  # Logging consumes fmt's headers/library, never its optional C++ module.
+  # The pinned fmt enables that extra target for clang-cl even though CMake
+  # cannot scan modules with its MSVC frontend, which breaks generation.
+  set(FMT_MODULE OFF CACHE BOOL "fmt modules are not required by Vectorization" FORCE)
   foreach(feature IN ITEMS MAGICENUM PORTABLE_FLOAT_FORMAT)
     set(LOGGING_ENABLE_${feature} "${VECTORIZATION_ENABLE_${feature}}"
         CACHE BOOL "Configured by Vectorization" FORCE
@@ -59,6 +58,12 @@ if(NOT TARGET Memory::Memory)
   endforeach()
 endif()
 if(NOT TARGET Scalars::Scalars)
+  # The pinned SLEEF uses ENABLE_SSL, not DISABLE_SSL. Its OpenSSL helpers
+  # register tests even with SLEEF_BUILD_TESTS=OFF and remain unbuilt in an
+  # EXCLUDE_FROM_ALL dependency, leaving failing entries in our CTest suite.
+  if(VECTORIZATION_ENABLE_SLEEF)
+    set(SLEEF_ENABLE_SSL OFF CACHE BOOL "Disable SLEEF's OpenSSL test helpers" FORCE)
+  endif()
   foreach(feature IN ITEMS SVML SLEEF ACCELERATE)
     set(SCALARS_ENABLE_${feature} "${VECTORIZATION_ENABLE_${feature}}"
         CACHE BOOL "Configured by Vectorization" FORCE
@@ -107,16 +112,15 @@ if(NOT TARGET Scalars::Scalars)
   if(TARGET sleef)
     # The pinned SLEEF generates sleef.h in the top-level binary directory.
     target_include_directories(sleef INTERFACE "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include>")
-    # SLEEF links TLFloat by the bare name "tlfloat" and records the search path
-    # only with directory-scoped link_directories(). That path stays inside the
-    # SLEEF subdirectory, so shared consumers such as libScalars fail at link
-    # time with "library 'tlfloat' not found". scalars_setup_sleef may retarget
-    # the install prefix in the cache without updating this directory's normal
-    # CMAKE_INSTALL_PREFIX, so read the cache value SLEEF's ExternalProject used.
-    get_target_property(_sleef_iface sleef INTERFACE_LINK_LIBRARIES)
-    if(_sleef_iface AND "tlfloat" IN_LIST _sleef_iface)
-      get_property(_vec_tlfloat_prefix CACHE CMAKE_INSTALL_PREFIX PROPERTY VALUE)
-      target_link_directories(sleef INTERFACE "$<BUILD_INTERFACE:${_vec_tlfloat_prefix}/lib>")
+    # SLEEF links TLFloat by name but keeps its search directories private.
+    # Forward the actual directories on the target: these capture the prefix
+    # used inside SLEEF (or a system TLFloat), unlike our parent-scope prefix.
+    get_target_property(_vec_sleef_libraries sleef INTERFACE_LINK_LIBRARIES)
+    get_target_property(_vec_sleef_link_dirs sleef LINK_DIRECTORIES)
+    if("tlfloat" IN_LIST _vec_sleef_libraries AND _vec_sleef_link_dirs)
+      foreach(_vec_sleef_link_dir IN LISTS _vec_sleef_link_dirs)
+        target_link_directories(sleef INTERFACE "$<BUILD_INTERFACE:${_vec_sleef_link_dir}>")
+      endforeach()
     endif()
   endif()
   if(SCALARS_ENABLE_SVML AND NOT TARGET SVML::SVML)
@@ -129,6 +133,7 @@ if(NOT TARGET Scalars::Scalars)
   # For example, AVX2 on arm64 must also disable LinearAlgebra SIMD.
   if(NOT VECTORIZATION_CPU_BACKEND STREQUAL SCALARS_CPU_BACKEND)
     set(VECTORIZATION_CPU_BACKEND "${SCALARS_CPU_BACKEND}"
-        CACHE STRING "CPU SIMD backend resolved by Scalars" FORCE)
+        CACHE STRING "CPU SIMD backend resolved by Scalars" FORCE
+    )
   endif()
 endif()

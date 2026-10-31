@@ -310,6 +310,10 @@ jobs:
           --benchmark=OFF
           ${{ matrix.cmake_flags }}
 
+      - name: Check optional dependency isolation
+        if: matrix.name == 'sleef-neon'
+        run: python3 -m unittest discover -s Testing/CMake -p test_dependencies.py -v
+
       - name: Build
         run: python3 Scripts/setup.py build --build-dir build
 

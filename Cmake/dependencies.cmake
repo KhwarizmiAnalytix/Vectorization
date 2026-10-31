@@ -107,6 +107,17 @@ if(NOT TARGET Scalars::Scalars)
   if(TARGET sleef)
     # The pinned SLEEF generates sleef.h in the top-level binary directory.
     target_include_directories(sleef INTERFACE "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include>")
+    # SLEEF links TLFloat by the bare name "tlfloat" and records the search path
+    # only with directory-scoped link_directories(). That path stays inside the
+    # SLEEF subdirectory, so shared consumers such as libScalars fail at link
+    # time with "library 'tlfloat' not found". scalars_setup_sleef may retarget
+    # the install prefix in the cache without updating this directory's normal
+    # CMAKE_INSTALL_PREFIX, so read the cache value SLEEF's ExternalProject used.
+    get_target_property(_sleef_iface sleef INTERFACE_LINK_LIBRARIES)
+    if(_sleef_iface AND "tlfloat" IN_LIST _sleef_iface)
+      get_property(_vec_tlfloat_prefix CACHE CMAKE_INSTALL_PREFIX PROPERTY VALUE)
+      target_link_directories(sleef INTERFACE "$<BUILD_INTERFACE:${_vec_tlfloat_prefix}/lib>")
+    endif()
   endif()
   if(SCALARS_ENABLE_SVML AND NOT TARGET SVML::SVML)
     message(

@@ -535,7 +535,8 @@ template <typename E> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool reduce_operands
 }
 
 template <typename E, typename value_t, reduce_op Op>
-VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool try_reduce_gpu(E const& expr, value_t& out)
+VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool try_reduce_gpu(
+    E const& expr, reduce_accumulator_t<value_t, Op>& out)
 {
     device_enum  kind   = device_enum::CPU;
     int          index  = 0;
@@ -565,8 +566,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool try_reduce_gpu(E const& expr, value_t
         }
         else
         {
-            VECTORIZATION_CHECK(
-                flat, "accumulate/hmin/hmax: strided GPU tensor; call contiguous() first");
+            VECTORIZATION_CHECK(flat, "reduction: strided GPU tensor; call contiguous() first");
         }
         const auto lowered = lower_raw(expr);
         out                = reduce_gpu<remove_cvref_t<decltype(lowered)>, value_t, Op>(
@@ -580,7 +580,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool try_reduce_gpu(E const& expr, value_t
         if (kind == device_enum::METAL)
         {
             VECTORIZATION_CHECK(flat,
-                "accumulate/hmin/hmax (Metal): strided or broadcast operands are not supported "
+                "reduction (Metal): strided or broadcast operands are not supported "
                 "on Metal yet; call contiguous() on them first");
             const auto lowered = lower_raw(expr);
             out = reduce_metal<remove_cvref_t<decltype(lowered)>, Op>(lowered, expr.size());
@@ -590,7 +590,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool try_reduce_gpu(E const& expr, value_t
 #endif
     (void)flat;
     VECTORIZATION_CHECK(kind == device_enum::CPU,
-        "accumulate/hmin/hmax: GPU expression but this translation unit has no GPU reduce "
+        "reduction: GPU expression but this translation unit has no GPU reduce "
         "path (CUDA/HIP require compiling with nvcc/hipcc; Metal requires "
         "VECTORIZATION_HAS_METAL)");
     return false;

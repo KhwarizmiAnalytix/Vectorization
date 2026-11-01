@@ -50,16 +50,19 @@
 #if VECTORIZATION_HAS_METAL
 
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
 
 #include "allocator.h"
-#include <backend/gpu/metal/metal_dispatch.h>
 #include "common/data_view.h"
 #include "common/device.h"
 #include "expressions/expression_interface.h"
 #include "expressions/reduce_op.h"
+#include <backend/gpu/metal/metal_dispatch.h>
 
 namespace vectorization
 {
@@ -80,19 +83,17 @@ using metal_alloc_t = memory::allocator<float>;
 // here would therefore break unrelated CPU-only code using an op outside the Metal
 // set. metal_expr_fusable is false for those ops, and run_metal throws
 // std::runtime_error only if genuinely reached at runtime with a METAL-device tensor.
-template <typename EVALUATOR>
-struct metal_kernel_traits
+template <typename EVALUATOR> struct metal_kernel_traits
 {
     static constexpr bool        is_supported = false;
     static constexpr const char* name         = nullptr;
 };
 
-#define VECTORIZATION_METAL_KERNEL(EVAL, NAME)            \
-    template <>                                           \
-    struct metal_kernel_traits<EVAL>                      \
-    {                                                     \
-        static constexpr bool        is_supported = true; \
-        static constexpr const char* name         = NAME; \
+#define VECTORIZATION_METAL_KERNEL(EVAL, NAME)                                                     \
+    template <> struct metal_kernel_traits<EVAL>                                                   \
+    {                                                                                              \
+        static constexpr bool        is_supported = true;                                          \
+        static constexpr const char* name         = NAME;                                          \
     };
 
 VECTORIZATION_METAL_KERNEL(add_evaluator, "+")
@@ -153,8 +154,7 @@ VECTORIZATION_METAL_KERNEL(lnot_evaluator, "lnot")
 
 #undef VECTORIZATION_METAL_KERNEL
 
-template <typename T, typename = void>
-struct metal_expr_fusable : std::false_type
+template <typename T, typename = void> struct metal_expr_fusable : std::false_type
 {
 };
 
@@ -233,8 +233,7 @@ void metal_fuse_emit(memory::data_view<Value> const& t, metal_fuse_state& st)
         metal_fuse_fail(st);
         return;
     }
-    VECTORIZATION_CHECK_DEBUG(
-        t.device() == memory::device_enum::METAL,
+    VECTORIZATION_CHECK_DEBUG(t.device() == memory::device_enum::METAL,
         "Metal expression mixes a non-METAL tensor operand");
     st.body += "in";
     st.body += std::to_string(st.n_buffers);
@@ -252,8 +251,7 @@ void metal_fuse_emit(strided_ref<Value, MaxRank> const& t, metal_fuse_state& st)
         metal_fuse_fail(st);
         return;
     }
-    VECTORIZATION_CHECK_DEBUG(
-        t.device() == memory::device_enum::METAL,
+    VECTORIZATION_CHECK_DEBUG(t.device() == memory::device_enum::METAL,
         "Metal expression mixes a non-METAL tensor operand");
     VECTORIZATION_CHECK_DEBUG(t.is_contiguous(), "Metal expression operand is not packed");
     st.body += "in";
@@ -262,16 +260,14 @@ void metal_fuse_emit(strided_ref<Value, MaxRank> const& t, metal_fuse_state& st)
     st.buffers[st.n_buffers++] = t.data();
 }
 
-template <typename Value>
-void metal_fuse_emit(tensor<Value> const& t, metal_fuse_state& st)
+template <typename Value> void metal_fuse_emit(tensor<Value> const& t, metal_fuse_state& st)
 {
     if (!st.ok || st.n_buffers >= metal_fuse_state::kMaxSlots)
     {
         metal_fuse_fail(st);
         return;
     }
-    VECTORIZATION_CHECK_DEBUG(
-        t.device() == memory::device_enum::METAL,
+    VECTORIZATION_CHECK_DEBUG(t.device() == memory::device_enum::METAL,
         "Metal expression mixes a non-METAL tensor operand");
     st.body += "in";
     st.body += std::to_string(st.n_buffers);
@@ -299,8 +295,7 @@ void metal_fuse_emit(binary_expression<LHS, RHS, EVALUATOR> const& e, metal_fuse
 template <typename LHS, typename MHS, typename RHS, typename EVALUATOR>
 void metal_fuse_emit(trinary_expression<LHS, MHS, RHS, EVALUATOR> const& e, metal_fuse_state& st);
 
-template <typename E>
-std::string metal_fuse_snapshot(E const& e, metal_fuse_state& st)
+template <typename E> std::string metal_fuse_snapshot(E const& e, metal_fuse_state& st)
 {
     std::size_t const mark = st.body.size();
     metal_fuse_emit(e, st);
@@ -477,7 +472,7 @@ void metal_fuse_emit(trinary_expression<LHS, MHS, RHS, EVALUATOR> const& e, meta
     }
 }
 
-inline std::string metal_fuse_source(metal_fuse_state const& st)
+inline std::string metal_fuse_parameters(metal_fuse_state const& st)
 {
     std::string src = "#include <metal_stdlib>\nusing namespace metal;\nkernel void fused_float(\n";
     int         idx = 0;
@@ -501,7 +496,14 @@ inline std::string metal_fuse_source(metal_fuse_state const& st)
     src += std::to_string(idx++);
     src += ")]],\n  constant uint& n [[buffer(";
     src += std::to_string(idx);
-    src += ")]],\n  uint tid [[thread_position_in_grid]])\n{\n  if (tid < n)\n    out[tid] = ";
+    src += ")]],\n";
+    return src;
+}
+
+inline std::string metal_fuse_source(metal_fuse_state const& st)
+{
+    std::string src = metal_fuse_parameters(st);
+    src += "  uint tid [[thread_position_in_grid]])\n{\n  if (tid < n)\n    out[tid] = ";
     src += st.body;
     src += ";\n}\n";
     return src;
@@ -582,53 +584,229 @@ template <reduce_op Op> float reduce_metal_buffer(void const* data, std::size_t 
     }
 }
 
+namespace metal_detail
+{
+struct metal_reduce_deleter
+{
+    void operator()(float* p) const { metal_alloc_t::free(p, memory::device_enum::METAL); }
+};
+using metal_reduce_buffer = std::unique_ptr<float, metal_reduce_deleter>;
+
+// Query once rather than assuming every Metal device uses 32-lane SIMD groups.
+inline unsigned metal_reduce_simd_width()
+{
+    static const unsigned width = []
+    {
+        metal_reduce_buffer buffer(metal_alloc_t::allocate(1, memory::device_enum::METAL));
+        scalars::metal_backend::dispatch_fused(
+            "#include <metal_stdlib>\nusing namespace metal;\n"
+            "kernel void fused_float(device float* out [[buffer(0)]],"
+            "constant uint& n [[buffer(1)]], uint width [[threads_per_simdgroup]])"
+            "{ out[0] = float(width); }",
+            nullptr,
+            0,
+            nullptr,
+            0,
+            buffer.get(),
+            1);
+        float value = 0;
+        metal_alloc_t::copy(
+            buffer.get(), 1, &value, memory::device_enum::METAL, memory::device_enum::CPU);
+        return static_cast<unsigned>(value);
+    }();
+    return width;
+}
+
+template <reduce_op Op> std::string metal_reduce_source(metal_fuse_state const& st, bool partials)
+{
+    // Reuse the emitter's argument layout, but fold each SIMD group directly
+    // into a partial instead of materializing all expression values.
+    std::string src = metal_fuse_parameters(st);
+    src += "  uint tid [[thread_position_in_grid]], uint lane [[thread_index_in_simdgroup]],"
+           "uint width [[threads_per_simdgroup]]) {\n";
+    if constexpr (reduce_is_count<Op>)
+    {
+        src += "uint v = ";
+        if (partials)
+        {
+            src += "as_type<uint>(in0[tid])";
+        }
+        else if constexpr (Op == reduce_op::count_nonzero)
+        {
+            src += "uint((" + st.body + ") != 0.0f)";
+        }
+        else
+        {
+            src += "uint(!isnan(" + st.body + "))";
+        }
+    }
+    else
+    {
+        src += "float v = " + st.body + ";\n";
+        if (!partials)
+        {
+            if constexpr (Op == reduce_op::all || Op == reduce_op::any)
+            {
+                src += "v = float(v != 0.0f)";
+            }
+            else if constexpr (Op == reduce_op::nansum)
+            {
+                src += "v = isnan(v) ? 0.0f : v";
+            }
+        }
+    }
+    src += ";\nuint active = min(width, n - (tid - lane));\n"
+           "for (uint offset = width / 2; offset > 0; offset >>= 1) {\n"
+           "auto other = simd_shuffle_down(v, offset);\n"
+           "if (lane + offset < active) v = ";
+    if constexpr (Op == reduce_op::product)
+    {
+        src += "v * other";
+    }
+    else if constexpr (Op == reduce_op::all)
+    {
+        src += "min(v, other)";
+    }
+    else if constexpr (Op == reduce_op::any)
+    {
+        src += "max(v, other)";
+    }
+    else
+    {
+        src += "v + other";
+    }
+    src += ";\n}\nif (lane == 0) out[tid / width] = ";
+    if constexpr (reduce_is_count<Op>)
+    {
+        src += "as_type<float>(v)";
+    }
+    else
+    {
+        src += "v";
+    }
+    src += ";\n}\n";
+    return src;
+}
+
+template <typename E, reduce_op Op>
+reduce_accumulator_t<float, Op> metal_reduce_extended(E const& expr, std::size_t n)
+{
+    using acc_t = reduce_accumulator_t<float, Op>;
+    if (n == 0)
+        return reduce_identity<acc_t, Op>();
+    // dispatch_fused has a uint32 grid. Its maximum input length also bounds
+    // the count, so uint partials are exact on Metal and widen on return.
+    VECTORIZATION_CHECK(n <= std::numeric_limits<std::uint32_t>::max(),
+        "reduction (Metal): input exceeds uint32 grid limit");
+    if constexpr (metal_expr_fusable<E>::value || is_base_expression<E>::value)
+    {
+        metal_fuse_state st;
+        metal_fuse_emit(expr, st);
+        if (!metal_fuse_fits(st))
+        {
+            throw std::runtime_error("Metal fused kernel exceeds the device buffer limit");
+        }
+        const auto          width = metal_reduce_simd_width();
+        metal_reduce_buffer current(metal_alloc_t::allocate(n, memory::device_enum::METAL));
+        scalars::metal_backend::dispatch_fused(metal_reduce_source<Op>(st, false),
+            st.buffers,
+            st.n_buffers,
+            st.scalars,
+            st.n_scalars,
+            current.get(),
+            n);
+        n = n / width + (n % width != 0);
+        while (n > 1)
+        {
+            metal_fuse_state partial;
+            partial.body       = "in0[tid]";
+            partial.buffers[0] = current.get();
+            partial.n_buffers  = 1;
+            metal_reduce_buffer next(metal_alloc_t::allocate(n, memory::device_enum::METAL));
+            scalars::metal_backend::dispatch_fused(metal_reduce_source<Op>(partial, true),
+                partial.buffers,
+                1,
+                nullptr,
+                0,
+                next.get(),
+                n);
+            current = std::move(next);
+            n       = n / width + (n % width != 0);
+        }
+        float value = 0;
+        metal_alloc_t::copy(
+            current.get(), 1, &value, memory::device_enum::METAL, memory::device_enum::CPU);
+        if constexpr (reduce_is_count<Op>)
+        {
+            std::uint32_t count = 0;
+            std::memcpy(&count, &value, sizeof(count));
+            return count;
+        }
+        else
+        {
+            return value;
+        }
+    }
+    else
+    {
+        throw std::runtime_error("Metal backend: operator has no fused Metal kernel");
+    }
+}
+}  // namespace metal_detail
+
 // Leaf tensors reduce in place. Fused trees materialize through the same JIT
 // kernel as run_metal, then reduce the temp buffer (MSL cannot instantiate the
 // C++ expression tree the way nvcc/hipcc can).
 template <typename E, reduce_op Op>
-float reduce_metal(E const& expr, std::size_t n)
+reduce_accumulator_t<float, Op> reduce_metal(E const& expr, std::size_t n)
 {
-    using RE = vectorization::remove_cvref_t<E>;
-    if (n == 0)
+    if constexpr (Op != reduce_op::sum && Op != reduce_op::min && Op != reduce_op::max)
     {
-        return reduce_identity<float, Op>();
-    }
-
-    if constexpr (vectorization::is_base_expression<RE>::value)
-    {
-        return reduce_metal_buffer<Op>(expr.data(), n);
+        return metal_detail::metal_reduce_extended<E, Op>(expr, n);
     }
     else
     {
-        static_assert(
-            vectorization::is_pure_expression<RE>::value,
-            "reduce_metal: expression is neither a tensor leaf nor a unary/binary/trinary node");
-
-        if constexpr (metal_detail::metal_expr_fusable<RE>::value)
+        using RE = vectorization::remove_cvref_t<E>;
+        if (n == 0)
         {
-            metal_detail::metal_fuse_state st;
-            metal_detail::metal_fuse_emit(expr, st);
-            if (!metal_detail::metal_fuse_fits(st))
-            {
-                throw std::runtime_error("Metal fused kernel exceeds the device buffer limit");
-            }
-            std::string const src = metal_detail::metal_fuse_source(st);
-            float* tmp = metal_detail::metal_alloc_t::allocate(n, memory::device_enum::METAL);
-            scalars::metal_backend::dispatch_fused(
-                src, st.buffers, st.n_buffers, st.scalars, st.n_scalars, tmp, n);
-            float const result = reduce_metal_buffer<Op>(tmp, n);
-            metal_detail::metal_alloc_t::free(tmp, memory::device_enum::METAL);
-            return result;
+            return reduce_identity<float, Op>();
+        }
+
+        if constexpr (vectorization::is_base_expression<RE>::value)
+        {
+            return reduce_metal_buffer<Op>(expr.data(), n);
         }
         else
         {
-            throw std::runtime_error(
-                "Metal backend: operator has no fused Metal kernel (cdf/inv_cdf are "
-                "unsupported; MSL has no erf/erfinv)");
+            static_assert(vectorization::is_pure_expression<RE>::value,
+                "reduce_metal: expression is neither a tensor leaf nor a unary/binary/trinary "
+                "node");
+
+            if constexpr (metal_detail::metal_expr_fusable<RE>::value)
+            {
+                metal_detail::metal_fuse_state st;
+                metal_detail::metal_fuse_emit(expr, st);
+                if (!metal_detail::metal_fuse_fits(st))
+                {
+                    throw std::runtime_error("Metal fused kernel exceeds the device buffer limit");
+                }
+                std::string const src = metal_detail::metal_fuse_source(st);
+                float* tmp = metal_detail::metal_alloc_t::allocate(n, memory::device_enum::METAL);
+                scalars::metal_backend::dispatch_fused(
+                    src, st.buffers, st.n_buffers, st.scalars, st.n_scalars, tmp, n);
+                float const result = reduce_metal_buffer<Op>(tmp, n);
+                metal_detail::metal_alloc_t::free(tmp, memory::device_enum::METAL);
+                return result;
+            }
+            else
+            {
+                throw std::runtime_error(
+                    "Metal backend: operator has no fused Metal kernel (cdf/inv_cdf are "
+                    "unsupported; MSL has no erf/erfinv)");
+            }
         }
     }
 }
-
 }  // namespace vectorization
 
 #endif  // VECTORIZATION_HAS_METAL

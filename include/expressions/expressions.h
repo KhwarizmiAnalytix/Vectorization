@@ -38,4 +38,6 @@
 #define __VECTORIZATION_EXPRESSIONS_INCLUDES_INSIDE__
 #include "expressions/expressions_builder.h"
 #include "expressions/expressions_evaluator.h"
+
+#include "expressions/expression_reductions.h"
 #undef __VECTORIZATION_EXPRESSIONS_INCLUDES_INSIDE__

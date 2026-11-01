@@ -114,6 +114,7 @@ How the dispatcher chooses a path:
 | Types | float, double | float, double | float only |
 | Ops | full set | full set | full set minus `cdf` / `inv_cdf` |
 | `accumulate` / `hmin` / `hmax` | fused SIMD host loop | fused `gpu_reduce_expr_kernel` + multi-block partials | leaf buffer or fused materialize + multi-block `reduce_{sum,min,max}_float` |
+| `sum` / `prod` / `mean` / `all` / `any` / `count_nonzero` / `nansum` / `nanmean` | fused SIMD; exact integer counts; scalar strided fallback | transformed inputs, typed partials, bounded grid | fused SIMD-group partials for new operations; uint counts; float inputs only |
 | Errors | `VECTORIZATION_CHECK` | mostly unchecked CUDA/HIP runtime | `throw std::runtime_error` from the evaluator / `.mm` glue |
 
 ---
@@ -148,7 +149,8 @@ Paths are under `Library/Vectorization/`.
 | `expressions/expressions_evaluator.h` | `run` / `fill` dispatcher; CPU SIMD loop; `accumulate` / `hmin` / `hmax` (CPU or GPU) |
 | `expressions/expressions_evaluator_gpu.h` | `gpu_eval_kernel` / `run_gpu` / `fill_gpu` / `reduce_gpu` |
 | `expressions/expressions_evaluator_metal.h` | MSL emit + `run_metal` / `fill_metal` / `reduce_metal` |
-| `expressions/reduce_op.h` | Shared `reduce_op` + identity/combine for CPU-dispatch and GPU backends |
+| `expressions/expression_reductions.h` | Whole-expression sum/product/mean, logical, count and NaN-aware APIs; shared SIMD fold |
+| `expressions/reduce_op.h` | Shared input transform, accumulator type, identity and partial combine |
 | `expressions/expression_interface_loader.h` | Recursive fused evaluate (CPU + CUDA/HIP device) |
 | `backend/simd.h` | Selects CPU ISA `simd<T>` or GPU scalar `simd<T>` |
 | `backend/gpu/{float,double}/simd.h` | CUDA/HIP scalar packet |

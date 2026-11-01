@@ -28,7 +28,7 @@
 //   gpu_fill_kernel<T>     — __global__ kernel for fill
 //   run_gpu<E,T>           — host launcher for gpu_eval_kernel
 //   fill_gpu<T>            — host launcher for gpu_fill_kernel
-//   reduce_gpu<E,T,Op>     — fused expression reduction (sum / min / max)
+//   reduce_gpu<E,T,Op>     — fused expression reduction with typed accumulators
 //
 // Kernel bodies are identical for CUDA and HIP; only the launch syntax differs
 // (<<<>>> for CUDA, hipLaunchKernelGGL for HIP).
@@ -84,68 +84,38 @@ __global__ void gpu_eval_kernel(E expr, T* __restrict__ out, size_t n)
         out[tid] = expression_loader<E, false, false>::evaluate(expr, tid);
 }
 
-template <typename T>
-__device__ T* gpu_shared_scratch()
+template <typename T> __device__ T* gpu_shared_scratch()
 {
     extern __shared__ unsigned char smem_raw[];
     return reinterpret_cast<T*>(smem_raw);
 }
 
-template <typename T>
-__global__ void gpu_fill_kernel(T* __restrict__ out, T value, size_t n)
+template <typename T> __global__ void gpu_fill_kernel(T* __restrict__ out, T value, size_t n)
 {
     const size_t tid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (tid < n)
         out[tid] = value;
 }
 
-// Block-level reduction of a fused expression: each thread evaluates one
-// element, the block tree-reduces in shared memory, thread 0 writes one
-// partial per block.
-template <typename E, typename T, reduce_op Op>
-__global__ void gpu_reduce_expr_kernel(E expr, T* __restrict__ partials, size_t n)
+// Register accumulation amortizes the block tree and reduces scratch storage.
+// Adjacent lanes read adjacent elements on every iteration. Cap the grid so
+// large inputs use a bounded number of partials rather than one per 256 values.
+inline constexpr unsigned gpu_reduce_block_size       = 256;
+inline constexpr size_t   gpu_reduce_items_per_thread = 4;
+inline constexpr size_t   gpu_reduce_max_blocks       = 4096;
+
+inline size_t gpu_reduce_blocks(size_t n)
 {
-    T* const smem = gpu_shared_scratch<T>();
-
-    const size_t tid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-    T            val = reduce_identity<T, Op>();
-    if (tid < n)
-    {
-        val = expression_loader<E, false, false>::evaluate(expr, tid);
-    }
-    smem[threadIdx.x] = val;
-    __syncthreads();
-
-    for (unsigned stride = blockDim.x / 2; stride > 0; stride >>= 1)
-    {
-        if (threadIdx.x < stride)
-        {
-            smem[threadIdx.x] =
-                reduce_combine<T, Op>(smem[threadIdx.x], smem[threadIdx.x + stride]);
-        }
-        __syncthreads();
-    }
-    if (threadIdx.x == 0)
-    {
-        partials[blockIdx.x] = smem[0];
-    }
+    constexpr size_t tile   = gpu_reduce_block_size * gpu_reduce_items_per_thread;
+    const size_t     blocks = n / tile + (n % tile != 0);
+    return blocks < gpu_reduce_max_blocks ? blocks : gpu_reduce_max_blocks;
 }
 
-// Same tree-reduce over a raw device buffer (second and later passes).
-template <typename T, reduce_op Op>
-__global__ void gpu_reduce_buf_kernel(T const* __restrict__ in, T* __restrict__ out, size_t n)
+template <typename T, reduce_op Op> __device__ void gpu_reduce_block(T value, T* out)
 {
-    T* const smem = gpu_shared_scratch<T>();
-
-    const size_t tid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-    T            val = reduce_identity<T, Op>();
-    if (tid < n)
-    {
-        val = in[tid];
-    }
-    smem[threadIdx.x] = val;
+    T* const smem     = gpu_shared_scratch<T>();
+    smem[threadIdx.x] = value;
     __syncthreads();
-
     for (unsigned stride = blockDim.x / 2; stride > 0; stride >>= 1)
     {
         if (threadIdx.x < stride)
@@ -159,6 +129,33 @@ __global__ void gpu_reduce_buf_kernel(T const* __restrict__ in, T* __restrict__ 
     {
         out[blockIdx.x] = smem[0];
     }
+}
+
+template <typename E, typename T, reduce_op Op>
+__global__ void gpu_reduce_expr_kernel(E expr, reduce_accumulator_t<T, Op>* partials, size_t n)
+{
+    using acc_t        = reduce_accumulator_t<T, Op>;
+    acc_t        value = reduce_identity<acc_t, Op>();
+    const size_t step  = static_cast<size_t>(gridDim.x) * blockDim.x;
+    for (size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < n; i += step)
+    {
+        const T input = expression_loader<E, false, false>::evaluate(expr, i);
+        value         = reduce_combine<acc_t, Op>(value, reduce_transform<T, Op>(input));
+    }
+    gpu_reduce_block<acc_t, Op>(value, partials);
+}
+
+// Partials have already been transformed (notably counts and NaN sums).
+template <typename T, reduce_op Op>
+__global__ void gpu_reduce_buf_kernel(T const* in, T* out, size_t n)
+{
+    T            value = reduce_identity<T, Op>();
+    const size_t step  = static_cast<size_t>(gridDim.x) * blockDim.x;
+    for (size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < n; i += step)
+    {
+        value = reduce_combine<T, Op>(value, in[i]);
+    }
+    gpu_reduce_block<T, Op>(value, out);
 }
 
 // ---------------------------------------------------------------------------
@@ -175,8 +172,7 @@ void run_gpu(E const& expr, T* data, size_t n, gpu_stream_t stream = nullptr)
         (n + static_cast<size_t>(block_size) - 1) / static_cast<size_t>(block_size);
     // CUDA/HIP grid.x is a 32-bit dim; wrapping would launch an invalid config
     // that previously completed without checking cudaGetLastError.
-    VECTORIZATION_CHECK(
-        blocks > 0 && blocks <= static_cast<size_t>(0x7fffffff),
+    VECTORIZATION_CHECK(blocks > 0 && blocks <= static_cast<size_t>(0x7fffffff),
         "run_gpu grid overflow for n={}",
         n);
     const unsigned grid_size = static_cast<unsigned>(blocks);
@@ -193,16 +189,14 @@ void run_gpu(E const& expr, T* data, size_t n, gpu_stream_t stream = nullptr)
 #endif
 }
 
-template <typename T>
-void fill_gpu(T* data, T value, size_t n, gpu_stream_t stream = nullptr)
+template <typename T> void fill_gpu(T* data, T value, size_t n, gpu_stream_t stream = nullptr)
 {
     if (n == 0)
         return;
     constexpr unsigned block_size = 256;
     size_t const       blocks =
         (n + static_cast<size_t>(block_size) - 1) / static_cast<size_t>(block_size);
-    VECTORIZATION_CHECK(
-        blocks > 0 && blocks <= static_cast<size_t>(0x7fffffff),
+    VECTORIZATION_CHECK(blocks > 0 && blocks <= static_cast<size_t>(0x7fffffff),
         "fill_gpu grid overflow for n={}",
         n);
     const unsigned grid_size = static_cast<unsigned>(blocks);
@@ -235,13 +229,11 @@ T reduce_gpu_partials(
     T* buf, size_t n, memory::device_enum device, int device_index, gpu_stream_t stream)
 {
     using alloc_t                 = memory::allocator<T>;
-    constexpr unsigned block_size = 256;
+    constexpr unsigned block_size = gpu_reduce_block_size;
     while (n > 1)
     {
-        size_t const blocks =
-            (n + static_cast<size_t>(block_size) - 1) / static_cast<size_t>(block_size);
-        VECTORIZATION_CHECK(
-            blocks > 0 && blocks <= static_cast<size_t>(0x7fffffff),
+        size_t const blocks = gpu_reduce_blocks(n);
+        VECTORIZATION_CHECK(blocks > 0 && blocks <= static_cast<size_t>(0x7fffffff),
             "reduce_gpu grid overflow for n={}",
             n);
         T* const next = alloc_t::allocate(blocks, device, device_index, stream);
@@ -252,8 +244,7 @@ T reduce_gpu_partials(
         gpu_reduce_buf_kernel<T, Op>
             <<<dim3(grid_size), dim3(block_size), smem, stream>>>(buf, next, n);
 #else
-        hipLaunchKernelGGL(
-            (gpu_reduce_buf_kernel<T, Op>),
+        hipLaunchKernelGGL((gpu_reduce_buf_kernel<T, Op>),
             dim3(grid_size),
             dim3(block_size),
             smem,
@@ -276,14 +267,12 @@ T reduce_gpu_partials(
         {
 #if VECTORIZATION_HAS_CUDA && defined(__CUDACC__)
             cudaError_t const sync_err = cudaStreamSynchronize(stream);
-            VECTORIZATION_CHECK(
-                sync_err == cudaSuccess,
+            VECTORIZATION_CHECK(sync_err == cudaSuccess,
                 "reduce_gpu D2H sync failed: {}",
                 cudaGetErrorString(sync_err));
 #else
             hipError_t const sync_err = hipStreamSynchronize(stream);
-            VECTORIZATION_CHECK(
-                sync_err == hipSuccess,
+            VECTORIZATION_CHECK(sync_err == hipSuccess,
                 "reduce_gpu D2H sync failed: {}",
                 hipGetErrorString(sync_err));
 #endif
@@ -294,37 +283,34 @@ T reduce_gpu_partials(
 }
 
 template <typename E, typename T, reduce_op Op>
-T reduce_gpu(
-    E const&            expr,
-    size_t              n,
-    memory::device_enum device,
-    int                 device_index,
-    gpu_stream_t        stream = nullptr)
+reduce_accumulator_t<T, Op> reduce_gpu(E const& expr,
+    size_t                                      n,
+    memory::device_enum                         device,
+    int                                         device_index,
+    gpu_stream_t                                stream = nullptr)
 {
+    using acc_t = reduce_accumulator_t<T, Op>;
     if (n == 0)
     {
-        return reduce_identity<T, Op>();
+        return reduce_identity<acc_t, Op>();
     }
 
-    using alloc_t                 = memory::allocator<T>;
-    constexpr unsigned block_size = 256;
-    size_t const       blocks =
-        (n + static_cast<size_t>(block_size) - 1) / static_cast<size_t>(block_size);
-    VECTORIZATION_CHECK(
-        blocks > 0 && blocks <= static_cast<size_t>(0x7fffffff),
+    using alloc_t                 = memory::allocator<acc_t>;
+    constexpr unsigned block_size = gpu_reduce_block_size;
+    size_t const       blocks     = gpu_reduce_blocks(n);
+    VECTORIZATION_CHECK(blocks > 0 && blocks <= static_cast<size_t>(0x7fffffff),
         "reduce_gpu grid overflow for n={}",
         n);
-    T* const partials = alloc_t::allocate(blocks, device, device_index, stream);
+    acc_t* const partials = alloc_t::allocate(blocks, device, device_index, stream);
     VECTORIZATION_CHECK(partials != nullptr, "reduce_gpu: failed to allocate {} partials", blocks);
 
     const unsigned    grid_size = static_cast<unsigned>(blocks);
-    const std::size_t smem      = static_cast<std::size_t>(block_size) * sizeof(T);
+    const std::size_t smem      = static_cast<std::size_t>(block_size) * sizeof(acc_t);
 #if VECTORIZATION_HAS_CUDA && defined(__CUDACC__)
     gpu_reduce_expr_kernel<E, T, Op>
         <<<dim3(grid_size), dim3(block_size), smem, stream>>>(expr, partials, n);
 #else
-    hipLaunchKernelGGL(
-        (gpu_reduce_expr_kernel<E, T, Op>),
+    hipLaunchKernelGGL((gpu_reduce_expr_kernel<E, T, Op>),
         dim3(grid_size),
         dim3(block_size),
         smem,
@@ -334,7 +320,7 @@ T reduce_gpu(
         n);
 #endif
     gpu_check_last_error("reduce_gpu_expr");
-    return reduce_gpu_partials<T, Op>(partials, blocks, device, device_index, stream);
+    return reduce_gpu_partials<acc_t, Op>(partials, blocks, device, device_index, stream);
 }
 
 #endif  // CUDACC || HIPCC

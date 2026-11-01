@@ -70,6 +70,56 @@ combinatorial matrix — see the comments in `ci.yml` for the exact coverage
 strategy and its limits (SVE has no hosted runner; SVML/MKL need proprietary
 SDKs and are validated locally instead).
 
+## Whole-expression reductions
+
+```cpp
+#include "terminals/tensor.h"
+
+vectorization::tensor<float> x(1025);
+x = 1.0f;
+auto average = vectorization::mean(x * 2.0f + 1.0f); // 3.0f
+std::uint64_t nonzeros = vectorization::count_nonzero(x); // 1025
+bool positive = vectorization::all(x > 0.0f); // true
+```
+
+Alongside `accumulate`, `hmin`, and `hmax`, the expression API provides:
+
+| Operation | Return type | Empty input |
+|---|---|---|
+| `sum` | input scalar type | 0 |
+| `prod` | input scalar type | 1 |
+| `mean` | input scalar type | NaN |
+| `all` | bool | true |
+| `any` | bool | false |
+| `count_nonzero` | `std::uint64_t` | 0 |
+| `nansum` | input scalar type | 0 |
+| `nanmean` | input scalar type | NaN |
+
+These reduce every logical element to a host scalar; axis reductions are not
+provided. Float and double inputs retain their scalar type for numeric results.
+`all`, `any`, and `count_nonzero` treat NaNs and infinities as nonzero; both signs
+of zero are false. `nansum` ignores input NaNs, while `nanmean` divides by the
+number of non-NaN inputs and returns NaN if that count is zero. Infinities still
+participate in arithmetic. The existing empty extrema identities (`hmin` gives
+`max()`, `hmax` gives `-max()`) remain unchanged.
+
+The design follows PyTorch's separation of input reduction and partial-result
+combination ([shared operations](https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/SharedReduceOps.h),
+[GPU reduction](https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/cuda/Reduce.cuh)).
+CPU loops fuse expressions into independent SIMD accumulators, with a scalar
+fallback for strided and broadcast inputs. Counts merge into integers before
+float lanes can lose precision. CUDA/HIP fuse expression evaluation into a
+bounded grid of blocks with register accumulation and device partial passes;
+only the final scalar is copied to the host. Metal's new product, logical,
+count, and NaN-sum kernels fuse expressions directly into SIMD-group partials.
+Metal remains float-only and requires flat operands. `nanmean` uses two
+reductions (sum and valid count). Floating-point results may differ slightly
+with backend and reduction order.
+
+`BenchmarkTensorReductions.cpp` and `BenchmarkTensorGpu.cpp` cover the new
+operations from 257 to more than 16 million elements. Optional LibTorch tests
+compare their results directly with PyTorch.
+
 ## CMake options
 
 ### Primary selectors

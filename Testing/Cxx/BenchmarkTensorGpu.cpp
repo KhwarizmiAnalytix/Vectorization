@@ -814,6 +814,54 @@ BENCHMARK_TEMPLATE(GPU_SumAddMulSin, double)
     ->MinWarmUpTime(0.1)
     ->MinTime(0.3);
 
+
+// Match BenchmarkTensorReductions's fused CPU workload. Scalar results include
+// the synchronization required to make the returned value host-visible.
+#define GPU_REDUCTION_BENCHMARK(NAME)                                                              \
+    template <typename T> static void GPU_Reduce_##NAME(benchmark::State& state)                   \
+    {                                                                                              \
+        if (skip_if_unsupported<T>(state))                                                         \
+        {                                                                                          \
+            return;                                                                                \
+        }                                                                                          \
+        const auto     n = static_cast<size_t>(state.range(0));                                    \
+        std::vector<T> host(n);                                                                    \
+        for (size_t i = 0; i < n; ++i)                                                             \
+        {                                                                                          \
+            host[i] = i % 7 == 0 ? T(0) : T(1);                                                    \
+        }                                                                                          \
+        tensor<T> x(n, kActiveGpuDevice);                                                          \
+        x.copy_from_host(host);                                                                    \
+        for (auto _ : state)                                                                       \
+        {                                                                                          \
+            benchmark::DoNotOptimize(vectorization::NAME(x * T(0.5) + T(0.5)));                    \
+        }                                                                                          \
+        state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(n));                     \
+        state.SetBytesProcessed(state.iterations() * static_cast<int64_t>(n * sizeof(T)));         \
+    }                                                                                              \
+    BENCHMARK_TEMPLATE(GPU_Reduce_##NAME, float)                                                   \
+        ->UseRealTime()                                                                            \
+        ->Arg(257)                                                                                 \
+        ->Arg(4096)                                                                                \
+        ->Arg(1 << 20)                                                                             \
+        ->Arg((1 << 24) + 3);                                                                      \
+    BENCHMARK_TEMPLATE(GPU_Reduce_##NAME, double)                                                  \
+        ->UseRealTime()                                                                            \
+        ->Arg(257)                                                                                 \
+        ->Arg(4096)                                                                                \
+        ->Arg(1 << 20)                                                                             \
+        ->Arg((1 << 24) + 3);
+
+GPU_REDUCTION_BENCHMARK(sum)
+GPU_REDUCTION_BENCHMARK(prod)
+GPU_REDUCTION_BENCHMARK(mean)
+GPU_REDUCTION_BENCHMARK(all)
+GPU_REDUCTION_BENCHMARK(any)
+GPU_REDUCTION_BENCHMARK(count_nonzero)
+GPU_REDUCTION_BENCHMARK(nansum)
+GPU_REDUCTION_BENCHMARK(nanmean)
+#undef GPU_REDUCTION_BENCHMARK
+
 #endif  // VECTORIZATION_HAS_CUDA || VECTORIZATION_HAS_HIP || VECTORIZATION_HAS_METAL
 
 BENCHMARK_MAIN();

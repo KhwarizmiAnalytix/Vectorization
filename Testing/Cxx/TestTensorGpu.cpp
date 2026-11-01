@@ -150,8 +150,9 @@ void test_binary_ops()
         gc                    = ga * gb;
         auto           result = gc.to_host_vector();
         std::vector<T> ref(N);
-        for (size_t i = 0; i < N; ++i)
+        for (size_t i = 0; i < N; ++i) {
             ref[i] = ha[i] * hb[i];
+}
         expect_near_rel(result, ref, tol);
     }
 
@@ -436,6 +437,63 @@ void test_reductions()
     EXPECT_NEAR(static_cast<double>(accumulate(one)), -3.5, mm_tol);
     EXPECT_NEAR(static_cast<double>(hmin(one)), -3.5, mm_tol);
     EXPECT_NEAR(static_cast<double>(hmax(one)), -3.5, mm_tol);
+
+    // Exercise the extended shared reduction engine on both sides of block
+    // boundaries and through multiple partial passes.
+    for (size_t n :
+        {size_t(0), size_t(1), size_t(17), size_t(255), size_t(257), size_t(1025), size_t(66001)})
+    {
+        tensor<T> values(n, kActiveGpuDevice);
+        values = T(1);
+        EXPECT_EQ(prod(values), T(1));
+        EXPECT_EQ(count_nonzero(values), n);
+        EXPECT_TRUE(all(values));
+        EXPECT_EQ(any(values), n != 0);
+        EXPECT_EQ(nansum(values), T(n));
+        if (n == 0)
+        {
+            EXPECT_TRUE(std::isnan(mean(values)));
+            EXPECT_TRUE(std::isnan(nanmean(values)));
+        }
+        else
+        {
+            EXPECT_EQ(mean(values), T(1));
+            EXPECT_EQ(nanmean(values), T(1));
+            EXPECT_EQ(count_nonzero(values * T(0)), 0u);
+            EXPECT_FALSE(all(values * T(0)));
+            EXPECT_TRUE(all(values > T(0)));
+            EXPECT_EQ(count_nonzero(values > T(0)), n);
+        }
+    }
+    {
+        constexpr size_t n = (size_t(1) << 24) + 3;
+        tensor<T>        large(n, kActiveGpuDevice);
+        large = T(1);
+        EXPECT_EQ(count_nonzero(large), n);
+        EXPECT_EQ(count_nonzero(large + T(1)), n);
+    }
+
+    std::vector<T> special(67, std::numeric_limits<T>::quiet_NaN());
+    special[0]  = T(2);
+    special[66] = T(4);
+    tensor<T> values(special.size(), kActiveGpuDevice);
+    values.copy_from_host(special);
+    EXPECT_EQ(nansum(values), T(6));
+    EXPECT_EQ(nanmean(values), T(3));
+    EXPECT_EQ(nansum(values * T(2)), T(12));
+    EXPECT_EQ(count_nonzero(values), 67u);
+    EXPECT_TRUE(all(values));
+    EXPECT_TRUE(std::isnan(mean(values)));
+    EXPECT_TRUE(std::isnan(prod(values)));
+    values = std::numeric_limits<T>::quiet_NaN();
+    EXPECT_EQ(nansum(values), T(0));
+    EXPECT_TRUE(std::isnan(nanmean(values)));
+    special.assign(67, T(1));
+    special[1]  = T(-2);
+    special[66] = T(3);
+    values.copy_from_host(special);
+    EXPECT_EQ(prod(values), T(-6));
+    EXPECT_EQ(count_nonzero(values < T(0)), 1u);
 }
 
 }  // namespace

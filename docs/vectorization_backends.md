@@ -17,9 +17,8 @@ CPU SIMD ISA selection (SSE / AVX / NEON / …) is in
 2. [Fusion](#2-fusion)
 3. [Launch contracts](#3-launch-contracts)
 4. [`simd<T>` vs Metal](#4-simdt-vs-metal)
-5. [Unification](#5-unification)
-6. [Recommended order](#6-recommended-order)
-7. [Key files](#7-key-files)
+5. [Planned unification](#5-planned-unification)
+6. [Key files](#6-key-files)
 
 ---
 
@@ -132,75 +131,15 @@ launch**, not packet math.
 
 ---
 
-## 5. Unification
+## 5. Planned unification
 
-Do not add runtime-polymorphic `IComputeBackend::launch`. Expression fusion
-is a compile-time tree; a vtable on the CPU hot path is the wrong model.
-Memory already selects the GPU backend at configure time; Vectorization
-should stay the same.
-
-### Target launch contract
-
-Every backend implements the same functions; `run()` only chooses CPU vs GPU:
-
-```cpp
-template <typename E, typename T>
-void eval_expr(E const& expr, T* out, size_t n, gpu_stream_t stream);
-
-template <typename T>
-void eval_fill(T* out, T value, size_t n, gpu_stream_t stream);
-
-template <typename E>
-auto eval_reduce(E const& expr, /* sum | min | max */, gpu_stream_t stream);
-```
-
-- **CPU** — current SIMD loop; `stream` unused.
-- **CUDA/HIP** — current `gpu_eval_kernel<E,T>`; keep nvcc/hipcc compiling the
-  C++ tree.
-- **Metal** — keep JIT MSL internally; call it as `eval_expr(expr, out, n,
-  stream)` so the dispatcher does not special-case `T&`.
-
-`metal_backend::dispatch(name, …)` stays test-only. Fill/reduce named kernels
-can remain as Metal’s implementation of `eval_fill` / `eval_reduce`.
-
-### Semantics to make identical
-
-| Topic | Unify to |
-|---|---|
-| Streams | A real `gpu_stream_t` on every GPU backend, **or** document Metal as a single implicit queue and make `assign_async` a no-op there. Silently ignoring `stream` is the bug. |
-| Sync | CUDA-style async launch + wait on host read, **or** Metal-style sync dispatch — pick one for all GPU evals. |
-| Types | Metal float-only stays an allocator constraint. No second Metal double evaluator. |
-| Ops | Same functor set. Metal `cdf`/`inv_cdf`: MSL approximation **or** `VECTORIZATION_CHECK`, not a unique `std::runtime_error`. |
-| Reductions | `accumulate` / `hmin` / `hmax` must branch on `device()` the way `run` does. |
-| Errors | `VECTORIZATION_CHECK` for evaluator-level failures; driver/JIT failures only at the CUDA/HIP/ObjC boundary. |
-
-### What not to unify
-
-- CPU `simd<T>` ISAs (SSE vs AVX vs NEON) — already one interface.
-- GPU `simd<T>` size=1 — CUDA/HIP device math only.
-- Runtime backend objects for expression eval.
-
-The public `tensor` API does not need to change. Unification lives behind
-`expressions_evaluator::run` / `fill` / `accumulate`.
+The target launch contract, the semantics to make identical across backends,
+and the implementation order are part of the consolidated plan:
+[vectorization_design_plan.md §13](vectorization_design_plan.md#13-backend-launch-unification).
 
 ---
 
-## 6. Recommended order
-
-1. Normalize signatures: `run_metal` takes `(expr, T* out, n, stream)` like
-   `run_gpu`. The dispatcher owns the tensor.
-2. Device-dispatch reductions: `accumulate` / `hmin` / `hmax` branch on leaf
-   `device()` the way `run` does (CUDA/HIP fused reduce kernels; Metal
-   multi-block `reduce_{sum,min,max}_float`).
-3. One stream/sync story: Metal command buffers named by `gpu_stream_t`, or a
-   documented no-op `assign_async` on Metal.
-4. One error wrapper at the evaluator layer.
-5. Keep `kernels.metal` as fill + reduce + tests; fusion remains the only
-   expression assignment path.
-
----
-
-## 7. Key files
+## 6. Key files
 
 Paths are under `Library/Vectorization/`.
 

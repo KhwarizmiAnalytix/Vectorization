@@ -256,11 +256,17 @@ public:
     VECTORIZATION_FUNCTION_ATTRIBUTE static constexpr size_t length()
     {
         if constexpr (vectorization::is_expression<rmv_lhs>::value)
+        {
             return rmv_lhs::length();
+        }
         else if constexpr (vectorization::is_expression<rmv_mhs>::value)
+        {
             return rmv_mhs::length();
+        }
         else if constexpr (vectorization::is_expression<rmv_rhs>::value)
+        {
             return rmv_rhs::length();
+        }
         else
         {
             static_assert(vectorization::is_expression<rmv_lhs>::value ||
@@ -429,8 +435,8 @@ VECTORIZATION_FUNCTION_ATTRIBUTE bool buffers_overlap(
     {
         return false;
     }
-    auto const a0 = reinterpret_cast<std::uintptr_t>(static_cast<void const*>(a));
-    auto const b0 = reinterpret_cast<std::uintptr_t>(static_cast<void const*>(b));
+    auto const a0 = reinterpret_cast<std::uintptr_t>(a);
+    auto const b0 = reinterpret_cast<std::uintptr_t>(b);
     auto const a1 = a0 + a_count * sizeof(A);
     auto const b1 = b0 + b_count * sizeof(B);
     return a0 < b1 && b0 < a1;

@@ -56,9 +56,13 @@ template <typename T> void compare_reductions()
                 torch::nansum(tx).template item<T>(),
                 tol * std::sqrt(static_cast<double>(n)));
             if (n == 1)
+            {
                 EXPECT_TRUE(std::isnan(nanmean(x)));
+            }
             else
+            {
                 EXPECT_NEAR(nanmean(x), torch::nanmean(tx).template item<T>(), tol);
+            }
         }
     }
     // Products near one stay finite while still exposing rounding and tails.

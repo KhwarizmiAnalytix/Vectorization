@@ -30,14 +30,14 @@
 #include "common/vectorization_macros.h"
 #include "common/vectorization_type_traits.h"
 
-#define __VECTORIZATION_EXPRESSIONS_INCLUDES_INSIDE__
+#define VECTORIZATION_EXPRESSIONS_INCLUDES_INSIDE
 #include "expressions/expression_interface.h"
 #include "expressions/expressions_functors.h"
-#undef __VECTORIZATION_EXPRESSIONS_INCLUDES_INSIDE__
+#undef VECTORIZATION_EXPRESSIONS_INCLUDES_INSIDE
 
-#define __VECTORIZATION_EXPRESSIONS_INCLUDES_INSIDE__
+#define VECTORIZATION_EXPRESSIONS_INCLUDES_INSIDE
 #include "expressions/expressions_builder.h"
 #include "expressions/expressions_evaluator.h"
 
 #include "expressions/expression_reductions.h"
-#undef __VECTORIZATION_EXPRESSIONS_INCLUDES_INSIDE__
+#undef VECTORIZATION_EXPRESSIONS_INCLUDES_INSIDE

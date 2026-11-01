@@ -337,9 +337,9 @@ public:
     // letting the exception propagate, which would make that rejection uncatchable.
     template <bool B = IsView, std::enable_if_t<!B, int> = 0>
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE explicit tensor_impl(size_type n,
-        device_enum                                                       type = device_enum::CPU,
-        int                                                               device_index = 0,
-        gpu_stream_t                                                      stream       = nullptr)
+        device_enum                                                      type = device_enum::CPU,
+        int                                                              device_index = 0,
+        gpu_stream_t                                                     stream       = nullptr)
         : tensor_impl(
               owner_t(n, type, device_index, static_cast<typename owner_t::stream_t>(stream)),
               dimensions_type{n})
@@ -349,10 +349,10 @@ public:
     // External buffers: tensor copies; tensor_view deliberately borrows. The
     // caller must keep borrowed memory alive, including in derived views.
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor_impl(element_t* ptr,
-        size_type                                                 n,
-        device_enum                                               type         = device_enum::CPU,
-        int                                                       device_index = 0,
-        gpu_stream_t                                              stream       = nullptr)
+        size_type                                                n,
+        device_enum                                              type         = device_enum::CPU,
+        int                                                      device_index = 0,
+        gpu_stream_t                                             stream       = nullptr)
         : view_(view_t::borrow(
               ptr, n, type, device_index, static_cast<typename view_t::stream_t>(stream)))
     {
@@ -371,11 +371,11 @@ public:
 
     // Contiguous external matrix, with the same copy/borrow contract.
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor_impl(element_t* ptr,
-        size_type                                                 rows,
-        size_type                                                 cols,
-        device_enum                                               type         = device_enum::CPU,
-        int                                                       device_index = 0,
-        gpu_stream_t                                              stream       = nullptr)
+        size_type                                                rows,
+        size_type                                                cols,
+        device_enum                                              type         = device_enum::CPU,
+        int                                                      device_index = 0,
+        gpu_stream_t                                             stream       = nullptr)
         : view_(view_t::borrow(ptr,
               compute_total(dimensions_type{rows, cols}),
               type,
@@ -446,14 +446,14 @@ public:
     // Not noexcept — see the 1-D sized constructor above for why.
     template <bool B = IsView, std::enable_if_t<!B, int> = 0>
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor_impl(size_type rows,
-        size_type                                                cols,
-        device_enum                                              type         = device_enum::CPU,
-        int                                                      device_index = 0,
-        gpu_stream_t                                             stream       = nullptr)
+        size_type                                               cols,
+        device_enum                                             type         = device_enum::CPU,
+        int                                                     device_index = 0,
+        gpu_stream_t                                            stream       = nullptr)
         : tensor_impl(owner_t(compute_total(dimensions_type{rows, cols}),
-                           type,
-                           device_index,
-                           static_cast<typename owner_t::stream_t>(stream)),
+                          type,
+                          device_index,
+                          static_cast<typename owner_t::stream_t>(stream)),
               dimensions_type{rows, cols})
     {
         sizes_and_strides_.resize(2);
@@ -520,32 +520,32 @@ public:
         int          device_index = 0,
         gpu_stream_t stream       = nullptr)
         : tensor_impl(owner_t(compute_total(dims),
-                           type,
-                           device_index,
-                           static_cast<typename owner_t::stream_t>(stream)),
+                          type,
+                          device_index,
+                          static_cast<typename owner_t::stream_t>(stream)),
               dims)
     {
     }
 
     template <bool B = IsView, std::enable_if_t<!B, int> = 0>
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor_impl(dimensions_type&& dims,
-        device_enum                                                      type = device_enum::CPU,
-        int                                                              device_index = 0,
-        gpu_stream_t                                                     stream       = nullptr)
+        device_enum                                                     type = device_enum::CPU,
+        int                                                             device_index = 0,
+        gpu_stream_t                                                    stream       = nullptr)
         : tensor_impl(owner_t(compute_total(dims),
-                           type,
-                           device_index,
-                           static_cast<typename owner_t::stream_t>(stream)),
+                          type,
+                          device_index,
+                          static_cast<typename owner_t::stream_t>(stream)),
               dims)
     {
     }
 
     // Contiguous external N-D buffer, with the same copy/borrow contract.
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor_impl(element_t* data,
-        const dimensions_type&                                    dims,
-        device_enum                                               type         = device_enum::CPU,
-        int                                                       device_index = 0,
-        gpu_stream_t                                              stream       = nullptr)
+        const dimensions_type&                                   dims,
+        device_enum                                              type         = device_enum::CPU,
+        int                                                      device_index = 0,
+        gpu_stream_t                                             stream       = nullptr)
         : view_(view_t::borrow(data,
               compute_total(dims),
               type,
@@ -699,14 +699,8 @@ public:
         share_from(rhs);
     }
 
-    auto as_view()
-    {
-        return tensor_view<element_t>(view_, sizes_and_strides_, storage_);
-    }
-    auto as_view() const
-    {
-        return tensor_view<const_view_element>(*this);
-    }
+    auto as_view() { return tensor_view<element_t>(view_, sizes_and_strides_, storage_); }
+    auto as_view() const { return tensor_view<const_view_element>(*this); }
 
     // Returns a new tensor that is a deep, contiguous copy of *this on the
     // same device/index/stream. Non-contiguous sources are gathered in C-order.
@@ -807,8 +801,7 @@ public:
         return *this;
     }
 
-    template <typename U = element_t, std::enable_if_t<!std::is_const_v<U>, int> = 0>
-    auto noalias()
+    template <typename U = element_t, std::enable_if_t<!std::is_const_v<U>, int> = 0> auto noalias()
     {
         return noalias_proxy<tensor_impl>(*this);
     }
@@ -1027,14 +1020,8 @@ public:
         return data() + size();
     }
 
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto rbegin()
-    {
-        return reverse_iterator(end());
-    }
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto rend()
-    {
-        return reverse_iterator(begin());
-    }
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto rbegin() { return reverse_iterator(end()); }
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto rend() { return reverse_iterator(begin()); }
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto crbegin() const
     {
         return const_reverse_iterator(end());
@@ -1163,10 +1150,7 @@ public:
     }
 
     // -----------------------------------------------------------------------
-    template <bool B = IsView, std::enable_if_t<!B, int> = 0> auto t()
-    {
-        return as_view().t();
-    }
+    template <bool B = IsView, std::enable_if_t<!B, int> = 0> auto t() { return as_view().t(); }
 
     template <bool B = IsView, std::enable_if_t<!B, int> = 0>
     auto permute(const dimensions_type& order)
@@ -1174,8 +1158,7 @@ public:
         return as_view().permute(order);
     }
 
-    template <bool B = IsView, std::enable_if_t<!B, int> = 0>
-    auto view(const dimensions_type& dims)
+    template <bool B = IsView, std::enable_if_t<!B, int> = 0> auto view(const dimensions_type& dims)
     {
         return as_view().view(dims);
     }
@@ -1208,20 +1191,18 @@ public:
         return as_view().squeeze();
     }
 
-    template <bool B = IsView, std::enable_if_t<!B, int> = 0>
-    auto squeeze(size_t dim)
+    template <bool B = IsView, std::enable_if_t<!B, int> = 0> auto squeeze(size_t dim)
     {
         return as_view().squeeze(dim);
     }
 
-    template <bool B = IsView, std::enable_if_t<!B, int> = 0>
-    auto unsqueeze(size_t dim)
+    template <bool B = IsView, std::enable_if_t<!B, int> = 0> auto unsqueeze(size_t dim)
     {
         return as_view().unsqueeze(dim);
     }
 
     template <bool B = IsView, std::enable_if_t<!B, int> = 0>
-    auto slice(size_t dim,
+    auto slice(size_t          dim,
         std::optional<int64_t> start = std::nullopt,
         std::optional<int64_t> stop  = std::nullopt,
         int64_t                step  = 1)
@@ -1243,8 +1224,7 @@ public:
         return tensor_view<const_view_element>(view_, std::move(sas), storage_);
     }
 
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto permute(
-        const dimensions_type& order) const
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto permute(const dimensions_type& order) const
     {
         const size_t n = rank();
         VECTORIZATION_CHECK_IF_NOT_ON_CUDA(
@@ -1268,8 +1248,7 @@ public:
     // Metadata-only reshape. Strides follow PyTorch's computeStride rule, so a
     // non-contiguous tensor_view<const_view_element> can be viewed whenever the new dimensions
     // split or merge only dimensions that are adjacent in memory. Never copies.
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto view(
-        const dimensions_type& new_dims) const
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto view(const dimensions_type& new_dims) const
     {
         VECTORIZATION_CHECK(compute_total(new_dims) == size(),
             "view: shape {} has {} elements, tensor_view<const_view_element> has {}",
@@ -1284,8 +1263,7 @@ public:
     }
 
     // view() when the strides allow it, otherwise a packed copy with the new shape.
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto reshape(
-        const dimensions_type& new_dims) const
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto reshape(const dimensions_type& new_dims) const
     {
         VECTORIZATION_CHECK(compute_total(new_dims) == size(),
             "reshape: shape {} has {} elements, tensor_view<const_view_element> has {}",
@@ -1312,8 +1290,7 @@ public:
     // Broadcast view: dimensions are matched from the right; a size-1 dimension
     // (or a missing leading one) is repeated with stride 0. Expanded tensors are
     // read-only operands -- assigning into one is an error (design §6).
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto expand(
-        const dimensions_type& new_dims) const
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto expand(const dimensions_type& new_dims) const
     {
         const size_t n = rank();
         const size_t m = new_dims.size();
@@ -1346,8 +1323,7 @@ public:
         return tensor_view<const_view_element>(view_, std::move(sas), storage_);
     }
 
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto broadcast_to(
-        const dimensions_type& new_dims) const
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto broadcast_to(const dimensions_type& new_dims) const
     {
         return expand(new_dims);
     }
@@ -1397,8 +1373,7 @@ public:
     }
 
     // Inserts a size-1 dimension before `dim` (dim == rank() appends one).
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto unsqueeze(
-        size_t dim) const
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto unsqueeze(size_t dim) const
     {
         const size_t n = rank();
         VECTORIZATION_CHECK(dim <= n, "unsqueeze: dim {} out of range for rank {}", dim, n);
@@ -1428,9 +1403,9 @@ public:
     // end; both are then clamped to [0, size]. `step` must be >= 1 -- strides
     // are never negative; use flip() for reversal.
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto slice(size_t dim,
-        std::optional<int64_t> start = std::nullopt,
-        std::optional<int64_t> stop  = std::nullopt,
-        int64_t                step  = 1) const
+        std::optional<int64_t>                              start = std::nullopt,
+        std::optional<int64_t>                              stop  = std::nullopt,
+        int64_t                                             step  = 1) const
     {
         VECTORIZATION_CHECK(dim < rank(), "slice: dim {} out of range for rank {}", dim, rank());
         VECTORIZATION_CHECK(step >= 1,
@@ -1663,7 +1638,9 @@ public:
     std::string to_string() const
     {
         if (empty())
+        {
             return "[]";
+        }
         if (device() != device_enum::CPU)
         {
             return to_cpu().to_string();
@@ -1690,9 +1667,13 @@ public:
             for (size_t i = 0; i < n; ++i)
             {
                 if (i)
+                {
                     s << ",\n ";
+                }
                 if (width)
+                {
                     s.width(static_cast<std::streamsize>(width));
+                }
                 s << at_flat(i);
             }
             s << "]";
@@ -1705,15 +1686,21 @@ public:
             for (size_t i = 0; i < r; ++i)
             {
                 if (i)
+                {
                     s << ";\n ";
+                }
                 if (width)
+                {
                     s.width(static_cast<std::streamsize>(width));
+                }
                 s << at(i, 0);
                 for (size_t j = 1; j < c; ++j)
                 {
                     s << ", ";
                     if (width)
+                    {
                         s.width(static_cast<std::streamsize>(width));
+                    }
                     s << at(i, j);
                 }
             }
@@ -1723,9 +1710,10 @@ public:
     }
 
 private:
-    template <typename U> friend VECTORIZATION_FUNCTION_ATTRIBUTE stored_operand_t<U> store_operand(U&&);
-    auto const& retained_storage() const noexcept { return storage_; }
-    template <typename U, bool V> void   share_from(tensor_impl<U, V> const& rhs)
+    template <typename U>
+    friend VECTORIZATION_FUNCTION_ATTRIBUTE stored_operand_t<U> store_operand(U&&);
+    auto const&                        retained_storage() const noexcept { return storage_; }
+    template <typename U, bool V> void share_from(tensor_impl<U, V> const& rhs)
     {
         sizes_and_strides_ = rhs.sizes_and_strides_;
         if constexpr (std::is_same_v<U, element_t>)
@@ -1972,7 +1960,9 @@ private:
         const size_t n = dims.size();
         sas.resize(n);
         if (n == 0)
+        {
             return;
+        }
         sas.stride_at_unchecked(n - 1) = 1;
         for (size_t i = n - 1; i-- > 0;)
         {
@@ -1984,7 +1974,9 @@ private:
             sas.stride_at_unchecked(i) = next_stride * next_dim;
         }
         for (size_t i = 0; i < n; ++i)
+        {
             sas.size_at_unchecked(i) = checked_dimension_to_storage(dims[i]);
+        }
     }
 
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE size_t linearized_index(
@@ -1996,8 +1988,10 @@ private:
 
         size_t ret = 0;
         for (size_t i = 0; i < m; ++i)
+        {
             ret += static_cast<size_t>(sizes_and_strides_.stride_at_unchecked(i)) *
                    static_cast<size_t>(indices[i]);
+        }
         return ret;
     }
 
@@ -2162,8 +2156,12 @@ private:
             {
                 const int64_t j_end = std::min(jo + T, ncols);
                 for (int64_t i = io; i < i_end; ++i)
+                {
                     for (int64_t j = jo; j < j_end; ++j)
+                    {
                         dst[i * ncols + j] = src[j * nrows + i];
+                    }
+                }
             }
         }
     }

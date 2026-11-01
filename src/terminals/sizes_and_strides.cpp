@@ -2,7 +2,6 @@
 
 namespace vectorization
 {
-
 void sizes_and_strides::resizeSlowPath(const size_t newSize, const size_t oldSize)
 {
     if (newSize <= MAX_INLINE_SIZE)
@@ -16,7 +15,6 @@ void sizes_and_strides::resizeSlowPath(const size_t newSize, const size_t oldSiz
             MAX_INLINE_SIZE * sizeof(inlineStorage_[0]));
         // CANNOT USE freeOutOfLineStorage() HERE! outOfLineStorage_
         // HAS BEEN OVERWRITTEN!
-        // NOLINTNEXTLINE(cppcoreguidelines-no-malloc)
         free(tempStorage);
     }
     else
@@ -25,9 +23,7 @@ void sizes_and_strides::resizeSlowPath(const size_t newSize, const size_t oldSiz
         {
             // CANNOT USE allocateOutOfLineStorage(newSize) HERE! WOULD
             // OVERWRITE inlineStorage_!
-            auto* tempStorage =
-                // NOLINTNEXTLINE(cppcoreguidelines-no-malloc)
-                static_cast<int64_t*>(malloc(storageBytes(newSize)));
+            auto* tempStorage = static_cast<int64_t*>(malloc(storageBytes(newSize)));
             VECTORIZATION_CHECK(
                 tempStorage, "Could not allocate memory to change Tensor sizes_and_strides!");
             const auto bytesToCopy = oldSize * sizeof(inlineStorage_[0]);

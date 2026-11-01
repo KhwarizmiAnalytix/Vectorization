@@ -108,7 +108,7 @@ Recorded verification and remaining gates are listed in
 | Unified launch contract across backends | Not started | [section 13](#13-backend-launch-unification) |
 | Tensor-level `matmul`, `dot` and PyTorch-style matrix linear algebra | Not started: matrix block under `#if 0`; dependency algorithms still need tensor adapters | [section 11](#11-linearalgebra-adapter), `tensor.h` |
 | Memory U1 and LinearAlgebra U2 APIs | Not started | [section 12](#12-upstream-api-changes) |
-| clang-tidy coverage of `include/` and `Testing/` | Repository-wide work remains: changed-code analysis is clean for this delivery, but CI coverage and the historical baseline are not cleared | [section 15](#15-clang-tidy-conformance) |
+| clang-tidy coverage of `include/`, `src/` and `Testing/` | Library, test, Objective-C++ and enabled benchmark targets are wired; LLVM 19 CI jobs cover Linux AVX2 and macOS NEON + Metal. Local results and remaining toolchain limits are recorded below | [section 15](#15-clang-tidy-conformance) |
 
 ---
 
@@ -1302,26 +1302,30 @@ findings there are fixed upstream.
   Disabled: `bugprone-easily-swappable-parameters`,
   `bugprone-narrowing-conversions`, `portability-avoid-pragma-once`.
 - **CMake**: `VECTORIZATION_ENABLE_CLANGTIDY` (`setup.py` token
-  `clangtidy`) attaches clang-tidy to the `Vectorization` target through
-  `xsigma_target_clang_tidy()` with `-warnings-as-errors=*`, header filter
-  `include|src|Cmake|Testing`, and `ThirdParty/` excluded on LLVM 19 and
+  `clangtidy`) attaches clang-tidy to `Vectorization`, `VectorizationCxxTests`
+  and each enabled benchmark through `xsigma_target_clang_tidy()`. C, C++
+  and Objective-C++ use `-warnings-as-errors=*`, header filter
+  `include|src|Cmake|Testing`, and `ThirdParty/` exclusion on LLVM 19 and
   later. `VECTORIZATION_ENABLE_FIX` applies fixes in place.
-- **CI**: the `static-analysis / clang-tidy` job on Ubuntu, `avx2`, GPU
-  backend `none`, `--testing=OFF`, with clang-tidy from apt.
-- **lintrunner**: the `CLANGTIDY` linter covers `include/**` and
-  `Testing/**`.
+- **CI**: the static-analysis matrix pins clang-tidy to LLVM 19 on
+  Ubuntu 24.04 (`avx2`, GPU `none`) and macOS (`neon`, GPU `metal`).
+  Both jobs enable tests, analyze their template instantiations and run them.
+- **lintrunner**: the `CLANGTIDY` linter covers `include/**`, `src/**` and
+  `Testing/**`, including Metal `.mm` sources.
 
-### Coverage gaps
+### Coverage and remaining limits
 
-| Gap | Effect | Fix |
-|---|---|---|
-| The `Vectorization` target compiles one file, `src/terminals/sizes_and_strides.cpp`, and CI configures with `--testing=OFF` | `tensor.h`, `expressions/` and the planner are never analyzed in CI. Header-only templates are analyzed only where a checked translation unit instantiates them | Attach `xsigma_target_clang_tidy()` to `VectorizationCxxTests` as well, and turn testing on in the clang-tidy CI job, so the tests' instantiations cover the headers |
-| lintrunner `CLANGTIDY` omits `src/**` | Local lint misses the compiled sources | Add `src/**/*.cpp` and `src/**/*.h` to `include_patterns` |
-| CI analyzes only `avx2` with GPU backend `none` | NEON, `VECTORIZATION_HAS_METAL` and CUDA/HIP branches are never analyzed | Add a macOS `neon` + `metal` clang-tidy job. Analyze CUDA/HIP host code where a toolkit is available on the runner; document device-only code as not analyzed |
-| clang-tidy version not pinned (Ubuntu 24.04 apt ships 18; the baseline below used 22) | Different findings locally and in CI; no `--exclude-header-filter` before 19 | Pin one version, 19 or later, in CI and document it in the README |
-| Suppressions | A bare `// NOLINT` on the expression constructor in `tensor.h`; `NOLINTNEXTLINE` entries naming checks this configuration does not enable (`cppcoreguidelines-no-malloc`, `modernize-macro-to-enum`, `*c-array*`) | Name the check and give a reason; remove suppressions of disabled checks unless kept on purpose for the shared XSigma configuration |
+| Area | Status |
+|---|---|
+| Header-only templates | `VectorizationCxxTests` now runs clang-tidy when enabled; CI configures with `--testing=ON` |
+| Local compiled sources | lintrunner includes `src/**/*.cpp` and headers |
+| Metal | macOS NEON + Metal CI job added; the CMake hook also sets `OBJCXX_CLANG_TIDY`, covering `.mm` tests |
+| Analyzer versions | CI pins major version 19 and checks it before configuring; local verification uses installed LLVM 22.1.2. The new hosted jobs still need to run |
+| CUDA/HIP | GPU jobs compile device code. No clang-tidy device-code gate is claimed; local CUDA/HIP toolchains were not available for this delivery |
+| Optional dependencies | LibTorch/MKL branches are analyzed only when enabled and installed |
+| Suppressions | Obsolete disabled-check suppressions removed. Intentional copy/moved-from tests and reproducible random seeds use named suppressions with reasons |
 
-### Baseline
+### Historical baseline
 
 Measured October 31, 2026 with clang-tidy 22.1.2 (Homebrew LLVM), `neon`,
 GPU backend `none`, Release, on `TestTensor.cpp` and `TestTensorShapes.cpp`
@@ -1339,8 +1343,12 @@ and configurations have not been measured.
 | `bugprone-exception-escape` | 1 | `~stream_guard` |
 | `performance-enum-size` | 1 | `reduce_op` |
 
-The backlog is cleared in P0, before the coverage fixes turn these findings
-into CI failures.
+The P0 continuation fixes these findings and the additional diagnostics exposed
+by full test, benchmark and Metal analysis. Stream guards pin their registry
+entries until destruction, so restoring a stream never inserts into the map.
+The metadata move assignment copies an already-proven inline representation
+directly, avoiding a throwing Debug check inside `noexcept`. Local verification
+and the remaining gates are recorded in section 17.
 
 ### Rules for new code
 
@@ -1399,9 +1407,9 @@ phase changes.
 
 | Phase | Repository | Scope | Status | Correctness gate | Performance gate |
 |---|---|---|---|---|---|
-| P0 | Vectorization | Result shape from broadcasting; every leaf's shape validated; Release checks on view operations; overlap classifier raising errors; copy semantics aligned with P2; clang-tidy baseline cleared and coverage gaps closed ([section 15](#15-clang-tidy-conformance)) | Partly done: shape, view checks and classifier implemented; repository-wide clang-tidy and performance gates remain | Local Debug/Release tests pass; changed-code analysis clean. CI must still analyze the full test target and clear the repository baseline | Release benchmarks at today's speed; shape checks outside the inner loop |
+| P0 | Vectorization | Result shape from broadcasting; every leaf's shape validated; Release checks on view operations; overlap classifier raising errors; copy semantics aligned with P2; clang-tidy baseline cleared and coverage gaps closed ([section 15](#15-clang-tidy-conformance)) | Shape, view checks and classifier implemented; static-analysis coverage and baseline fixes delivered locally. Hosted LLVM 19 verification and performance gate remain | Full test-target analysis enabled, including Objective-C++; see section 17 for executed configurations. CUDA/HIP analysis remains a documented limit | Release benchmarks at today's speed; shape checks outside the inner loop |
 | P1 | Vectorization | `retained_ptr` storage with provenance, explicit offset, views retain storage, safe expression capture, `non_overlapping` flag | Partly done: retaining views/leaves and cached injectivity implemented; provenance, explicit offset and allocation gate remain | Local AddressSanitizer lifetime/adopted-deleter tests and internal-overlap rejection pass; CUDA/HIP still need verification | CPU tensor construction and destruction: one heap allocation after U1; current promotion uses a separate control block |
-| P2 | Vectorization | `tensor` / `tensor_view` split; const views; `rebind()`; `noalias()` proxy for elementwise assignment | Semantics implemented and locally verified; performance gate open | Updated tests cover packed owner copies, shallow view copies, write-through copy/move assignment, const access, signed lattice intersections and adopted storage. Debug/Release CPU and Metal GPU pass; CUDA/HIP and LibTorch remain unverified | Expression building with `tensor<T>` leaves adds no atomic operations: not met by current retain-all capture; benchmark and resolve before closing the phase |
+| P2 | Vectorization | `tensor` / `tensor_view` split; const views; `rebind()`; `noalias()` proxy for elementwise assignment | Semantics implemented and locally verified; performance gate open | Updated tests cover packed owner copies, shallow view copies, write-through copy/move assignment, const access, signed lattice intersections and adopted storage. Debug/Release CPU, Metal GPU and CPU LibTorch pass; CUDA/HIP remain unverified | Expression building with `tensor<T>` leaves adds no atomic operations: not met by current retain-all capture; benchmark and resolve before closing the phase |
 | P3 | Vectorization | CPU planner tiers 0–2 with `run_range`; contiguous fast path; `loop2d`; threading policy (bytes and op cost, intra-row splits, BLAS coordination); tiled transpose; `flip`; tier-2 specialization; planner-owned prefetch; aligned-source variant removed; CPU reductions | Partly done: planner, `loop2d`, row-split threading | Strided, broadcast, `flip` and reduction tests pass; serial SIMD fallback taken with parallel support disabled | Tier 0 ≥ 90% of STREAM triad bandwidth on one thread and scales with threads; tier 1 ≥ 80% for rows ≥ 256 elements; latency at n ≤ 64 within 10% of today; `t().contiguous()` ≥ 50% of tier-0 copy bandwidth |
 | U1 | Memory | [Section 12](#memory-u1) | Not started | Landed upstream with tests; submodule bumped | Offset-aware copy at device-copy bandwidth |
 | U2 | LinearAlgebra | [Section 12](#linearalgebra-u2) | Not started | Landed upstream with tests; submodule bumped | GEMV, DOT and batched GEMM at backend-library speed |
@@ -1417,8 +1425,9 @@ performance gate.
 
 Remaining work after the tensor/view and `noalias()` delivery:
 
-1. Close P0's repository-wide clang-tidy baseline and CI coverage gaps;
-   changed-line analysis alone does not close that gate.
+1. Run the new P0 LLVM 19 CI jobs and measure its Release performance gate.
+   Local full-file analysis and coverage wiring are recorded in sections 15
+   and 17; CUDA/HIP analysis remains outside the hosted tidy jobs.
 2. Complete P1's explicit-offset representation and provenance-aware
    shortcut with Memory U1, then verify allocation counts.
 3. Measure expression construction and small-tensor latency. Resolve the
@@ -1459,7 +1468,28 @@ compares nested two-axis layouts with explicit address sets, including signed
 inner coefficients. `TestTensorGpu.cpp` adds retaining GPU views, direct
 view assignment, const-view expressions and `noalias()` updates. Existing
 copy/contiguity tests and LibTorch comparison helper signatures were migrated
-to the split; LibTorch runtime parity remains unverified.
+to the split. LibTorch runtime parity was unverified at that delivery;
+subsequent CPU verification is recorded below.
+
+### P0 static-analysis continuation
+
+Verified locally on November 1, 2026, after the baseline and coverage fixes:
+
+| Check | Recorded result |
+|---|---|
+| clang-tidy 22.1.2, Release NEON + LibTorch | All 35 first-party translation units (library, tests and benchmarks) passed with warnings as errors and no changed-line filter |
+| CMake Debug NEON + Metal with clang-tidy enabled | Library and full C++/Objective-C++ test target built cleanly; CTest passed with GPU access: 42 passed, 10 skipped (Metal double and CUDA/HIP stream cases) |
+| CMake Release NEON + LibTorch | CTest passed: 49 passed, 25 skipped (GPU cases) |
+| CMake Release scalar CPU, C++17 | CTest passed: 17 passed, 23 skipped (disabled SIMD/GPU cases) |
+| Bazel scalar CPU `//Testing/Cxx:VectorizationCxxTests` | Passed, including the new host-only stream-guard regression tests |
+| Python/CMake regressions | All 21 tests passed |
+| Static-analysis configuration | Workflow YAML and lintrunner TOML parsed; Linux/macOS tidy matrix checked; enabled benchmark target built through the CMake tidy hook |
+
+The new stream tests cover nested default streams, separate device indices,
+direct setter resets and exception unwinding without requiring a GPU.
+The hosted LLVM 19 jobs and CUDA/HIP toolchains were not executed locally.
+MKL-specific analysis and the P0 performance gate remain unverified; no
+performance or allocation-count improvement is claimed by this delivery.
 
 ### Correctness tests
 

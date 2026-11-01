@@ -22,19 +22,16 @@ namespace vectorization
 namespace tensor_tests
 {
 
-template <typename T>
-struct tensor_abs_tol_ternary
+template <typename T> struct tensor_abs_tol_ternary
 {
 };
 
-template <>
-struct tensor_abs_tol_ternary<float>
+template <> struct tensor_abs_tol_ternary<float>
 {
     static constexpr float fma_tol = 1.2e-3f;
 };
 
-template <>
-struct tensor_abs_tol_ternary<double>
+template <> struct tensor_abs_tol_ternary<double>
 {
     static constexpr double fma_tol = 8e-12;
 };
@@ -50,21 +47,22 @@ void expect_tensor_near_elementwise(tensor<T> const& got, std::vector<T> const& 
     }
 }
 
-template <typename T>
-void fill_uniform(std::vector<T>& v, std::mt19937& gen, T lo, T hi)
+template <typename T> void fill_uniform(std::vector<T>& v, std::mt19937& gen, T lo, T hi)
 {
     std::uniform_real_distribution<T> dist(lo, hi);
     for (auto& x : v)
+    {
         x = dist(gen);
+    }
 }
 
-template <typename T>
-void test_tensor_ternary_vs_std()
+template <typename T> void test_tensor_ternary_vs_std()
 {
     using tensor_t      = tensor<T>;
     std::size_t const n = (2U << 8U) + 7U;
-    std::mt19937      gen(13021u);
-    T const           tol = tensor_abs_tol_ternary<T>::fma_tol;
+    // NOLINTNEXTLINE(bugprone-random-generator-seed): Reproduce numerical test inputs.
+    std::mt19937 gen(13021u);
+    T const      tol = tensor_abs_tol_ternary<T>::fma_tol;
 
     std::vector<T> ax(n);
     std::vector<T> ay(n);
@@ -82,7 +80,9 @@ void test_tensor_ternary_vs_std()
 
     std::vector<T> ref(n);
     for (std::size_t i = 0; i < n; ++i)
+    {
         ref[i] = std::fma(ax[i], ay[i], az[i]);
+    }
 
     expect_tensor_near_elementwise(out, ref, tol);
 }

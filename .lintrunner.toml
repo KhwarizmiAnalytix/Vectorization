@@ -51,12 +51,17 @@ is_formatter = true
 [[linter]]
 code = 'CLANGTIDY'
 include_patterns = [
+    'src/**/*.h',
+    'src/**/*.hpp',
+    'src/**/*.cpp',
+    'src/**/*.cxx',
     'include/**/*.h',
     'include/**/*.hpp',
     'include/**/*.cpp',
     'include/**/*.cxx',
     'Testing/**/*.h',
     'Testing/**/*.cpp',
+    'Testing/**/*.mm',
     'Tests/**/*.h',
     'Tests/**/*.cpp',
 ]

@@ -70,6 +70,17 @@ combinatorial matrix — see the comments in `ci.yml` for the exact coverage
 strategy and its limits (SVE has no hosted runner; SVML/MKL need proprietary
 SDKs and are validated locally instead).
 
+## Static analysis
+
+Enable clang-tidy with `python3 Scripts/setup.py config.build.clangtidy`.
+The library, C++ tests, Metal Objective-C++ tests, and enabled benchmarks run
+with warnings treated as errors. `ThirdParty/` diagnostics are excluded.
+CI pins clang-tidy to LLVM 19 on Linux AVX2 and macOS NEON + Metal, with
+`--testing=ON`. Local tools may report additional checks in newer LLVM
+versions; select the intended binary with `CLANG_TIDY_PATH` in CMake.
+CUDA/HIP device translation units are built in their GPU jobs; they are not
+analyzed by the clang-tidy jobs. Optional LibTorch/MKL paths require their SDKs.
+
 ## Whole-expression reductions
 
 ```cpp

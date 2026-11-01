@@ -19,7 +19,7 @@
 
 #pragma once
 
-#ifndef __VECTORIZATION_EXPRESSIONS_INCLUDES_INSIDE__
+#ifndef VECTORIZATION_EXPRESSIONS_INCLUDES_INSIDE
 Do_not_include_expression_evaluator_directly_use_expression_it;
 #endif
 
@@ -167,7 +167,9 @@ private:
         }
 #endif
         for (; i < end; ++i)
+        {
             data[i] = vectorization::expression_loader<E, false, false>::evaluate(expr, i);
+        }
     }
 
 public:
@@ -275,10 +277,14 @@ public:
         // Scalar peel to the first SIMD-aligned destination element.
         const size_t cap = rhs.align_start();
         for (; i < cap; ++i)
+        {
             data[i] = vectorization::expression_loader<E, false, false>::evaluate(expr, i);
+        }
 
         if (i >= n)
+        {
             return;
+        }
 
         // Aligned destination body: for large tensors split across threads; each
         // chunk uses unaligned stores (loadu/storeu on aligned data is free on
@@ -357,7 +363,9 @@ public:
 #endif
 
         for (; i < n; ++i)
+        {
             data[i] = vectorization::expression_loader<E, false, false>::evaluate(expr, i);
+        }
     }
 
     //================================================================================================
@@ -392,7 +400,9 @@ public:
 #endif
 
         for (auto i = loop_peel; i < n; i++)
+        {
             data[i * index] = from.data()[i];
+        }
     }
 
     //================================================================================================
@@ -452,18 +462,26 @@ public:
 
         const size_t cap = rhs.align_start();
         for (; i < cap; ++i)
+        {
             data[i] = value;
+        }
 
         const size_t loop_peel = rhs.align_end();
         for (; i < loop_peel; i += length)
+        {
             simd<value_t>::store(temp, &data[i]);
+        }
 
         const size_t loop_peel2 = i + ((rhs.size() - i) / length) * length;
         for (; i < loop_peel2; i += length)
+        {
             simd<value_t>::storeu(temp, &data[i]);
+        }
 #endif
         for (; i < rhs.size(); ++i)
+        {
             data[i] = value;
+        }
     }
 };
 }  // namespace vectorization
@@ -672,8 +690,10 @@ template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto accumulate(E
     {
         const size_t cap = expression.align_start();
         for (; i < cap; ++i)
+        {
             sum += vectorization::expression_loader<E, false, false>::evaluate(
                 static_cast<E const&>(expression), i);
+        }
 
         if (i < n)
         {
@@ -744,7 +764,9 @@ template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto accumulate(E
 
             simd_t combined = sum_packet[0];
             for (std::size_t k = 1; k < packet; ++k)
+            {
                 combined = simd<value_t>::add(combined, sum_packet[k]);
+            }
 
             sum += simd<value_t>::accumulate(combined);
         }
@@ -792,15 +814,19 @@ template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto accumulate(E
 
             simd_t combined = sum_packet[0];
             for (std::size_t k = 1; k < packet; ++k)
+            {
                 combined = simd<value_t>::add(combined, sum_packet[k]);
+            }
 
             sum += simd<value_t>::accumulate(combined);
         }
     }
 #endif
     for (; i < n; ++i)
+    {
         sum += vectorization::expression_loader<E, false, false>::evaluate(
             static_cast<E const&>(expression), i);
+    }
 
     return sum;
 }
@@ -838,9 +864,11 @@ template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmin(EXPR&& 
     {
         const size_t cap = expression.align_start();
         for (; i < cap; ++i)
+        {
             ret = std::fmin(ret,
                 vectorization::expression_loader<E, false, false>::evaluate(
                     static_cast<E const&>(expression), i));
+        }
 
         if (i < n)
         {
@@ -920,7 +948,9 @@ template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmin(EXPR&& 
 
             simd_t combined = min_packet[0];
             for (std::size_t k = 1; k < packet; ++k)
+            {
                 combined = simd<value_t>::min(combined, min_packet[k]);
+            }
 
             ret = std::fmin(ret, simd<value_t>::hmin(combined));
         }
@@ -972,16 +1002,20 @@ template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmin(EXPR&& 
 
             simd_t combined = min_packet[0];
             for (std::size_t k = 1; k < packet; ++k)
+            {
                 combined = simd<value_t>::min(combined, min_packet[k]);
+            }
 
             ret = std::fmin(ret, simd<value_t>::hmin(combined));
         }
     }
 #endif
     for (; i < n; ++i)
+    {
         ret = std::fmin(ret,
             vectorization::expression_loader<E, false, false>::evaluate(
                 static_cast<E const&>(expression), i));
+    }
 
     return ret;
 }
@@ -1021,9 +1055,11 @@ template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmax(EXPR&& 
     {
         const size_t cap = expression.align_start();
         for (; i < cap; ++i)
+        {
             ret = std::fmax(ret,
                 vectorization::expression_loader<E, false, false>::evaluate(
                     static_cast<E const&>(expression), i));
+        }
 
         if (i < n)
         {
@@ -1103,7 +1139,9 @@ template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmax(EXPR&& 
 
             simd_t combined = max_packet[0];
             for (std::size_t k = 1; k < packet; ++k)
+            {
                 combined = simd<value_t>::max(combined, max_packet[k]);
+            }
 
             ret = std::fmax(ret, simd<value_t>::hmax(combined));
         }
@@ -1155,16 +1193,20 @@ template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmax(EXPR&& 
 
             simd_t combined = max_packet[0];
             for (std::size_t k = 1; k < packet; ++k)
+            {
                 combined = simd<value_t>::max(combined, max_packet[k]);
+            }
 
             ret = std::fmax(ret, simd<value_t>::hmax(combined));
         }
     }
 #endif
     for (; i < n; ++i)
+    {
         ret = std::fmax(ret,
             vectorization::expression_loader<E, false, false>::evaluate(
                 static_cast<E const&>(expression), i));
+    }
 
     return ret;
 }

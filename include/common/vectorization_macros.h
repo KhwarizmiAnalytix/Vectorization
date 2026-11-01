@@ -70,7 +70,7 @@
 // and device contexts (needed when the simd<> type is instantiated inside
 // a .cu translation unit even if the SIMD path is inactive on the device).
 #ifdef NDEBUG
-#define VECTORIZATION_SIMD_RETURN_TYPE \
+#define VECTORIZATION_SIMD_RETURN_TYPE                                                             \
     VECTORIZATION_FORCE_INLINE VECTORIZATION_CUDA_FUNCTION_TYPE static void VECTORIZATION_VECTORCALL
 #else
 #define VECTORIZATION_SIMD_RETURN_TYPE VECTORIZATION_CUDA_FUNCTION_TYPE static void
@@ -87,10 +87,8 @@
 // Used in #if VECTORIZATION_ON_GPU_DEVICE elsewhere, so it must stay a
 // preprocessor macro rather than an enum.
 #if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
-// NOLINTNEXTLINE(modernize-macro-to-enum)
 #define VECTORIZATION_ON_GPU_DEVICE 1
 #else
-// NOLINTNEXTLINE(modernize-macro-to-enum)
 #define VECTORIZATION_ON_GPU_DEVICE 0
 #endif
 
@@ -166,9 +164,9 @@ static_assert(VECTORIZATION_PACKET_SIZE >= 1, "VECTORIZATION_PACKET_SIZE must be
 // are host-only — do not use them in __device__ code.
 #include "include/logging.h"
 
-#define VECTORIZATION_LOGF(verbosity_name, format_string, ...) \
+#define VECTORIZATION_LOGF(verbosity_name, format_string, ...)                                     \
     LOGGING_LOG(verbosity_name, format_string, ##__VA_ARGS__)
-#define VECTORIZATION_LOG_DEBUG(format_string, ...) \
+#define VECTORIZATION_LOG_DEBUG(format_string, ...)                                                \
     LOGGING_LOG_INFO_DEBUG(format_string, ##__VA_ARGS__)
 #define VECTORIZATION_WARNING(format_string, ...) LOGGING_LOG_WARNING(format_string, ##__VA_ARGS__)
 #define VECTORIZATION_ERROR(format_string, ...) LOGGING_LOG_ERROR(format_string, ##__VA_ARGS__)
@@ -182,7 +180,7 @@ static_assert(VECTORIZATION_PACKET_SIZE >= 1, "VECTORIZATION_PACKET_SIZE must be
 // device-safe. See LOGGING_CHECK_IF_NOT_ON_CUDA for the full rationale (mirrors
 // PyTorch's TORCH_CHECK_IF_NOT_ON_CUDA). Do not use in functions that are
 // host-only in practice -- use VECTORIZATION_CHECK there so the check still fires.
-#define VECTORIZATION_CHECK_IF_NOT_ON_CUDA(cond, ...) \
+#define VECTORIZATION_CHECK_IF_NOT_ON_CUDA(cond, ...)                                              \
     LOGGING_CHECK_IF_NOT_ON_CUDA(cond, ##__VA_ARGS__)
 #ifndef NDEBUG
 #define VECTORIZATION_CHECK_DEBUG(cond, ...) LOGGING_CHECK_DEBUG(cond, ##__VA_ARGS__)
@@ -193,13 +191,13 @@ static_assert(VECTORIZATION_PACKET_SIZE >= 1, "VECTORIZATION_PACKET_SIZE must be
 // functions tagged VECTORIZATION_FUNCTION_ATTRIBUTE / VECTORIZATION_CUDA_FUNCTION_TYPE
 // (__host__ __device__), not in functions that are host-only in practice.
 #ifndef NDEBUG
-#define VECTORIZATION_CHECK_DEBUG_IF_NOT_ON_CUDA(cond, ...) \
+#define VECTORIZATION_CHECK_DEBUG_IF_NOT_ON_CUDA(cond, ...)                                        \
     LOGGING_CHECK_DEBUG_IF_NOT_ON_CUDA(cond, ##__VA_ARGS__)
 #else
 #define VECTORIZATION_CHECK_DEBUG_IF_NOT_ON_CUDA(cond, ...) ((void)0)
 #endif
 #define VECTORIZATION_THROW(format_str, ...) LOGGING_THROW(format_str, ##__VA_ARGS__)
-#define VECTORIZATION_NOT_IMPLEMENTED(format_str, ...) \
+#define VECTORIZATION_NOT_IMPLEMENTED(format_str, ...)                                             \
     LOGGING_NOT_IMPLEMENTED(format_str, ##__VA_ARGS__)
 
 // Memory integration — allocator, data_ptr, data_view, and device_enum. Aliased

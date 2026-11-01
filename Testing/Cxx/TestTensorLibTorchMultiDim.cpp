@@ -19,8 +19,7 @@ namespace
 {
 using namespace libtorch_test;
 
-template <typename T>
-void run_nd_suite(const std::vector<int64_t>& dims, unsigned seed_base)
+template <typename T> void run_nd_suite(const std::vector<int64_t>& dims, unsigned seed_base)
 {
     using tensor_t       = vectorization::tensor<T>;
     using dims_t         = typename tensor_t::dimensions_type;
@@ -28,12 +27,16 @@ void run_nd_suite(const std::vector<int64_t>& dims, unsigned seed_base)
 
     std::size_t n = 1;
     for (auto d : dims)
+    {
         n *= static_cast<std::size_t>(d);
+    }
 
     dims_t tensor_dims;
     tensor_dims.reserve(dims.size());
     for (auto d : dims)
+    {
         tensor_dims.push_back(static_cast<std::size_t>(d));
+    }
 
     auto ax = rand_vec<T>(n, T(-2), T(2), seed_base);
     auto ay = rand_vec<T>(n, T(-2), T(2), seed_base + 1);
@@ -89,8 +92,7 @@ void run_nd_suite(const std::vector<int64_t>& dims, unsigned seed_base)
     }
 }
 
-template <typename T>
-void test_libtorch_nd()
+template <typename T> void test_libtorch_nd()
 {
     run_nd_suite<T>({3, 8, 9}, 15);     // 3-D: depth × rows × cols
     run_nd_suite<T>({2, 3, 8, 9}, 18);  // 4-D: batch × depth × rows × cols

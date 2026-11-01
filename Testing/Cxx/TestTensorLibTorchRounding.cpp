@@ -16,8 +16,7 @@ namespace
 {
 using namespace libtorch_test;
 
-template <typename T>
-void test_libtorch_rounding()
+template <typename T> void test_libtorch_rounding()
 {
     using tensor_t = vectorization::tensor<T>;
 
@@ -60,8 +59,8 @@ void test_libtorch_rounding()
 
 VECTORIZATIONTEST(LibTorch, RoundingFloat)
 {
-    std::cout << "\n=== Build Config ===" << std::endl;
-    std::cout << torch::show_config() << std::endl;
+    std::cout << "\n=== Build Config ===" << '\n';
+    std::cout << torch::show_config() << '\n';
     test_libtorch_rounding<float>();
     END_TEST();
 }

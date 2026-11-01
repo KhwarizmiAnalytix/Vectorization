@@ -29,16 +29,23 @@
 // Requires gpu_stream_t to already be visible (tensor.h includes this after
 // "expressions/expressions.h", which defines it for every backend configuration).
 
+#include <cstddef>
 #include <unordered_map>
 
 namespace vectorization
 {
 namespace detail
 {
-// One entry per device_index with an active stream_guard on this thread; absence means
-// "use the default/null stream". Empty on every thread until the first guard is
-// constructed, so current_stream() below skips the lookup entirely on that (default) path.
-inline thread_local std::unordered_map<int, gpu_stream_t> g_current_streams;
+// One entry per device with an explicit stream or active guards on this thread.
+// A guard pins its entry so restoration never needs to allocate. Empty on every
+// thread until a stream is selected or a guard is constructed.
+struct stream_state
+{
+    gpu_stream_t stream{nullptr};
+    std::size_t  guards{0};
+};
+
+inline thread_local std::unordered_map<int, stream_state> g_current_streams;
 }  // namespace detail
 
 // Returns the ambient stream set by the innermost active stream_guard for device_index on
@@ -51,7 +58,7 @@ VECTORIZATION_HOST_ONLY inline gpu_stream_t current_stream(int device_index = 0)
         return nullptr;
     }
     auto it = streams.find(device_index);
-    return it == streams.end() ? nullptr : it->second;
+    return it == streams.end() ? nullptr : it->second.stream;
 }
 
 // Directly sets the ambient stream for device_index on this thread; passing nullptr clears
@@ -64,11 +71,23 @@ VECTORIZATION_HOST_ONLY inline void set_current_stream(gpu_stream_t stream, int 
 {
     if (stream == nullptr)
     {
-        detail::g_current_streams.erase(device_index);
+        auto& streams = detail::g_current_streams;
+        auto  it      = streams.find(device_index);
+        if (it != streams.end())
+        {
+            if (it->second.guards == 0)
+            {
+                streams.erase(it);
+            }
+            else
+            {
+                it->second.stream = nullptr;
+            }
+        }
     }
     else
     {
-        detail::g_current_streams[device_index] = stream;
+        detail::g_current_streams[device_index].stream = stream;
     }
 }
 
@@ -89,12 +108,22 @@ public:
         gpu_stream_t stream, int device_index = 0)
         : device_index_(device_index), prev_stream_(current_stream(device_index))
     {
-        set_current_stream(stream, device_index_);
+        // Reserve the entry before changing ambient state. Active guards keep
+        // it alive even when a nested guard or direct setter selects nullptr.
+        auto& state = detail::g_current_streams[device_index_];
+        ++state.guards;
+        state.stream = stream;
     }
 
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE ~stream_guard()
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE ~stream_guard() noexcept
     {
-        set_current_stream(prev_stream_, device_index_);
+        auto& streams     = detail::g_current_streams;
+        auto  it          = streams.find(device_index_);
+        it->second.stream = prev_stream_;
+        if (--it->second.guards == 0 && prev_stream_ == nullptr)
+        {
+            streams.erase(it);
+        }
     }
 
     stream_guard(const stream_guard&)            = delete;

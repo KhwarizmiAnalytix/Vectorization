@@ -40,9 +40,9 @@
 #include <string>
 #include <vector>
 
+#include "terminals/tensor.h"
 #include <backend/gpu/gpu_stream_compat.h>
 #include <math/scalar_helper_functions.h>
-#include "terminals/tensor.h"
 
 namespace
 {
@@ -77,8 +77,7 @@ void expect_near_rel(const std::vector<T>& got, const std::vector<T>& ref, doubl
 
 // ---- Input generation ---------------------------------------------------
 
-template <typename T>
-void make_inputs(std::vector<T>& ha, std::vector<T>& hb, size_t N)
+template <typename T> void make_inputs(std::vector<T>& ha, std::vector<T>& hb, size_t N)
 {
     ha.resize(N);
     hb.resize(N);
@@ -93,8 +92,7 @@ void make_inputs(std::vector<T>& ha, std::vector<T>& hb, size_t N)
 // ---- Test bodies --------------------------------------------------------
 
 // Fill a GPU tensor with a scalar and verify the values come back correctly.
-template <typename T>
-void test_fill()
+template <typename T> void test_fill()
 {
     constexpr size_t N    = 1024;
     constexpr T      kVal = static_cast<T>(2.71828);
@@ -105,12 +103,13 @@ void test_fill()
 
     auto result = ga.to_host_vector();
     for (size_t i = 0; i < N; ++i)
+    {
         EXPECT_NEAR(result[i], kVal, tol) << " at i=" << i;
+    }
 }
 
 // Element-wise add, sub, and mul on GPU tensors.
-template <typename T>
-void test_binary_ops()
+template <typename T> void test_binary_ops()
 {
     constexpr size_t N   = 1024;
     constexpr double tol = std::is_same_v<T, float> ? 5e-5 : 1e-11;
@@ -129,7 +128,9 @@ void test_binary_ops()
         auto           result = gc.to_host_vector();
         std::vector<T> ref(N);
         for (size_t i = 0; i < N; ++i)
+        {
             ref[i] = ha[i] + hb[i];
+        }
         expect_near_rel(result, ref, tol);
     }
 
@@ -140,7 +141,9 @@ void test_binary_ops()
         auto           result = gc.to_host_vector();
         std::vector<T> ref(N);
         for (size_t i = 0; i < N; ++i)
+        {
             ref[i] = ha[i] - hb[i];
+        }
         expect_near_rel(result, ref, tol);
     }
 
@@ -150,9 +153,10 @@ void test_binary_ops()
         gc                    = ga * gb;
         auto           result = gc.to_host_vector();
         std::vector<T> ref(N);
-        for (size_t i = 0; i < N; ++i) {
+        for (size_t i = 0; i < N; ++i)
+        {
             ref[i] = ha[i] * hb[i];
-}
+        }
         expect_near_rel(result, ref, tol);
     }
 
@@ -163,7 +167,9 @@ void test_binary_ops()
         auto           result = gc.to_host_vector();
         std::vector<T> ref(N);
         for (size_t i = 0; i < N; ++i)
+        {
             ref[i] = ha[i] + static_cast<T>(1);
+        }
         expect_near_rel(result, ref, tol);
     }
 
@@ -175,14 +181,15 @@ void test_binary_ops()
         auto           result = acc.to_host_vector();
         std::vector<T> ref(N);
         for (size_t i = 0; i < N; ++i)
+        {
             ref[i] = ha[i] + hb[i];
+        }
         expect_near_rel(result, ref, tol);
     }
 }
 
 // Unary math ops: exp, sqrt, log on GPU tensors.
-template <typename T>
-void test_unary_math()
+template <typename T> void test_unary_math()
 {
     constexpr size_t N   = 1024;
     constexpr double tol = std::is_same_v<T, float> ? 5e-5 : 1e-11;
@@ -190,7 +197,9 @@ void test_unary_math()
     // Use strictly positive values for sqrt/log
     std::vector<T> ha(N);
     for (size_t i = 0; i < N; ++i)
+    {
         ha[i] = static_cast<T>(static_cast<double>(i + 1) / static_cast<double>(N) * 2.0);
+    }
 
     tensor<T> ga(N, kActiveGpuDevice);
     ga.copy_from_host(ha);
@@ -202,7 +211,9 @@ void test_unary_math()
         auto           result = gc.to_host_vector();
         std::vector<T> ref(N);
         for (size_t i = 0; i < N; ++i)
+        {
             ref[i] = std::exp(ha[i]);
+        }
         expect_near_rel(result, ref, tol);
     }
 
@@ -213,7 +224,9 @@ void test_unary_math()
         auto           result = gc.to_host_vector();
         std::vector<T> ref(N);
         for (size_t i = 0; i < N; ++i)
+        {
             ref[i] = std::sqrt(ha[i]);
+        }
         expect_near_rel(result, ref, tol);
     }
 
@@ -224,7 +237,9 @@ void test_unary_math()
         auto           result = gc.to_host_vector();
         std::vector<T> ref(N);
         for (size_t i = 0; i < N; ++i)
+        {
             ref[i] = std::log(ha[i]);
+        }
         expect_near_rel(result, ref, tol);
     }
 
@@ -232,7 +247,9 @@ void test_unary_math()
     {
         std::vector<T> ha_neg(N);
         for (size_t i = 0; i < N; ++i)
+        {
             ha_neg[i] = static_cast<T>(-static_cast<double>(ha[i]));
+        }
         tensor<T> ga_neg(N, kActiveGpuDevice);
         ga_neg.copy_from_host(ha_neg);
 
@@ -240,13 +257,14 @@ void test_unary_math()
         gc          = ::fabs(ga_neg);
         auto result = gc.to_host_vector();
         for (size_t i = 0; i < N; ++i)
+        {
             EXPECT_NEAR(result[i], ha[i], static_cast<T>(tol)) << " at i=" << i;
+        }
     }
 }
 
 // Compound expression: the full expression tree is fused into a single kernel.
-template <typename T>
-void test_compound()
+template <typename T> void test_compound()
 {
     constexpr size_t N = 1024;
     // exp amplifies float errors; use a looser tolerance
@@ -271,7 +289,9 @@ void test_compound()
         auto           result = gc.to_host_vector();
         std::vector<T> ref(N);
         for (size_t i = 0; i < N; ++i)
+        {
             ref[i] = std::exp(ha[i]) + std::sqrt(hb[i]);
+        }
         expect_near_rel(result, ref, tol);
     }
 
@@ -283,7 +303,9 @@ void test_compound()
         auto           result = gc.to_host_vector();
         std::vector<T> ref(N);
         for (size_t i = 0; i < N; ++i)
+        {
             ref[i] = (ha[i] + hb[i]) * kAlpha;
+        }
         expect_near_rel(result, ref, tol);
     }
 
@@ -297,7 +319,9 @@ void test_compound()
         auto           result = gx.to_host_vector();
         std::vector<T> ref(N);
         for (size_t i = 0; i < N; ++i)
+        {
             ref[i] = ha[i] + hb[i] + kFive * hb[i];
+        }
         expect_near_rel(result, ref, tol);
 
         tensor<T> acc(N, kActiveGpuDevice);
@@ -309,8 +333,7 @@ void test_compound()
 }
 
 // Ops that used to throw on Metal (min/max/pow/floor/if_else/...) now fuse like CPU/CUDA.
-template <typename T>
-void test_fused_catalog()
+template <typename T> void test_fused_catalog()
 {
     constexpr size_t N   = 1024;
     constexpr double tol = std::is_same_v<T, float> ? 5e-4 : 1e-10;
@@ -333,7 +356,9 @@ void test_fused_catalog()
         auto           result = gc.to_host_vector();
         std::vector<T> ref(N);
         for (size_t i = 0; i < N; ++i)
+        {
             ref[i] = std::min(ha[i], hb[i]);
+        }
         expect_near_rel(result, ref, tol);
     }
     {
@@ -342,7 +367,9 @@ void test_fused_catalog()
         auto           result = gc.to_host_vector();
         std::vector<T> ref(N);
         for (size_t i = 0; i < N; ++i)
+        {
             ref[i] = std::max(ha[i], hb[i]) + std::floor(ha[i]);
+        }
         expect_near_rel(result, ref, tol);
     }
     {
@@ -351,7 +378,9 @@ void test_fused_catalog()
         auto           result = gc.to_host_vector();
         std::vector<T> ref(N);
         for (size_t i = 0; i < N; ++i)
+        {
             ref[i] = std::pow(hb[i], static_cast<T>(2)) + std::hypot(ha[i], hb[i]);
+        }
         expect_near_rel(result, ref, tol);
     }
     {
@@ -360,7 +389,9 @@ void test_fused_catalog()
         auto           result = gc.to_host_vector();
         std::vector<T> ref(N);
         for (size_t i = 0; i < N; ++i)
+        {
             ref[i] = ha[i] > static_cast<T>(0) ? ha[i] : hb[i];
+        }
         expect_near_rel(result, ref, tol);
     }
     {
@@ -369,7 +400,9 @@ void test_fused_catalog()
         auto           result = gc.to_host_vector();
         std::vector<T> ref(N);
         for (size_t i = 0; i < N; ++i)
+        {
             ref[i] = std::cbrt(ha[i]) + std::sqr(hb[i]) * std::invsqrt(hb[i]);
+        }
         expect_near_rel(result, ref, tol);
     }
     {
@@ -379,13 +412,14 @@ void test_fused_catalog()
         auto           result = acc.to_host_vector();
         std::vector<T> ref(N);
         for (size_t i = 0; i < N; ++i)
+        {
             ref[i] = ha[i] + hb[i];
+        }
         expect_near_rel(result, ref, tol);
     }
 }
 
-template <typename T>
-void test_reductions()
+template <typename T> void test_reductions()
 {
     constexpr size_t N       = 4096;
     constexpr double sum_tol = std::is_same_v<T, float> ? 2e-2 : 1e-10;
@@ -414,16 +448,13 @@ void test_reductions()
         max_ref = std::max(max_ref, v);
     }
 
-    EXPECT_NEAR(
-        static_cast<double>(accumulate(ga + gb * static_cast<T>(2))),
+    EXPECT_NEAR(static_cast<double>(accumulate(ga + gb * static_cast<T>(2))),
         static_cast<double>(sum_ref),
         sum_tol);
-    EXPECT_NEAR(
-        static_cast<double>(hmin(ga + gb * static_cast<T>(2))),
+    EXPECT_NEAR(static_cast<double>(hmin(ga + gb * static_cast<T>(2))),
         static_cast<double>(min_ref),
         mm_tol);
-    EXPECT_NEAR(
-        static_cast<double>(hmax(ga + gb * static_cast<T>(2))),
+    EXPECT_NEAR(static_cast<double>(hmax(ga + gb * static_cast<T>(2))),
         static_cast<double>(max_ref),
         mm_tol);
 
@@ -537,7 +568,9 @@ VECTORIZATIONTEST(TensorGpu, FillFloat)
     int ndev = 0;
     gpuGetDeviceCount(&ndev);
     if (ndev == 0)
+    {
         GTEST_SKIP() << "No GPU device";
+    }
     test_fill<float>();
     END_TEST();
 }
@@ -547,7 +580,9 @@ VECTORIZATIONTEST(TensorGpu, StoresDeviceIndex)
     int ndev = 0;
     gpuGetDeviceCount(&ndev);
     if (ndev == 0)
+    {
         GTEST_SKIP() << "No GPU device";
+    }
     tensor<float> t(64, kActiveGpuDevice, 0);
     EXPECT_EQ(kActiveGpuDevice, t.device());
     EXPECT_EQ(0, t.device_index());
@@ -559,7 +594,9 @@ VECTORIZATIONTEST(TensorGpu, CopyToHostWritesCallerBuffer)
     int ndev = 0;
     gpuGetDeviceCount(&ndev);
     if (ndev == 0)
+    {
         GTEST_SKIP() << "No GPU device";
+    }
 
     constexpr size_t N    = 256;
     constexpr float  kVal = 1.25f;
@@ -568,7 +605,9 @@ VECTORIZATIONTEST(TensorGpu, CopyToHostWritesCallerBuffer)
     std::vector<float> host(N, 0.f);
     ga.copy_to_host(host.data());
     for (size_t i = 0; i < N; ++i)
+    {
         EXPECT_NEAR(host[i], kVal, 5e-6f) << " at i=" << i;
+    }
     ga.copy_to_host(host.data(), N);
     EXPECT_NEAR(host[0], kVal, 5e-6f);
     END_TEST();
@@ -578,7 +617,9 @@ VECTORIZATIONTEST(TensorGpu, CopyClonesIndependentStorage)
     int ndev = 0;
     gpuGetDeviceCount(&ndev);
     if (ndev == 0)
+    {
         GTEST_SKIP() << "No GPU device";
+    }
 
     constexpr size_t N    = 64;
     constexpr float  kVal = 1.5f;
@@ -593,12 +634,16 @@ VECTORIZATIONTEST(TensorGpu, CopyClonesIndependentStorage)
     auto src_h = src.to_host_vector();
     auto dst_h = dst.to_host_vector();
     for (size_t i = 0; i < N; ++i)
+    {
         EXPECT_NEAR(dst_h[i], kVal, 5e-6f);
+    }
     for (size_t i = 0; i < N; ++i)
+    {
         EXPECT_NEAR(src_h[i], 9.0f, 5e-6f);
+    }
 
     auto interior = src.slice(0, 16, 48);
-    auto empty = src.slice(0, N, N);
+    auto empty    = src.slice(0, N, N);
     EXPECT_TRUE(empty.empty());
     EXPECT_EQ(empty.device(), src.device());
     EXPECT_EQ(empty.memory_view().id(), src.memory_view().id());
@@ -623,7 +668,9 @@ VECTORIZATIONTEST(TensorGpu, ExpressionCtorKeepsDevice)
     int ndev = 0;
     gpuGetDeviceCount(&ndev);
     if (ndev == 0)
+    {
         GTEST_SKIP() << "No GPU device";
+    }
 
     constexpr size_t   N   = 64;
     constexpr double   tol = 5e-5;
@@ -637,7 +684,9 @@ VECTORIZATIONTEST(TensorGpu, ExpressionCtorKeepsDevice)
     EXPECT_EQ(0, gc.device_index());
     std::vector<float> ref(N);
     for (size_t i = 0; i < N; ++i)
+    {
         ref[i] = ha[i] + hb[i];
+    }
     expect_near_rel(gc.to_host_vector(), ref, tol);
     auto cloned = gc.clone();
     EXPECT_EQ(gc.device(), cloned.device());
@@ -650,7 +699,9 @@ VECTORIZATIONTEST(TensorGpu, ExpressionLeavesAliasStorage)
     int ndev = 0;
     gpuGetDeviceCount(&ndev);
     if (ndev == 0)
+    {
         GTEST_SKIP() << "No GPU device";
+    }
 
     constexpr size_t N = 64;
     tensor<float>    ga(N, kActiveGpuDevice), gb(N, kActiveGpuDevice);
@@ -663,7 +714,9 @@ VECTORIZATIONTEST(TensorGpu, ExpressionLeavesAliasStorage)
     EXPECT_EQ(kActiveGpuDevice, gc.device());
     std::vector<float> got = gc.to_host_vector();
     for (size_t i = 0; i < N; ++i)
+    {
         EXPECT_NEAR(got[i], 4.0f, 5e-6f);
+    }
     END_TEST();
 }
 VECTORIZATIONTEST(TensorGpu, LinspaceAndToCpu)
@@ -671,7 +724,9 @@ VECTORIZATIONTEST(TensorGpu, LinspaceAndToCpu)
     int ndev = 0;
     gpuGetDeviceCount(&ndev);
     if (ndev == 0)
+    {
         GTEST_SKIP() << "No GPU device";
+    }
 
     tensor<float> g(0.0f, 4.0f, 5u, kActiveGpuDevice);
     EXPECT_EQ(g.device(), kActiveGpuDevice);
@@ -687,11 +742,15 @@ VECTORIZATIONTEST(TensorGpu, LinspaceAndToCpu)
 VECTORIZATIONTEST(TensorGpu, FillDouble)
 {
     if (kMetalOnlyBackend)
+    {
         GTEST_SKIP() << "Metal backend is float-only (no fp64 on Apple GPUs)";
+    }
     int ndev = 0;
     gpuGetDeviceCount(&ndev);
     if (ndev == 0)
+    {
         GTEST_SKIP() << "No GPU device";
+    }
     test_fill<double>();
     END_TEST();
 }
@@ -704,18 +763,24 @@ VECTORIZATIONTEST(TensorGpu, BinaryOpsFloat)
     int ndev = 0;
     gpuGetDeviceCount(&ndev);
     if (ndev == 0)
+    {
         GTEST_SKIP() << "No GPU device";
+    }
     test_binary_ops<float>();
     END_TEST();
 }
 VECTORIZATIONTEST(TensorGpu, BinaryOpsDouble)
 {
     if (kMetalOnlyBackend)
+    {
         GTEST_SKIP() << "Metal backend is float-only (no fp64 on Apple GPUs)";
+    }
     int ndev = 0;
     gpuGetDeviceCount(&ndev);
     if (ndev == 0)
+    {
         GTEST_SKIP() << "No GPU device";
+    }
     test_binary_ops<double>();
     END_TEST();
 }
@@ -728,18 +793,24 @@ VECTORIZATIONTEST(TensorGpu, UnaryMathFloat)
     int ndev = 0;
     gpuGetDeviceCount(&ndev);
     if (ndev == 0)
+    {
         GTEST_SKIP() << "No GPU device";
+    }
     test_unary_math<float>();
     END_TEST();
 }
 VECTORIZATIONTEST(TensorGpu, UnaryMathDouble)
 {
     if (kMetalOnlyBackend)
+    {
         GTEST_SKIP() << "Metal backend is float-only (no fp64 on Apple GPUs)";
+    }
     int ndev = 0;
     gpuGetDeviceCount(&ndev);
     if (ndev == 0)
+    {
         GTEST_SKIP() << "No GPU device";
+    }
     test_unary_math<double>();
     END_TEST();
 }
@@ -752,7 +823,9 @@ VECTORIZATIONTEST(TensorGpu, CompoundFloat)
     int ndev = 0;
     gpuGetDeviceCount(&ndev);
     if (ndev == 0)
+    {
         GTEST_SKIP() << "No GPU device";
+    }
     test_compound<float>();
     END_TEST();
 }
@@ -761,29 +834,39 @@ VECTORIZATIONTEST(TensorGpu, FusedCatalogFloat)
     int ndev = 0;
     gpuGetDeviceCount(&ndev);
     if (ndev == 0)
+    {
         GTEST_SKIP() << "No GPU device";
+    }
     test_fused_catalog<float>();
     END_TEST();
 }
 VECTORIZATIONTEST(TensorGpu, CompoundDouble)
 {
     if (kMetalOnlyBackend)
+    {
         GTEST_SKIP() << "Metal backend is float-only (no fp64 on Apple GPUs)";
+    }
     int ndev = 0;
     gpuGetDeviceCount(&ndev);
     if (ndev == 0)
+    {
         GTEST_SKIP() << "No GPU device";
+    }
     test_compound<double>();
     END_TEST();
 }
 VECTORIZATIONTEST(TensorGpu, FusedCatalogDouble)
 {
     if (kMetalOnlyBackend)
+    {
         GTEST_SKIP() << "Metal backend is float-only (no fp64 on Apple GPUs)";
+    }
     int ndev = 0;
     gpuGetDeviceCount(&ndev);
     if (ndev == 0)
+    {
         GTEST_SKIP() << "No GPU device";
+    }
     test_fused_catalog<double>();
     END_TEST();
 }
@@ -793,7 +876,9 @@ VECTORIZATIONTEST(TensorGpu, ReductionsFloat)
     int ndev = 0;
     gpuGetDeviceCount(&ndev);
     if (ndev == 0)
+    {
         GTEST_SKIP() << "No GPU device";
+    }
     test_reductions<float>();
     END_TEST();
 }
@@ -801,11 +886,15 @@ VECTORIZATIONTEST(TensorGpu, ReductionsFloat)
 VECTORIZATIONTEST(TensorGpu, ReductionsDouble)
 {
     if (kMetalOnlyBackend)
+    {
         GTEST_SKIP() << "Metal backend is float-only (no fp64 on Apple GPUs)";
+    }
     int ndev = 0;
     gpuGetDeviceCount(&ndev);
     if (ndev == 0)
+    {
         GTEST_SKIP() << "No GPU device";
+    }
     test_reductions<double>();
     END_TEST();
 }

@@ -266,7 +266,9 @@ template <typename T> VECTORIZATION_NOINLINE void test_tensor_shape_access()
         // begin / end iteration
         T sum = T(0);
         for (auto it = v.begin(); it != v.end(); ++it)
+        {
             sum += *it;
+        }
         EXPECT_NEAR(sum, T(50), eps);
 
         // at(i, j)
@@ -385,7 +387,9 @@ template <typename T> VECTORIZATION_NOINLINE void test_tensor_views_slices()
     {
         tensor_t v(12u);
         for (size_t i = 0; i < 12; ++i)
+        {
             v[i] = static_cast<T>(i);
+        }
         auto vw = v.view(dims_t{3, 4});
         EXPECT_EQ(vw.dimension(0), 3u);
         EXPECT_EQ(vw.dimension(1), 4u);
@@ -401,7 +405,9 @@ template <typename T> VECTORIZATION_NOINLINE void test_tensor_views_slices()
     {
         tensor_t v(6u);
         for (size_t i = 0; i < 6; ++i)
+        {
             v[i] = static_cast<T>(i);
+        }
         auto rs = v.reshape(dims_t{2, 3});
         EXPECT_EQ(rs.dimension(0), 2u);
         EXPECT_EQ(rs.dimension(1), 3u);
@@ -414,7 +420,9 @@ template <typename T> VECTORIZATION_NOINLINE void test_tensor_views_slices()
     {
         tensor_t v(10u);
         for (size_t i = 0; i < 10; ++i)
+        {
             v[i] = static_cast<T>(i);
+        }
 
         // indices 1, 4, 7 (step=3 through [1,8))
         auto sl = v.slice(0, 1, 8, 3);
@@ -448,8 +456,12 @@ template <typename T> VECTORIZATION_NOINLINE void test_tensor_views_slices()
     {
         tensor_t m(4u, 5u);
         for (size_t i = 0; i < 4; ++i)
+        {
             for (size_t j = 0; j < 5; ++j)
+            {
                 m.at(i, j) = static_cast<T>(i * 10 + j);
+            }
+        }
         auto sl = m.slice(0, 1, 3);
         EXPECT_EQ(sl.dimension(0), 2u);
         EXPECT_EQ(sl.dimension(1), 5u);
@@ -796,6 +808,7 @@ template <typename T> VECTORIZATION_NOINLINE void test_tensor_contiguity()
         EXPECT_EQ(copy_assign.stride(1), 1);
 
         tensor_t contiguous_src(dims_t{3, 4});
+        // NOLINTNEXTLINE(performance-unnecessary-copy-initialization): Exercise owning copies.
         tensor_t copy_of_contiguous(contiguous_src);
         EXPECT_TRUE(copy_of_contiguous.is_contiguous());
     }
@@ -810,11 +823,13 @@ template <typename T> VECTORIZATION_NOINLINE void test_tensor_contiguity()
 
         auto moved(std::move(transposed));
         EXPECT_FALSE(moved.is_contiguous());
+        // NOLINTNEXTLINE(bugprone-use-after-move): Verify the documented empty moved-from state.
         EXPECT_TRUE(transposed.is_contiguous());  // moved-from: reset to empty/contiguous
         EXPECT_EQ(transposed.size(), 0u);
 
         auto move_target(std::move(moved));
         EXPECT_FALSE(move_target.is_contiguous());
+        // NOLINTNEXTLINE(bugprone-use-after-move): Verify the documented empty moved-from state.
         EXPECT_TRUE(moved.is_contiguous());
     }
 
@@ -986,6 +1001,7 @@ VECTORIZATIONTEST(Math, TensorMemoryStorage)
     EXPECT_EQ(first_expr.lhs().id(), original.id());
 
     tensor_t owned(std::move(storage), tensor_t::dimensions_type{3, 4});
+    // NOLINTNEXTLINE(bugprone-use-after-move): Promotion must leave the source handle empty.
     EXPECT_EQ(storage.data(), nullptr);
     EXPECT_EQ(owned.data(), original.data());
     EXPECT_EQ(owned.memory_view().id(), original.id());

@@ -122,7 +122,9 @@ VECTORIZATION_FUNCTION_ATTRIBUTE std::size_t strided_offset(
     strided_ref<T, MaxRank> const& s, std::size_t flat) noexcept
 {
     if (s.contiguous)
+    {
         return flat;
+    }
     const int n   = s.rank;
     size_t    off = 0;
     size_t    rem = flat;

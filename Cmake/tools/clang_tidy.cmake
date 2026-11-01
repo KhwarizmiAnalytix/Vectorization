@@ -20,9 +20,8 @@ mark_as_advanced(CLANG_TIDY_FOUND)
 # --exclude-header-filter landed in LLVM 19. Ubuntu 24.04's apt clang-tidy is 18
 # and rejects the flag ("Unknown command line argument"), which then makes
 # CMake's __run_co_compile fail with "cannot specify -o when generating
-# multiple output files". --header-filter already limits reports to
-# Library|Cmake|Tools|Examples, so skipping the exclude filter on older
-# tidy still keeps ThirdParty out of the report.
+# multiple output files". --header-filter limits reports to first-party
+# directories, so older tidy still keeps ThirdParty out of the report.
 execute_process(
   COMMAND "${CLANG_TIDY_PATH}" --version
   OUTPUT_VARIABLE _clang_tidy_version_out
@@ -59,10 +58,14 @@ function(xsigma_target_clang_tidy target_name enable_fix)
   endif()
 
   set_target_properties(
-    ${target_name} PROPERTIES C_CLANG_TIDY "${_tidy_args}" CXX_CLANG_TIDY "${_tidy_args}"
+    ${target_name}
+    PROPERTIES C_CLANG_TIDY "${_tidy_args}" CXX_CLANG_TIDY "${_tidy_args}"
+               OBJCXX_CLANG_TIDY "${_tidy_args}"
   )
 endfunction()
 
 function(disable_clang_tidy_for_target target_name)
-  set_target_properties(${target_name} PROPERTIES C_CLANG_TIDY "" CXX_CLANG_TIDY "")
+  set_target_properties(${target_name} PROPERTIES C_CLANG_TIDY "" CXX_CLANG_TIDY ""
+                                                OBJCXX_CLANG_TIDY ""
+  )
 endfunction()

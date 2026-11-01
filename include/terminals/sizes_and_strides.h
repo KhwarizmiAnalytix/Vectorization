@@ -28,7 +28,6 @@
 
 namespace vectorization
 {
-
 // Packed container for tensor sizes and strides.
 // This design improves on the previous approach of using a pair of
 // SmallVector<int64_t, 5> by specializing for the operations we
@@ -60,7 +59,6 @@ public:
     {
         if (VECTORIZATION_UNLIKELY(!isInline()))
         {
-            // NOLINTNEXTLINE(cppcoreguidelines-no-malloc)
             free(outOfLineStorage_);
         }
     }
@@ -102,7 +100,6 @@ public:
         {
             if (VECTORIZATION_UNLIKELY(!isInline()))
             {
-                // NOLINTNEXTLINE(cppcoreguidelines-no-malloc)
                 free(outOfLineStorage_);
             }
             copyDataInline(rhs);
@@ -150,17 +147,17 @@ public:
         {
             if (VECTORIZATION_UNLIKELY(!isInline()))
             {
-                // NOLINTNEXTLINE(cppcoreguidelines-no-malloc)
                 free(outOfLineStorage_);
             }
-            copyDataInline(rhs);
+            // The branch proves the inline precondition. Keep moves noexcept
+            // without calling copyDataInline's throwing Debug check.
+            memcpy(inlineStorage_, rhs.inlineStorage_, sizeof(inlineStorage_));
         }
         else
         {
             // They're outline. We're going to steal their vector.
             if (!isInline())
             {
-                // NOLINTNEXTLINE(cppcoreguidelines-no-malloc)
                 free(outOfLineStorage_);
             }
             outOfLineStorage_     = rhs.outOfLineStorage_;
@@ -346,7 +343,6 @@ private:
 
     void allocateOutOfLineStorage(size_t size)
     {
-        // NOLINTNEXTLINE(cppcoreguidelines-no-malloc)
         outOfLineStorage_ = static_cast<int64_t*>(malloc(storageBytes(size)));
         VECTORIZATION_CHECK(
             outOfLineStorage_, "Could not allocate memory for Tensor sizes_and_strides!");
@@ -355,9 +351,8 @@ private:
     void resizeOutOfLineStorage(size_t newSize)
     {
         VECTORIZATION_CHECK_DEBUG(!isInline());
-        outOfLineStorage_ = static_cast<int64_t*>(
-            // NOLINTNEXTLINE(cppcoreguidelines-no-malloc)
-            realloc(outOfLineStorage_, storageBytes(newSize)));
+        outOfLineStorage_ =
+            static_cast<int64_t*>(realloc(outOfLineStorage_, storageBytes(newSize)));
         VECTORIZATION_CHECK(
             outOfLineStorage_, "Could not allocate memory for Tensor sizes_and_strides!");
     }
@@ -371,8 +366,7 @@ private:
     union
     {
         int64_t* outOfLineStorage_;
-        // NOLINTNEXTLINE(*c-array*)
-        int64_t inlineStorage_[MAX_INLINE_SIZE * 2]{};
+        int64_t  inlineStorage_[MAX_INLINE_SIZE * 2]{};
     };
 };
 

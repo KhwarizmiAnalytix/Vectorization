@@ -69,7 +69,9 @@ VECTORIZATIONTEST(MetalDispatch, Fill)
 
     auto host = download(out, n);
     for (float v : host)
+    {
         EXPECT_FLOAT_EQ(v, 3.5f);
+    }
 
     alloc_t::free(out, memory::device_enum::METAL);
     END_TEST();
@@ -94,7 +96,9 @@ VECTORIZATIONTEST(MetalDispatch, Add)
 
     auto host = download(doubt, n);
     for (size_t i = 0; i < n; ++i)
+    {
         EXPECT_FLOAT_EQ(host[i], a[i] + b[i]);
+    }
 
     alloc_t::free(da, memory::device_enum::METAL);
     alloc_t::free(db, memory::device_enum::METAL);
@@ -107,7 +111,9 @@ VECTORIZATIONTEST(MetalDispatch, Sin)
     constexpr size_t   n = 200;
     std::vector<float> a(n);
     for (size_t i = 0; i < n; ++i)
+    {
         a[i] = static_cast<float>(i) * 0.01f;
+    }
 
     float* da    = upload(a);
     float* doubt = alloc_t::allocate(n, memory::device_enum::METAL);
@@ -117,7 +123,9 @@ VECTORIZATIONTEST(MetalDispatch, Sin)
 
     auto host = download(doubt, n);
     for (size_t i = 0; i < n; ++i)
+    {
         EXPECT_NEAR(host[i], std::sin(a[i]), 1e-5f);
+    }
 
     alloc_t::free(da, memory::device_enum::METAL);
     alloc_t::free(doubt, memory::device_enum::METAL);
@@ -145,7 +153,9 @@ VECTORIZATIONTEST(MetalDispatch, Fma)
 
     auto host = download(doubt, n);
     for (size_t i = 0; i < n; ++i)
+    {
         EXPECT_NEAR(host[i], a[i] * b[i] + c[i], 1e-5f);
+    }
 
     alloc_t::free(da, memory::device_enum::METAL);
     alloc_t::free(db, memory::device_enum::METAL);
@@ -208,7 +218,9 @@ VECTORIZATIONTEST(MetalDispatch, ReduceMinMax)
     constexpr size_t   n = 3000;
     std::vector<float> a(n);
     for (size_t i = 0; i < n; ++i)
+    {
         a[i] = static_cast<float>(i) * 0.01f - 10.0f;
+    }
     float* da   = upload(a);
     float  gmin = scalars::metal_backend::reduce_min(da, n);
     float  gmax = scalars::metal_backend::reduce_max(da, n);
@@ -263,7 +275,9 @@ VECTORIZATIONTEST(MetalDispatch, FusedYPlusAPlusFiveD)
 
     auto got = download(dx, n);
     for (size_t i = 0; i < n; ++i)
+    {
         EXPECT_FLOAT_EQ(got[i], ref[i]) << " at i=" << i;
+    }
 
     alloc_t::free(dx, memory::device_enum::METAL);
     alloc_t::free(dd, memory::device_enum::METAL);

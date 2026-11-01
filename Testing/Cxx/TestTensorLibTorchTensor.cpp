@@ -31,63 +31,69 @@ using namespace libtorch_test;
 // Compare a 2-D tensor element-wise via xs.at(dims_t{i,j}) vs the contiguous
 // C-order layout of th.  Uses the N-D at() overload which multiplies by strides,
 // so it works correctly for non-contiguous views (transpose, slice, etc.).
-template <typename Tensor>
-double max_diff_2d(Tensor const& xs, const torch::Tensor& th)
+template <typename Tensor> double max_diff_2d(Tensor const& xs, const torch::Tensor& th)
 {
-    using T = typename Tensor::value_type;
+    using T                = typename Tensor::value_type;
     using dims_t           = typename vectorization::tensor<T>::dimensions_type;
     auto              th_c = th.cpu().to(TorchDtype<T>::value).contiguous();
     const T*          p    = reinterpret_cast<const T*>(th_c.data_ptr());
     const std::size_t rows = xs.dimension(0), cols = xs.dimension(1);
     double            d = 0.0;
     for (std::size_t i = 0; i < rows; ++i)
+    {
         for (std::size_t j = 0; j < cols; ++j)
+        {
             d = std::max(d, static_cast<double>(std::fabs(xs.at(dims_t{i, j}) - p[i * cols + j])));
+        }
+    }
     return d;
 }
 
 // Compare a 3-D tensor element-wise via xs.at(dims_t{i,j,k}).
-template <typename Tensor>
-double max_diff_3d(Tensor const& xs, const torch::Tensor& th)
+template <typename Tensor> double max_diff_3d(Tensor const& xs, const torch::Tensor& th)
 {
-    using T = typename Tensor::value_type;
+    using T                = typename Tensor::value_type;
     using dims_t           = typename vectorization::tensor<T>::dimensions_type;
     auto              th_c = th.cpu().to(TorchDtype<T>::value).contiguous();
     const T*          p    = reinterpret_cast<const T*>(th_c.data_ptr());
     const std::size_t d0 = xs.dimension(0), d1 = xs.dimension(1), d2 = xs.dimension(2);
     double            d = 0.0;
     for (std::size_t i = 0; i < d0; ++i)
+    {
         for (std::size_t j = 0; j < d1; ++j)
+        {
             for (std::size_t k = 0; k < d2; ++k)
             {
                 T xs_v = xs.at(dims_t{i, j, k});
                 T th_v = p[i * d1 * d2 + j * d2 + k];
                 d      = std::max(d, static_cast<double>(std::fabs(xs_v - th_v)));
             }
+        }
+    }
     return d;
 }
 
 // Compare a 1-D strided view via xs.at(dims_t{i}) vs the contiguous copy of th.
 // Uses the N-D at() overload so stride-based indexing is applied (needed for
 // slices with step > 1).
-template <typename Tensor>
-double max_diff_1d(Tensor const& xs, const torch::Tensor& th)
+template <typename Tensor> double max_diff_1d(Tensor const& xs, const torch::Tensor& th)
 {
-    using T = typename Tensor::value_type;
+    using T       = typename Tensor::value_type;
     using dims_t  = typename vectorization::tensor<T>::dimensions_type;
     auto     th_c = th.cpu().to(TorchDtype<T>::value).contiguous();
     const T* p    = reinterpret_cast<const T*>(th_c.data_ptr());
     double   d    = 0.0;
     for (std::size_t i = 0; i < xs.dimension(0); ++i)
+    {
         d = std::max(d, static_cast<double>(std::fabs(xs.at(dims_t{i}) - p[i])));
+    }
     return d;
 }
 
 // ── test suites ───────────────────────────────────────────────────────────────
 
 // 1. Shape: rank, dimension(), stride() match torch metadata exactly.
-template <typename T>
-void test_shape_vs_libtorch()
+template <typename T> void test_shape_vs_libtorch()
 {
     using dims_t = typename vectorization::tensor<T>::dimensions_type;
 
@@ -133,8 +139,7 @@ void test_shape_vs_libtorch()
 }
 
 // 2. Element access: at() / operator[] values match torch after construction.
-template <typename T>
-void test_element_access_vs_libtorch()
+template <typename T> void test_element_access_vs_libtorch()
 {
     using tensor_t       = vectorization::tensor<T>;
     using dims_t         = typename tensor_t::dimensions_type;
@@ -166,8 +171,7 @@ void test_element_access_vs_libtorch()
 
 // 3. Views: t(), permute(), view(), reshape(), slice() — shape, strides, and
 //    element values must match the corresponding torch view operations.
-template <typename T>
-void test_views_vs_libtorch()
+template <typename T> void test_views_vs_libtorch()
 {
     using tensor_t       = vectorization::tensor<T>;
     using dims_t         = typename tensor_t::dimensions_type;
@@ -277,8 +281,7 @@ void test_views_vs_libtorch()
 }
 
 // 4. Reductions: trace() must match torch::trace().
-template <typename T>
-void test_reductions_vs_libtorch()
+template <typename T> void test_reductions_vs_libtorch()
 {
     using tensor_t       = vectorization::tensor<T>;
     constexpr double tol = std::is_same_v<T, float> ? 1e-5 : 1e-13;
@@ -302,8 +305,7 @@ void test_reductions_vs_libtorch()
 }
 
 // 5. Clone: deep copy produces matching values and is independent of the source.
-template <typename T>
-void test_clone_vs_libtorch()
+template <typename T> void test_clone_vs_libtorch()
 {
     using tensor_t            = vectorization::tensor<T>;
     constexpr double      tol = std::is_same_v<T, float> ? 1e-6 : 1e-14;

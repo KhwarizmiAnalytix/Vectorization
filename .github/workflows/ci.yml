@@ -502,28 +502,55 @@ jobs:
         run: python3 Scripts/setup.py test --build-dir build --build-type Release
 
   # ---------------------------------------------------------------------------
-  # Static analysis: clang-tidy and include-what-you-use, each their own job
-  # so a failure in one doesn't mask the other. Default CPU backend (avx2),
-  # GPU backend none.
+  # Pin clang-tidy to LLVM 19 on Linux AVX2 and macOS NEON + Metal. Compile
+  # the tests as well as the library so header-only templates are analyzed.
+  # CUDA/HIP device code remains covered by the GPU build jobs, not tidy.
   # ---------------------------------------------------------------------------
   static-analysis:
-    name: Static analysis / ${{ matrix.tool }}
-    runs-on: ubuntu-latest
+    name: Static analysis / ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
-      CC: clang
-      CXX: clang++
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - tool: clang-tidy
+          - name: clang-tidy / Linux AVX2
+            tool: clang-tidy
+            os: ubuntu-24.04
+            cc: clang-19
+            cxx: clang++-19
+            cpu_backend: avx2
+            gpu_backend: none
+            testing: "ON"
             cmake_flags: --clangtidy=ON
-            install: clang-tidy
-          - tool: iwyu
+            install: clang-19 clang-tidy-19
+          - name: clang-tidy / macOS NEON + Metal
+            tool: clang-tidy
+            os: macos-latest
+            cc: /usr/bin/clang
+            cxx: /usr/bin/clang++
+            cpu_backend: neon
+            gpu_backend: metal
+            testing: "ON"
+            cmake_flags: --clangtidy=ON
+          - name: iwyu
+            tool: iwyu
+            os: ubuntu-latest
+            cc: clang
+            cxx: clang++
+            cpu_backend: avx2
+            gpu_backend: none
+            testing: "OFF"
             cmake_flags: --iwyu=ON
             install: iwyu
-          - tool: cppcheck
+          - name: cppcheck
+            tool: cppcheck
+            os: ubuntu-latest
+            cc: clang
+            cxx: clang++
             cmake_flags: ""
             install: cppcheck
     steps:
@@ -532,22 +559,43 @@ jobs:
           submodules: recursive
 
       - name: Install Ninja + ${{ matrix.install }}
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ninja-build ${{ matrix.install }}
+
+      - name: Select LLVM 19 tools (Linux)
+        if: runner.os == 'Linux' && matrix.tool == 'clang-tidy'
+        run: echo "/usr/lib/llvm-19/bin" >> "$GITHUB_PATH"
+
+      - name: Install Ninja and LLVM 19 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ninja llvm@19
+          echo "$(brew --prefix llvm@19)/bin" >> "$GITHUB_PATH"
+
+      - name: Check clang-tidy version
+        if: matrix.tool == 'clang-tidy'
+        run: |
+          clang-tidy --version
+          clang-tidy --version | grep -E 'version 19\.'
 
       - name: Configure
         if: matrix.tool != 'cppcheck'
         run: >
           python3 Scripts/setup.py config --compiler=default --source-dir . --build-dir build --generator Ninja
           --build-type=Release
-          --cpu-backend=avx2
-          --gpu-backend=none
-          --testing=OFF
+          --cpu-backend=${{ matrix.cpu_backend }}
+          --gpu-backend=${{ matrix.gpu_backend }}
+          --testing=${{ matrix.testing }}
           --benchmark=OFF
           ${{ matrix.cmake_flags }}
 
       - name: Build (clang-tidy / iwyu run inline during compilation)
         if: matrix.tool != 'cppcheck'
         run: python3 Scripts/setup.py build --build-dir build
+
+      - name: Test analyzed instantiations
+        if: matrix.tool == 'clang-tidy'
+        run: python3 Scripts/setup.py test --build-dir build
 
       - name: Cppcheck (via Scripts/setup.py)
         if: matrix.tool == 'cppcheck'

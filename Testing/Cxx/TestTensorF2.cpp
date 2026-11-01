@@ -25,20 +25,17 @@ namespace vectorization
 namespace tensor_tests
 {
 
-template <typename T>
-struct tensor_abs_tol_binary
+template <typename T> struct tensor_abs_tol_binary
 {
 };
 
-template <>
-struct tensor_abs_tol_binary<float>
+template <> struct tensor_abs_tol_binary<float>
 {
     static constexpr float general = 2e-4f;
     static constexpr float pow_    = 2e-3f;
 };
 
-template <>
-struct tensor_abs_tol_binary<double>
+template <> struct tensor_abs_tol_binary<double>
 {
     static constexpr double general = 5e-13;
     static constexpr double pow_    = 8e-12;
@@ -56,28 +53,28 @@ T expect_tensor_near_elementwise(tensor<T> const& got, std::vector<T> const& ref
     return max_d;
 }
 
-template <typename T>
-void fill_uniform(std::vector<T>& v, std::mt19937& gen, T lo, T hi)
+template <typename T> void fill_uniform(std::vector<T>& v, std::mt19937& gen, T lo, T hi)
 {
     std::uniform_real_distribution<T> dist(lo, hi);
     for (auto& x : v)
+    {
         x = dist(gen);
+    }
 }
 
-template <typename value_t>
-double scalar_as_double(value_t x)
+template <typename value_t> double scalar_as_double(value_t x)
 {
     return static_cast<double>(x);
 }
 
-template <typename T>
-void test_tensor_binary_vs_std()
+template <typename T> void test_tensor_binary_vs_std()
 {
     using tensor_t      = tensor<T>;
     std::size_t const n = (2U << 8U) + 5U;
-    std::mt19937      gen(12011u);
-    T const           tol_gen = tensor_abs_tol_binary<T>::general;
-    T const           tol_pow = tensor_abs_tol_binary<T>::pow_;
+    // NOLINTNEXTLINE(bugprone-random-generator-seed): Reproduce numerical test inputs.
+    std::mt19937 gen(12011u);
+    T const      tol_gen = tensor_abs_tol_binary<T>::general;
+    T const      tol_pow = tensor_abs_tol_binary<T>::pow_;
 
     std::vector<T> ax(n);
     std::vector<T> ay(n);
@@ -92,7 +89,9 @@ void test_tensor_binary_vs_std()
         out = a + b;
         std::vector<T> ref(n);
         for (std::size_t i = 0; i < n; ++i)
+        {
             ref[i] = ax[i] + ay[i];
+        }
         EXPECT_LE(expect_tensor_near_elementwise(out, ref), tol_gen);
     }
     {
@@ -100,7 +99,9 @@ void test_tensor_binary_vs_std()
         out = a * b;
         std::vector<T> ref(n);
         for (std::size_t i = 0; i < n; ++i)
+        {
             ref[i] = ax[i] * ay[i];
+        }
         EXPECT_LE(expect_tensor_near_elementwise(out, ref), tol_gen);
     }
     {
@@ -108,7 +109,9 @@ void test_tensor_binary_vs_std()
         out = min(a, b);
         std::vector<T> ref(n);
         for (std::size_t i = 0; i < n; ++i)
+        {
             ref[i] = std::min(ax[i], ay[i]);
+        }
         EXPECT_LE(
             expect_tensor_near_elementwise(out, ref), std::numeric_limits<T>::epsilon() * T(64));
     }
@@ -117,7 +120,9 @@ void test_tensor_binary_vs_std()
         out = max(a, b);
         std::vector<T> ref(n);
         for (std::size_t i = 0; i < n; ++i)
+        {
             ref[i] = std::max(ax[i], ay[i]);
+        }
         EXPECT_LE(
             expect_tensor_near_elementwise(out, ref), std::numeric_limits<T>::epsilon() * T(64));
     }

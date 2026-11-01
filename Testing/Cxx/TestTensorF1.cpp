@@ -28,19 +28,16 @@ namespace vectorization
 namespace tensor_tests
 {
 
-template <typename T>
-struct tensor_abs_tol_unary
+template <typename T> struct tensor_abs_tol_unary
 {
 };
 
-template <>
-struct tensor_abs_tol_unary<float>
+template <> struct tensor_abs_tol_unary<float>
 {
     static constexpr float transcendental = 2e-3f;
 };
 
-template <>
-struct tensor_abs_tol_unary<double>
+template <> struct tensor_abs_tol_unary<double>
 {
     static constexpr double transcendental = 8e-12;
 };
@@ -58,21 +55,22 @@ void expect_tensor_near_elementwise(tensor<T> const& got, std::vector<T> const& 
     EXPECT_LE(max_d, abs_tol);
 }
 
-template <typename T>
-void fill_uniform(std::vector<T>& v, std::mt19937& gen, T lo, T hi)
+template <typename T> void fill_uniform(std::vector<T>& v, std::mt19937& gen, T lo, T hi)
 {
     std::uniform_real_distribution<T> dist(lo, hi);
     for (auto& x : v)
+    {
         x = dist(gen);
+    }
 }
 
-template <typename T>
-void test_tensor_unary_vs_std()
+template <typename T> void test_tensor_unary_vs_std()
 {
     using tensor_t      = tensor<T>;
     std::size_t const n = (2U << 8U) + 3U;
-    std::mt19937      gen(9001u);
-    T const           tol = tensor_abs_tol_unary<T>::transcendental;
+    // NOLINTNEXTLINE(bugprone-random-generator-seed): Reproduce numerical test inputs.
+    std::mt19937 gen(9001u);
+    T const      tol = tensor_abs_tol_unary<T>::transcendental;
 
     std::vector<T> ax(n);
     fill_uniform(ax, gen, static_cast<T>(-1), static_cast<T>(1));
@@ -87,7 +85,9 @@ void test_tensor_unary_vs_std()
         out = ::exp(ta);
         std::vector<T> ref(n);
         for (std::size_t i = 0; i < n; ++i)
+        {
             ref[i] = std::exp(ax[i]);
+        }
         expect_tensor_near_elementwise(out, ref, tol);
     }
     {
@@ -95,7 +95,9 @@ void test_tensor_unary_vs_std()
         out = ::sin(ta);
         std::vector<T> ref(n);
         for (std::size_t i = 0; i < n; ++i)
+        {
             ref[i] = std::sin(ax[i]);
+        }
         expect_tensor_near_elementwise(out, ref, tol);
     }
     {
@@ -103,7 +105,9 @@ void test_tensor_unary_vs_std()
         out = ::sqrt(tsq);
         std::vector<T> ref(n);
         for (std::size_t i = 0; i < n; ++i)
+        {
             ref[i] = std::sqrt(asqrt[i]);
+        }
         expect_tensor_near_elementwise(out, ref, tol);
     }
     {
@@ -111,7 +115,9 @@ void test_tensor_unary_vs_std()
         out = ::fabs(ta);
         std::vector<T> ref(n);
         for (std::size_t i = 0; i < n; ++i)
+        {
             ref[i] = std::fabs(ax[i]);
+        }
         expect_tensor_near_elementwise(out, ref, std::numeric_limits<T>::epsilon() * T(64));
     }
 
@@ -124,19 +130,21 @@ void test_tensor_unary_vs_std()
     out2d = ::cos(t2d);
     std::vector<T> ref2(r * c);
     for (std::size_t i = 0; i < r * c; ++i)
+    {
         ref2[i] = std::cos(a2[i]);
+    }
     expect_tensor_near_elementwise(out2d, ref2, tol);
 }
 
 #if VECTORIZATION_HAS_MKL
 
-template <typename T>
-void test_tensor_unary_vs_mkl_vml()
+template <typename T> void test_tensor_unary_vs_mkl_vml()
 {
     using tensor_t      = tensor<T>;
     std::size_t const n = (2U << 8U) + 3U;
-    std::mt19937      gen(9001u);
-    T const           tol = tensor_abs_tol_unary<T>::transcendental;
+    // NOLINTNEXTLINE(bugprone-random-generator-seed): Reproduce numerical test inputs.
+    std::mt19937 gen(9001u);
+    T const      tol = tensor_abs_tol_unary<T>::transcendental;
 
     std::vector<T> ax(n);
     fill_uniform(ax, gen, static_cast<T>(-1), static_cast<T>(1));

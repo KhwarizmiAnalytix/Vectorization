@@ -120,6 +120,10 @@ endif()
 
 add_executable(VectorizationCxxTests ${test_sources})
 
+if(VECTORIZATION_ENABLE_CLANGTIDY)
+  xsigma_target_clang_tidy(VectorizationCxxTests ${VECTORIZATION_ENABLE_FIX})
+endif()
+
 target_compile_definitions(
   VectorizationCxxTests
   PRIVATE VECTORIZATION_HAS_GTEST=1 VECTORIZATION_HAS_MKL=$<BOOL:${VECTORIZATION_ENABLE_MKL}>
@@ -673,6 +677,10 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
     endif()
 
     add_executable(${target_name} "${_bench_source}")
+
+    if(VECTORIZATION_ENABLE_CLANGTIDY)
+      xsigma_target_clang_tidy(${target_name} ${VECTORIZATION_ENABLE_FIX})
+    endif()
 
     if(_bench_is_gpu AND _bench_gpu_lang STREQUAL "CUDA")
       set_target_properties(

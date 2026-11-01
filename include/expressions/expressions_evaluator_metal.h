@@ -693,7 +693,9 @@ reduce_accumulator_t<float, Op> metal_reduce_extended(E const& expr, std::size_t
 {
     using acc_t = reduce_accumulator_t<float, Op>;
     if (n == 0)
+    {
         return reduce_identity<acc_t, Op>();
+    }
     // dispatch_fused has a uint32 grid. Its maximum input length also bounds
     // the count, so uint partials are exact on Metal and widen on return.
     VECTORIZATION_CHECK(n <= std::numeric_limits<std::uint32_t>::max(),

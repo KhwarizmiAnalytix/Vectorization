@@ -31,7 +31,7 @@ namespace vectorization
 // Horizontal reduction over an expression (or a device buffer of partials).
 // Matches CPU accumulate / hmin / hmax identities: empty sum is 0, empty min
 // is max(), empty max is -max(). Preserve these legacy extrema identities.
-enum class reduce_op : int
+enum class reduce_op : std::uint8_t
 {
     sum = 0,
     min = 1,

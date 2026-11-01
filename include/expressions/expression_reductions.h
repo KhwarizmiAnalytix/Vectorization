@@ -19,7 +19,7 @@
 
 #pragma once
 
-#ifndef __VECTORIZATION_EXPRESSIONS_INCLUDES_INSIDE__
+#ifndef VECTORIZATION_EXPRESSIONS_INCLUDES_INSIDE
 Do_not_include_expression_reductions_directly_use_expressions_h;
 #endif
 

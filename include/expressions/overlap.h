@@ -218,7 +218,9 @@ void check_assignment_overlap(E const& expr, strided_ref<T, N> const& dst, bool 
 {
 #ifdef NDEBUG
     if (noalias)
+    {
         return;
+    }
 #endif
     using raw = remove_cvref_t<E>;
     if constexpr (is_pure_expression<raw>::value)

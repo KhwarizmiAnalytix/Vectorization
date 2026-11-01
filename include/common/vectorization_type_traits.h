@@ -193,7 +193,7 @@ template <typename T, int MaxRank> struct strided_ref;
 
 template <typename T> struct retained_ref;
 template <typename E> struct raw_lowered;
-template <typename E> typename raw_lowered<remove_cvref_t<E>>::type lower_raw(E const& expr);
+template <typename E> auto lower_raw(E const& expr);
 
 template <typename T> struct row_ref;
 

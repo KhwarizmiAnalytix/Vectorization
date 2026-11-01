@@ -356,7 +356,7 @@ struct raw_lowered<trinary_expression<L, M, R, Ev>>
         Ev>;
 };
 
-template <typename E> raw_lowered_t<E> lower_raw(E const& expr)
+template <typename E> auto lower_raw(E const& expr)
 {
     using raw = remove_cvref_t<E>;
     if constexpr (is_pure_expression<raw>::value)

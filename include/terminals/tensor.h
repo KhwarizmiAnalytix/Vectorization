@@ -139,7 +139,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void accumulate_expression_placement(
 }
 
 template <typename E>
-VECTORIZATION_HOST_FUNCTION_ATTRIBUTE expression_placement infer_expression_placement(E const& expr)
+VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto infer_expression_placement(E const& expr)
 {
     expression_placement out;
     bool                 seen = false;
@@ -699,18 +699,18 @@ public:
         share_from(rhs);
     }
 
-    tensor_view<element_t> as_view()
+    auto as_view()
     {
         return tensor_view<element_t>(view_, sizes_and_strides_, storage_);
     }
-    tensor_view<const_view_element> as_view() const
+    auto as_view() const
     {
         return tensor_view<const_view_element>(*this);
     }
 
     // Returns a new tensor that is a deep, contiguous copy of *this on the
     // same device/index/stream. Non-contiguous sources are gathered in C-order.
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor<value_t> clone() const
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto clone() const
     {
         const size_t    total = size();
         tensor<value_t> result(total, device(), device_index(), stream());
@@ -743,7 +743,7 @@ public:
     }
 
     // Return a retaining view, materializing packed storage when needed.
-    tensor_view<const_view_element> contiguous() const
+    auto contiguous() const
     {
         if (is_contiguous())
         {
@@ -753,7 +753,7 @@ public:
         return tensor_view<const_view_element>(packed);
     }
 
-    template <bool B = IsView, std::enable_if_t<!B, int> = 0> tensor_view<element_t> contiguous()
+    template <bool B = IsView, std::enable_if_t<!B, int> = 0> auto contiguous()
     {
         return as_view().contiguous();
     }
@@ -808,7 +808,7 @@ public:
     }
 
     template <typename U = element_t, std::enable_if_t<!std::is_const_v<U>, int> = 0>
-    noalias_proxy<tensor_impl> noalias()
+    auto noalias()
     {
         return noalias_proxy<tensor_impl>(*this);
     }
@@ -869,7 +869,7 @@ public:
 
     element_t*                                   data() noexcept { return view_.data(); }
     const_view_element*                          data() const noexcept { return view_.data(); }
-    view_t                                       memory_view() noexcept { return view_; }
+    auto                                         memory_view() noexcept { return view_; }
     tensor_data_view<const_view_element>         memory_view() const noexcept { return view_; }
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE size_t size() const noexcept { return numel_; }
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool   empty() const noexcept { return numel_ == 0; }
@@ -972,7 +972,7 @@ public:
 
     // Owned contiguous CPU tensor with the same logical values (C-order).
     // Always returns independent storage, including for CPU inputs.
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor<value_t> to_cpu() const
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto to_cpu() const
     {
         tensor<value_t> result(size(), device_enum::CPU);
         copy_logical_to_host(result.data());
@@ -982,7 +982,7 @@ public:
 
     // Download all elements to a host std::vector.  Blocks until complete.
     // Allocates the vector; prefer copy_to_host(ptr) when the buffer exists.
-    std::vector<value_t> to_host_vector() const
+    auto to_host_vector() const
     {
         const size_t         total = size();
         std::vector<value_t> h(total);
@@ -1027,19 +1027,19 @@ public:
         return data() + size();
     }
 
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE reverse_iterator rbegin()
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto rbegin()
     {
         return reverse_iterator(end());
     }
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE reverse_iterator rend()
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto rend()
     {
         return reverse_iterator(begin());
     }
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE const_reverse_iterator crbegin() const
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto crbegin() const
     {
         return const_reverse_iterator(end());
     }
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE const_reverse_iterator crend() const
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto crend() const
     {
         return const_reverse_iterator(begin());
     }
@@ -1053,7 +1053,7 @@ public:
         return sizes_and_strides_.size();
     }
 
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE span<const int64_t> dimensions() const noexcept
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto dimensions() const noexcept
     {
         return sizes_and_strides_.sizes_arrayref();
     }
@@ -1072,7 +1072,7 @@ public:
     {
         return sizes_and_strides_.stride_at_unchecked(dim);
     }
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE span<const int64_t> strides() const noexcept
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto strides() const noexcept
     {
         return sizes_and_strides_.strides_arrayref();
     }
@@ -1092,7 +1092,7 @@ public:
 
     // Build a strided_ref describing the current view's shape and strides.
     // Used by store_operand() to capture the tensor as an expression leaf.
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE strided_ref<element_t> to_strided_ref() const
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto to_strided_ref() const
     {
         VECTORIZATION_CHECK_IF_NOT_ON_CUDA(rank() <= static_cast<size_t>(kMaxRank),
             "tensors of rank {} cannot be expression operands (limit {})",
@@ -1163,68 +1163,68 @@ public:
     }
 
     // -----------------------------------------------------------------------
-    template <bool B = IsView, std::enable_if_t<!B, int> = 0> tensor_view<element_t> t()
+    template <bool B = IsView, std::enable_if_t<!B, int> = 0> auto t()
     {
         return as_view().t();
     }
 
     template <bool B = IsView, std::enable_if_t<!B, int> = 0>
-    tensor_view<element_t> permute(const dimensions_type& order)
+    auto permute(const dimensions_type& order)
     {
         return as_view().permute(order);
     }
 
     template <bool B = IsView, std::enable_if_t<!B, int> = 0>
-    tensor_view<element_t> view(const dimensions_type& dims)
+    auto view(const dimensions_type& dims)
     {
         return as_view().view(dims);
     }
 
     template <bool B = IsView, std::enable_if_t<!B, int> = 0>
-    tensor_view<element_t> reshape(const dimensions_type& dims)
+    auto reshape(const dimensions_type& dims)
     {
         return as_view().reshape(dims);
     }
 
-    template <bool B = IsView, std::enable_if_t<!B, int> = 0> tensor_view<element_t> flatten()
+    template <bool B = IsView, std::enable_if_t<!B, int> = 0> auto flatten()
     {
         return as_view().flatten();
     }
 
     template <bool B = IsView, std::enable_if_t<!B, int> = 0>
-    tensor_view<element_t> expand(const dimensions_type& dims)
+    auto expand(const dimensions_type& dims)
     {
         return as_view().expand(dims);
     }
 
     template <bool B = IsView, std::enable_if_t<!B, int> = 0>
-    tensor_view<element_t> broadcast_to(const dimensions_type& dims)
+    auto broadcast_to(const dimensions_type& dims)
     {
         return as_view().broadcast_to(dims);
     }
 
-    template <bool B = IsView, std::enable_if_t<!B, int> = 0> tensor_view<element_t> squeeze()
+    template <bool B = IsView, std::enable_if_t<!B, int> = 0> auto squeeze()
     {
         return as_view().squeeze();
     }
 
     template <bool B = IsView, std::enable_if_t<!B, int> = 0>
-    tensor_view<element_t> squeeze(size_t dim)
+    auto squeeze(size_t dim)
     {
         return as_view().squeeze(dim);
     }
 
     template <bool B = IsView, std::enable_if_t<!B, int> = 0>
-    tensor_view<element_t> unsqueeze(size_t dim)
+    auto unsqueeze(size_t dim)
     {
         return as_view().unsqueeze(dim);
     }
 
     template <bool B = IsView, std::enable_if_t<!B, int> = 0>
-    tensor_view<element_t> slice(size_t dim,
-        std::optional<int64_t>          start = std::nullopt,
-        std::optional<int64_t>          stop  = std::nullopt,
-        int64_t                         step  = 1)
+    auto slice(size_t dim,
+        std::optional<int64_t> start = std::nullopt,
+        std::optional<int64_t> stop  = std::nullopt,
+        int64_t                step  = 1)
     {
         return as_view().slice(dim, start, stop, step);
     }
@@ -1234,7 +1234,7 @@ public:
     // Results retain this allocation. Const owners produce read-only views.
     // -----------------------------------------------------------------------
 
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor_view<const_view_element> t() const
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto t() const
     {
         VECTORIZATION_CHECK_IF_NOT_ON_CUDA(rank() == 2, "t() requires a rank-2 tensor");
         sizes_and_strides sas = sizes_and_strides_;
@@ -1243,7 +1243,7 @@ public:
         return tensor_view<const_view_element>(view_, std::move(sas), storage_);
     }
 
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor_view<const_view_element> permute(
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto permute(
         const dimensions_type& order) const
     {
         const size_t n = rank();
@@ -1268,7 +1268,7 @@ public:
     // Metadata-only reshape. Strides follow PyTorch's computeStride rule, so a
     // non-contiguous tensor_view<const_view_element> can be viewed whenever the new dimensions
     // split or merge only dimensions that are adjacent in memory. Never copies.
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor_view<const_view_element> view(
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto view(
         const dimensions_type& new_dims) const
     {
         VECTORIZATION_CHECK(compute_total(new_dims) == size(),
@@ -1284,7 +1284,7 @@ public:
     }
 
     // view() when the strides allow it, otherwise a packed copy with the new shape.
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor_view<const_view_element> reshape(
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto reshape(
         const dimensions_type& new_dims) const
     {
         VECTORIZATION_CHECK(compute_total(new_dims) == size(),
@@ -1304,7 +1304,7 @@ public:
     }
 
     // 1-D reshape of all elements.
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor_view<const_view_element> flatten() const
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto flatten() const
     {
         return reshape(dimensions_type{size()});
     }
@@ -1312,7 +1312,7 @@ public:
     // Broadcast view: dimensions are matched from the right; a size-1 dimension
     // (or a missing leading one) is repeated with stride 0. Expanded tensors are
     // read-only operands -- assigning into one is an error (design §6).
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor_view<const_view_element> expand(
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto expand(
         const dimensions_type& new_dims) const
     {
         const size_t n = rank();
@@ -1346,14 +1346,14 @@ public:
         return tensor_view<const_view_element>(view_, std::move(sas), storage_);
     }
 
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor_view<const_view_element> broadcast_to(
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto broadcast_to(
         const dimensions_type& new_dims) const
     {
         return expand(new_dims);
     }
 
     // Drops every size-1 dimension.
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor_view<const_view_element> squeeze() const
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto squeeze() const
     {
         sizes_and_strides sas;
         size_t            r = 0;
@@ -1375,7 +1375,7 @@ public:
     }
 
     // Drops dimension `dim` when its size is 1; otherwise returns an unchanged view.
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor_view<const_view_element> squeeze(size_t dim) const
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto squeeze(size_t dim) const
     {
         VECTORIZATION_CHECK(dim < rank(), "squeeze: dim {} out of range for rank {}", dim, rank());
         if (sizes_and_strides_.size_at_unchecked(dim) != 1)
@@ -1397,7 +1397,7 @@ public:
     }
 
     // Inserts a size-1 dimension before `dim` (dim == rank() appends one).
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor_view<const_view_element> unsqueeze(
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto unsqueeze(
         size_t dim) const
     {
         const size_t n = rank();
@@ -1427,7 +1427,7 @@ public:
     // start or stop means the beginning or end; negative values count from the
     // end; both are then clamped to [0, size]. `step` must be >= 1 -- strides
     // are never negative; use flip() for reversal.
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor_view<const_view_element> slice(size_t dim,
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto slice(size_t dim,
         std::optional<int64_t> start = std::nullopt,
         std::optional<int64_t> stop  = std::nullopt,
         int64_t                step  = 1) const
@@ -1724,7 +1724,7 @@ public:
 
 private:
     template <typename U> friend VECTORIZATION_FUNCTION_ATTRIBUTE stored_operand_t<U> store_operand(U&&);
-    memory::retained_ptr<value_t> const& retained_storage() const noexcept { return storage_; }
+    auto const& retained_storage() const noexcept { return storage_; }
     template <typename U, bool V> void   share_from(tensor_impl<U, V> const& rhs)
     {
         sizes_and_strides_ = rhs.sizes_and_strides_;

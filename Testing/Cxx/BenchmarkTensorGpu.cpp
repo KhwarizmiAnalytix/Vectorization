@@ -21,7 +21,7 @@
  *                            result every iteration: the realistic cost when
  *                            the tensors do not already live on the device.
  *   GPU_TensorAllocFree<T>  — isolates the cost of constructing/destroying a
- *                            device tensor (XSigma metal/cuda caching
+ *                            device tensor (Vectorization metal/cuda caching
  *                            allocator path via Memory/allocator.h).
  *   LibTorch_MPS_TensorAllocFree<T> — same alloc/free loop on torch::kMPS
  *                            (Metal builds with LibTorch only), for a direct
@@ -728,7 +728,7 @@ static void LibTorch_MPS_TensorAllocFree(benchmark::State& state)
         torch::TensorOptions().dtype(torch::kFloat32).device(torch::kMPS).requires_grad(false);
 
     // Warm the MPS caching allocator once so the timed loop measures reuse,
-    // matching XSigma's warm caching-allocator path after the first iteration.
+    // matching Vectorization's warm caching-allocator path after the first iteration.
     {
         auto warm = torch::empty({n}, opts);
         benchmark::DoNotOptimize(warm.data_ptr());

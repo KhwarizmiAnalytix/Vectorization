@@ -1,15 +1,15 @@
 /*
- * XSigma: High-Performance Quantitative Library
+ * Vectorization: High-Performance Quantitative Library
  *
  * SPDX-License-Identifier: GPL-3.0-or-later OR Commercial
  *
- * Tensor throughput benchmarks: XSigma tensor<T> vs LibTorch torch::Tensor.
+ * Tensor throughput benchmarks: Vectorization tensor<T> vs LibTorch torch::Tensor.
  *
  * Measures elements/sec for common element-wise ops on pre-allocated outputs
  * so that allocation overhead is excluded from the hot loop.
  *
  * Each benchmark pair is named:
- *   XSigma_<Op><Type>   — our SIMD expression-template path
+ *   Vectorization_<Op><Type>   — our SIMD expression-template path
  *   LibTorch_<Op><Type> — equivalent LibTorch _out kernel
  *
  * Guard: compiled only when VECTORIZATION_HAS_LIBTORCH=1 (CMake finds LibTorch under
@@ -20,10 +20,16 @@
 
 #include <benchmark/benchmark.h>
 
+#include <cmath>
 #include <cstddef>
 #include <random>
+#include <type_traits>
 
 #include "terminals/tensor.h"
+
+#if SCALARS_HAS_ACCELERATE
+#include <Accelerate/Accelerate.h>
+#endif
 
 #if VECTORIZATION_HAS_LIBTORCH
 
@@ -53,31 +59,29 @@ namespace
 // common SIMD width — exercises both the vectorised and scalar tail paths.
 constexpr std::size_t kN = (2u << 16) + 3;
 
-template <typename T>
-static void fill_uniform(T* p, std::size_t n, T lo, T hi, unsigned seed)
+template <typename T> static void fill_uniform(T* p, std::size_t n, T lo, T hi, unsigned seed)
 {
     std::mt19937                      gen(seed);
     std::uniform_real_distribution<T> dist(lo, hi);
     for (std::size_t i = 0; i < n; ++i)
+    {
         p[i] = dist(gen);
+    }
 }
 
 #if VECTORIZATION_HAS_LIBTORCH
 
-template <typename T>
-struct TorchDtype
+template <typename T> struct TorchDtype
 {
     static constexpr auto value = torch::kFloat32;
 };
-template <>
-struct TorchDtype<double>
+template <> struct TorchDtype<double>
 {
     static constexpr auto value = torch::kFloat64;
 };
 
 // Create an owned LibTorch CPU tensor from a range.
-template <typename T>
-static torch::Tensor make_th(T lo, T hi, unsigned seed = 42u)
+template <typename T> static torch::Tensor make_th(T lo, T hi, unsigned seed = 42u)
 {
     std::vector<T> buf(kN);
     fill_uniform(buf.data(), kN, lo, hi, seed);
@@ -91,99 +95,95 @@ static torch::Tensor make_th(T lo, T hi, unsigned seed = 42u)
 
 // ── benchmark macros ──────────────────────────────────────────────────────────
 //
-// BENCH_UNARY(NAME, XS_OP, TH_OP, LO, HI)
-//   XS_OP  — called as XS_OP(a)        e.g. ::exp
+// BENCH_UNARY(NAME, VECTOR_OP, TH_OP, LO, HI)
+//   VECTOR_OP  — called as VECTOR_OP(a)        e.g. ::exp
 //   TH_OP  — called as torch::TH_OP_out(out, a)  e.g. exp
 //
-// BENCH_BINARY(NAME, XS_EXPR, TH_OP, LO, HI)
-//   XS_EXPR — expression using a, b    e.g. a + b
+// BENCH_BINARY(NAME, VECTOR_EXPR, TH_OP, LO, HI)
+//   VECTOR_EXPR — expression using a, b    e.g. a + b
 //   TH_OP   — called as torch::TH_OP_out(out, a, b)  e.g. add
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define BENCH_UNARY_XS(NAME, XS_OP, LO, HI)                                      \
-    template <typename T>                                                        \
-    static void XSigma_##NAME(benchmark::State& state)                           \
-    {                                                                            \
-        vectorization::tensor<T> a(kN), out(kN);                                 \
-        fill_uniform(a.data(), kN, static_cast<T>(LO), static_cast<T>(HI), 42u); \
-        for (auto _ : state)                                                     \
-            benchmark::DoNotOptimize(out = XS_OP(a));                            \
-        state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(kN));  \
-    }                                                                            \
-    BENCHMARK_TEMPLATE(XSigma_##NAME, float)                                     \
-        ->MeasureProcessCPUTime()                                                \
-        ->Unit(benchmark::kMicrosecond);                                         \
-    BENCHMARK_TEMPLATE(XSigma_##NAME, double)                                    \
-        ->MeasureProcessCPUTime()                                                \
+#define BENCH_UNARY_VECTOR(NAME, VECTOR_OP, LO, HI)                                                \
+    template <typename T> static void Vectorization_##NAME(benchmark::State& state)                \
+    {                                                                                              \
+        vectorization::tensor<T> a(kN), out(kN);                                                   \
+        fill_uniform(a.data(), kN, static_cast<T>(LO), static_cast<T>(HI), 42u);                   \
+        for (auto _ : state)                                                                       \
+            benchmark::DoNotOptimize(out = VECTOR_OP(a));                                          \
+        state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(kN));                    \
+    }                                                                                              \
+    BENCHMARK_TEMPLATE(Vectorization_##NAME, float)                                                \
+        ->MeasureProcessCPUTime()                                                                  \
+        ->Unit(benchmark::kMicrosecond);                                                           \
+    BENCHMARK_TEMPLATE(Vectorization_##NAME, double)                                               \
+        ->MeasureProcessCPUTime()                                                                  \
         ->Unit(benchmark::kMicrosecond);
 
 #if VECTORIZATION_HAS_LIBTORCH
-#define BENCH_UNARY_TORCH(NAME, TH_OP, LO, HI)                                  \
-    template <typename T>                                                       \
-    static void LibTorch_##NAME(benchmark::State& state)                        \
-    {                                                                           \
-        auto ta    = make_th<T>(static_cast<T>(LO), static_cast<T>(HI));        \
-        auto out_t = torch::empty_like(ta);                                     \
-        for (auto _ : state)                                                    \
-            benchmark::DoNotOptimize(torch::TH_OP##_out(out_t, ta));            \
-        state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(kN)); \
-    }                                                                           \
-    BENCHMARK_TEMPLATE(LibTorch_##NAME, float)                                  \
-        ->MeasureProcessCPUTime()                                               \
-        ->Unit(benchmark::kMicrosecond);                                        \
-    BENCHMARK_TEMPLATE(LibTorch_##NAME, double)                                 \
-        ->MeasureProcessCPUTime()                                               \
+#define BENCH_UNARY_TORCH(NAME, TH_OP, LO, HI)                                                     \
+    template <typename T> static void LibTorch_##NAME(benchmark::State& state)                     \
+    {                                                                                              \
+        auto ta    = make_th<T>(static_cast<T>(LO), static_cast<T>(HI));                           \
+        auto out_t = torch::empty_like(ta);                                                        \
+        for (auto _ : state)                                                                       \
+            benchmark::DoNotOptimize(torch::TH_OP##_out(out_t, ta));                               \
+        state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(kN));                    \
+    }                                                                                              \
+    BENCHMARK_TEMPLATE(LibTorch_##NAME, float)                                                     \
+        ->MeasureProcessCPUTime()                                                                  \
+        ->Unit(benchmark::kMicrosecond);                                                           \
+    BENCHMARK_TEMPLATE(LibTorch_##NAME, double)                                                    \
+        ->MeasureProcessCPUTime()                                                                  \
         ->Unit(benchmark::kMicrosecond);
 #else
 #define BENCH_UNARY_TORCH(NAME, TH_OP, LO, HI)
 #endif
 
-#define BENCH_UNARY(NAME, XS_OP, TH_OP, LO, HI) \
-    BENCH_UNARY_XS(NAME, XS_OP, LO, HI)         \
+#define BENCH_UNARY(NAME, VECTOR_OP, TH_OP, LO, HI)                                                \
+    BENCH_UNARY_VECTOR(NAME, VECTOR_OP, LO, HI)                                                    \
     BENCH_UNARY_TORCH(NAME, TH_OP, LO, HI)
 
-#define BENCH_BINARY_XS(NAME, XS_EXPR, LO, HI)                                  \
-    template <typename T>                                                       \
-    static void XSigma_##NAME(benchmark::State& state)                          \
-    {                                                                           \
-        vectorization::tensor<T> a(kN), b(kN), out(kN);                         \
-        fill_uniform(a.data(), kN, static_cast<T>(LO), static_cast<T>(HI), 1u); \
-        fill_uniform(b.data(), kN, static_cast<T>(LO), static_cast<T>(HI), 2u); \
-        for (auto _ : state)                                                    \
-            benchmark::DoNotOptimize(out = (XS_EXPR));                          \
-        state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(kN)); \
-    }                                                                           \
-    BENCHMARK_TEMPLATE(XSigma_##NAME, float)                                    \
-        ->MeasureProcessCPUTime()                                               \
-        ->Unit(benchmark::kMicrosecond);                                        \
-    BENCHMARK_TEMPLATE(XSigma_##NAME, double)                                   \
-        ->MeasureProcessCPUTime()                                               \
+#define BENCH_BINARY_VECTOR(NAME, VECTOR_EXPR, LO, HI)                                             \
+    template <typename T> static void Vectorization_##NAME(benchmark::State& state)                \
+    {                                                                                              \
+        vectorization::tensor<T> a(kN), b(kN), out(kN);                                            \
+        fill_uniform(a.data(), kN, static_cast<T>(LO), static_cast<T>(HI), 1u);                    \
+        fill_uniform(b.data(), kN, static_cast<T>(LO), static_cast<T>(HI), 2u);                    \
+        for (auto _ : state)                                                                       \
+            benchmark::DoNotOptimize(out = (VECTOR_EXPR));                                         \
+        state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(kN));                    \
+    }                                                                                              \
+    BENCHMARK_TEMPLATE(Vectorization_##NAME, float)                                                \
+        ->MeasureProcessCPUTime()                                                                  \
+        ->Unit(benchmark::kMicrosecond);                                                           \
+    BENCHMARK_TEMPLATE(Vectorization_##NAME, double)                                               \
+        ->MeasureProcessCPUTime()                                                                  \
         ->Unit(benchmark::kMicrosecond);
 
 #if VECTORIZATION_HAS_LIBTORCH
-#define BENCH_BINARY_TORCH(NAME, TH_OP, LO, HI)                                 \
-    template <typename T>                                                       \
-    static void LibTorch_##NAME(benchmark::State& state)                        \
-    {                                                                           \
-        auto ta    = make_th<T>(static_cast<T>(LO), static_cast<T>(HI), 1u);    \
-        auto tb    = make_th<T>(static_cast<T>(LO), static_cast<T>(HI), 2u);    \
-        auto out_t = torch::empty_like(ta);                                     \
-        for (auto _ : state)                                                    \
-            benchmark::DoNotOptimize(torch::TH_OP##_out(out_t, ta, tb));        \
-        state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(kN)); \
-    }                                                                           \
-    BENCHMARK_TEMPLATE(LibTorch_##NAME, float)                                  \
-        ->MeasureProcessCPUTime()                                               \
-        ->Unit(benchmark::kMicrosecond);                                        \
-    BENCHMARK_TEMPLATE(LibTorch_##NAME, double)                                 \
-        ->MeasureProcessCPUTime()                                               \
+#define BENCH_BINARY_TORCH(NAME, TH_OP, LO, HI)                                                    \
+    template <typename T> static void LibTorch_##NAME(benchmark::State& state)                     \
+    {                                                                                              \
+        auto ta    = make_th<T>(static_cast<T>(LO), static_cast<T>(HI), 1u);                       \
+        auto tb    = make_th<T>(static_cast<T>(LO), static_cast<T>(HI), 2u);                       \
+        auto out_t = torch::empty_like(ta);                                                        \
+        for (auto _ : state)                                                                       \
+            benchmark::DoNotOptimize(torch::TH_OP##_out(out_t, ta, tb));                           \
+        state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(kN));                    \
+    }                                                                                              \
+    BENCHMARK_TEMPLATE(LibTorch_##NAME, float)                                                     \
+        ->MeasureProcessCPUTime()                                                                  \
+        ->Unit(benchmark::kMicrosecond);                                                           \
+    BENCHMARK_TEMPLATE(LibTorch_##NAME, double)                                                    \
+        ->MeasureProcessCPUTime()                                                                  \
         ->Unit(benchmark::kMicrosecond);
 #else
 #define BENCH_BINARY_TORCH(NAME, TH_OP, LO, HI)
 #endif
 
-#define BENCH_BINARY(NAME, XS_EXPR, TH_OP, LO, HI) \
-    BENCH_BINARY_XS(NAME, XS_EXPR, LO, HI)         \
+#define BENCH_BINARY(NAME, VECTOR_EXPR, TH_OP, LO, HI)                                             \
+    BENCH_BINARY_VECTOR(NAME, VECTOR_EXPR, LO, HI)                                                 \
     BENCH_BINARY_TORCH(NAME, TH_OP, LO, HI)
 
 // ── binary ops ────────────────────────────────────────────────────────────────
@@ -201,35 +201,102 @@ BENCH_UNARY(Sin, ::sin, sin, -4, 4)
 BENCH_UNARY(Cos, ::cos, cos, -4, 4)
 BENCH_UNARY(Tanh, ::tanh, tanh, -4, 4)
 
+// Log diagnostics: separate expression evaluation from the SIMD math provider,
+// then compare per-register vForce calls with its intended whole-array API.
+// These are reference measurements, not alternate tensor execution paths.
+template <typename T> static void Vectorization_LogSimd(benchmark::State& state)
+{
+    vectorization::tensor<T> a(kN), out(kN);
+    fill_uniform(a.data(), kN, T(0.1), T(4), 42u);
+    constexpr std::size_t width = ::simd<T>::size;
+    for (auto _ : state)
+    {
+        std::size_t i = 0;
+        for (; i + width <= kN; i += width)
+        {
+            const auto x = ::simd<T>::loadu(a.data() + i);
+            ::simd<T>::storeu(::simd<T>::log(x), out.data() + i);
+        }
+        for (; i < kN; ++i)
+        {
+            out.data()[i] = std::log(a.data()[i]);
+        }
+        benchmark::DoNotOptimize(out.data());
+        benchmark::ClobberMemory();
+    }
+    state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(kN));
+}
+BENCHMARK_TEMPLATE(Vectorization_LogSimd, float)
+    ->MeasureProcessCPUTime()
+    ->Unit(benchmark::kMicrosecond);
+BENCHMARK_TEMPLATE(Vectorization_LogSimd, double)
+    ->MeasureProcessCPUTime()
+    ->Unit(benchmark::kMicrosecond);
+
+#if SCALARS_HAS_ACCELERATE
+template <typename T> static void Accelerate_LogBulk(benchmark::State& state)
+{
+    vectorization::tensor<T> a(kN), out(kN);
+    fill_uniform(a.data(), kN, T(0.1), T(4), 42u);
+    const int n = static_cast<int>(kN);
+    for (auto _ : state)
+    {
+        if constexpr (std::is_same_v<T, float>)
+        {
+            vvlogf(out.data(), a.data(), &n);
+        }
+        else
+        {
+            vvlog(out.data(), a.data(), &n);
+        }
+        benchmark::DoNotOptimize(out.data());
+        benchmark::ClobberMemory();
+    }
+    state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(kN));
+}
+BENCHMARK_TEMPLATE(Accelerate_LogBulk, float)
+    ->MeasureProcessCPUTime()
+    ->Unit(benchmark::kMicrosecond);
+BENCHMARK_TEMPLATE(Accelerate_LogBulk, double)
+    ->MeasureProcessCPUTime()
+    ->Unit(benchmark::kMicrosecond);
+#endif
+
 // ── fused multiply-add: a * b + c ────────────────────────────────────────────
 // LibTorch equivalent: addcmul(c, a, b) = c + 1 * a * b
 
-template <typename T>
-static void XSigma_Fma(benchmark::State& state)
+template <typename T> static void Vectorization_Fma(benchmark::State& state)
 {
     vectorization::tensor<T> a(kN), b(kN), c(kN), out(kN);
     fill_uniform(a.data(), kN, static_cast<T>(-4), static_cast<T>(4), 1u);
     fill_uniform(b.data(), kN, static_cast<T>(-4), static_cast<T>(4), 2u);
     fill_uniform(c.data(), kN, static_cast<T>(-4), static_cast<T>(4), 3u);
     for (auto _ : state)
+    {
         benchmark::DoNotOptimize(out = (a * b + c));
+    }
     state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(kN));
 }
 
-BENCHMARK_TEMPLATE(XSigma_Fma, float)->MeasureProcessCPUTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_TEMPLATE(XSigma_Fma, double)->MeasureProcessCPUTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_TEMPLATE(Vectorization_Fma, float)
+    ->MeasureProcessCPUTime()
+    ->Unit(benchmark::kMicrosecond);
+BENCHMARK_TEMPLATE(Vectorization_Fma, double)
+    ->MeasureProcessCPUTime()
+    ->Unit(benchmark::kMicrosecond);
 
 #if VECTORIZATION_HAS_LIBTORCH
 
-template <typename T>
-static void LibTorch_Fma(benchmark::State& state)
+template <typename T> static void LibTorch_Fma(benchmark::State& state)
 {
     auto ta    = make_th<T>(static_cast<T>(-4), static_cast<T>(4), 1u);
     auto tb    = make_th<T>(static_cast<T>(-4), static_cast<T>(4), 2u);
     auto tc    = make_th<T>(static_cast<T>(-4), static_cast<T>(4), 3u);
     auto out_t = torch::empty_like(ta);
     for (auto _ : state)
+    {
         benchmark::DoNotOptimize(torch::addcmul_out(out_t, tc, ta, tb));
+    }
     state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(kN));
 }
 
@@ -249,7 +316,9 @@ int main(int argc, char** argv)
 #endif
     ::benchmark::Initialize(&argc, argv);
     if (::benchmark::ReportUnrecognizedArguments(argc, argv))
+    {
         return 1;
+    }
     ::benchmark::RunSpecifiedBenchmarks();
     ::benchmark::Shutdown();
     return 0;

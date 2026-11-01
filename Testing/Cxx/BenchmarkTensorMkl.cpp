@@ -1,15 +1,15 @@
 /*
- * XSigma: High-Performance Quantitative Library
+ * Vectorization: High-Performance Quantitative Library
  *
  * SPDX-License-Identifier: GPL-3.0-or-later OR Commercial
  *
- * Tensor throughput benchmarks: XSigma tensor<T> vs Intel MKL VML.
+ * Tensor throughput benchmarks: Vectorization tensor<T> vs Intel MKL VML.
  *
  * Measures elements/sec for common unary element-wise ops.
  * Allocation is excluded from the hot loop (pre-allocated buffers).
  *
  * Each benchmark pair is named:
- *   XSigma_<Op><Type>  — SIMD expression-template path
+ *   Vectorization_<Op><Type>  — SIMD expression-template path
  *   MklVml_<Op><Type>  — direct MKL VML batch call
  *
  * Guard: compiled only when VECTORIZATION_HAS_MKL=1.
@@ -35,8 +35,7 @@ namespace
 // ~131k elements: exceeds L2 on most CPUs, not a multiple of any common SIMD width.
 constexpr std::size_t kN = (2u << 16) + 3;
 
-template <typename T>
-static void fill_uniform(T* p, std::size_t n, T lo, T hi, unsigned seed)
+template <typename T> static void fill_uniform(T* p, std::size_t n, T lo, T hi, unsigned seed)
 {
     std::mt19937                      gen(seed);
     std::uniform_real_distribution<T> dist(lo, hi);
@@ -48,45 +47,43 @@ static void fill_uniform(T* p, std::size_t n, T lo, T hi, unsigned seed)
 
 // ── benchmark macro ───────────────────────────────────────────────────────────
 //
-// BENCH_UNARY_MKL(NAME, XS_OP, MKL_FN, LO, HI)
-//   XS_OP  — called as XS_OP(a)  on a tensor
+// BENCH_UNARY_MKL(NAME, VECTOR_OP, MKL_FN, LO, HI)
+//   VECTOR_OP  — called as VECTOR_OP(a)  on a tensor
 //   MKL_FN — called as mkl_vml::MKL_FN(n, a, y) on raw pointers
 //
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define BENCH_UNARY_MKL(NAME, XS_OP, MKL_FN, LO, HI)                                        \
-    template <typename T>                                                                   \
-    static void XSigma_##NAME(benchmark::State& state)                                      \
-    {                                                                                       \
-        vectorization::tensor<T> a(kN), out(kN);                                            \
-        fill_uniform(a.data(), kN, static_cast<T>(LO), static_cast<T>(HI), 42u);            \
-        for (auto _ : state)                                                                \
-            benchmark::DoNotOptimize(out = XS_OP(a));                                       \
-        state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(kN));             \
-    }                                                                                       \
-    template <typename T>                                                                   \
-    static void MklVml_##NAME(benchmark::State& state)                                      \
-    {                                                                                       \
-        std::vector<T> a(kN), out(kN);                                                      \
-        fill_uniform(a.data(), kN, static_cast<T>(LO), static_cast<T>(HI), 42u);            \
-        for (auto _ : state)                                                                \
-        {                                                                                   \
-            vectorization::mkl_reference::MKL_FN(static_cast<MKL_INT>(kN), a.data(), out.data()); \
-            benchmark::DoNotOptimize(out.data());                                           \
-        }                                                                                   \
-        state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(kN));             \
-    }                                                                                       \
-    BENCHMARK_TEMPLATE(XSigma_##NAME, float)                                                \
-        ->MeasureProcessCPUTime()                                                           \
-        ->Unit(benchmark::kMicrosecond);                                                    \
-    BENCHMARK_TEMPLATE(MklVml_##NAME, float)                                                \
-        ->MeasureProcessCPUTime()                                                           \
-        ->Unit(benchmark::kMicrosecond);                                                    \
-    BENCHMARK_TEMPLATE(XSigma_##NAME, double)                                               \
-        ->MeasureProcessCPUTime()                                                           \
-        ->Unit(benchmark::kMicrosecond);                                                    \
-    BENCHMARK_TEMPLATE(MklVml_##NAME, double)                                               \
-        ->MeasureProcessCPUTime()                                                           \
+#define BENCH_UNARY_MKL(NAME, VECTOR_OP, MKL_FN, LO, HI)                                           \
+    template <typename T> static void Vectorization_##NAME(benchmark::State& state)                \
+    {                                                                                              \
+        vectorization::tensor<T> a(kN), out(kN);                                                   \
+        fill_uniform(a.data(), kN, static_cast<T>(LO), static_cast<T>(HI), 42u);                   \
+        for (auto _ : state)                                                                       \
+            benchmark::DoNotOptimize(out = VECTOR_OP(a));                                          \
+        state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(kN));                    \
+    }                                                                                              \
+    template <typename T> static void MklVml_##NAME(benchmark::State& state)                       \
+    {                                                                                              \
+        std::vector<T> a(kN), out(kN);                                                             \
+        fill_uniform(a.data(), kN, static_cast<T>(LO), static_cast<T>(HI), 42u);                   \
+        for (auto _ : state)                                                                       \
+        {                                                                                          \
+            vectorization::mkl_reference::MKL_FN(static_cast<MKL_INT>(kN), a.data(), out.data());  \
+            benchmark::DoNotOptimize(out.data());                                                  \
+        }                                                                                          \
+        state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(kN));                    \
+    }                                                                                              \
+    BENCHMARK_TEMPLATE(Vectorization_##NAME, float)                                                \
+        ->MeasureProcessCPUTime()                                                                  \
+        ->Unit(benchmark::kMicrosecond);                                                           \
+    BENCHMARK_TEMPLATE(MklVml_##NAME, float)                                                       \
+        ->MeasureProcessCPUTime()                                                                  \
+        ->Unit(benchmark::kMicrosecond);                                                           \
+    BENCHMARK_TEMPLATE(Vectorization_##NAME, double)                                               \
+        ->MeasureProcessCPUTime()                                                                  \
+        ->Unit(benchmark::kMicrosecond);                                                           \
+    BENCHMARK_TEMPLATE(MklVml_##NAME, double)                                                      \
+        ->MeasureProcessCPUTime()                                                                  \
         ->Unit(benchmark::kMicrosecond);
 
 // ── unary transcendentals ─────────────────────────────────────────────────────

@@ -84,6 +84,7 @@ their correctness and performance gates verified ([section 16](#16-implementatio
 | CPU `parallel_for` above a 32,768-element grain | Done; serial SIMD fallback fixed in `c4fde41`, not yet benchmarked | `iteration_plan.h`, `expressions_evaluator.h` |
 | Strided expression leaves (`strided_ref`) — transposes need no materialization | Done | `strided_ref.h`, `store_operand()` |
 | Stride-0 destination rejected | Done | `make_iteration_plan()` |
+| General destination injectivity proof (`non_overlapping` flag) | Not started: only stride 0 is rejected | [section 6](#internal-overlap) |
 | `slice(dim, optional start, optional stop, step ≥ 1)` | Done | `tensor.h` |
 | `expand`, `broadcast_to`, `squeeze`, `unsqueeze`, `flatten`; Release checks on view operations | Done | `tensor.h` |
 | Copy constructor keeps the source layout | Done in `c7f436f` | `tensor.h` |
@@ -91,7 +92,7 @@ their correctness and performance gates verified ([section 16](#16-implementatio
 | `retained_ptr` storage; views retain storage | Not started: storage is `data_ptr` + `data_view`, views borrow | `tensor.h` |
 | Expression leaves keep rvalue operands alive | Not started: leaves borrow through `strided_ref` | `store_operand()` |
 | `tensor` / `tensor_view` split, `noalias()` | Not started | — |
-| Destination/source overlap classifier | Not started: `expression_aliases_ptr()` is never called | `expression_interface.h` |
+| Destination/source overlap classifier, signed-coefficient lattice test, provenance-aware storage shortcut | Not started: `expression_aliases_ptr()` is never called | `expression_interface.h` |
 | `flip`, tiled transpose | Not started | — |
 | Planner-owned prefetch; removal of the aligned-source variant | Not started: per-leaf prefetch and both alignment variants remain | `expressions_evaluator.h` |
 | Axis reductions; strided reductions | Not started | `reduce_op.h` |
@@ -136,7 +137,7 @@ struct tensor_impl
     sizes_and_strides                            sas_;      // inline up to 5 dims
     int64_t                                      offset_{0};  // elements from base()
     std::size_t                                  numel_{0};
-    uint8_t flags_{};  // contiguous | dense_non_overlapping | has_zero_stride
+    uint8_t flags_{};  // contiguous | dense_non_overlapping | non_overlapping | has_zero_stride
 };
 
 // What kernels receive: trivially copyable, GPU-memcpy-safe, never owns.
@@ -155,6 +156,11 @@ struct strided_ref
     `retained_ptr(data_ptr&&)`, which does not reallocate.
   - External buffers use `retained_ptr::adopt`: a real deleter transfers
     ownership; an explicit no-op deleter is a deliberate unsafe borrow.
+  - Storage records its provenance: `allocated` (issued by a Memory
+    allocator) or `adopted`. Two distinct `allocated` storages never share
+    an address. Adopting overlapping external buffers independently creates
+    distinct control blocks over the same memory, so storage identity proves
+    nothing about adopted storage ([section 6](#6-aliasing-and-overlap)).
   - Every view keeps its storage alive, at the cost of one atomic increment
     per view.
   - PyTorch's `TensorImpl` holds `intrusive_ptr<StorageImpl>` the same way.
@@ -176,7 +182,7 @@ struct strided_ref
 
 | | `tensor<T>` | `tensor_view<T>` | `tensor_view<const T>` |
 |---|---|---|---|
-| Invariant | Owns, packed C-order, offset 0 | Any non-negative strides (including zero); retains storage | Same, read-only |
+| Invariant | Owns, packed C-order, offset 0 | Any non-negative strides (including zero); retains storage. Usable as a destination only when `non_overlapping` is proven ([section 6](#internal-overlap)) | Same, read-only |
 | Copy constructor | Deep copy | Shallow (shares storage) | Shallow |
 | `operator=` | Deep copy / evaluate | Writes through | Deleted |
 | Converts to | Either view type, implicitly | `tensor<T>`, explicitly (packed copy) | `tensor<T>`, explicitly |
@@ -188,17 +194,25 @@ struct strided_ref
   - Lazy products: `matmul`, `bmm` ([section 11](#11-linearalgebra-adapter)).
   - `reshape` and `contiguous` return a view: of the existing storage when
     possible, otherwise of a new packed copy.
-- **Parameters.** Inputs take `tensor_view<const T> const&`; outputs take
-  `tensor_view<T>`, like Eigen's `Ref<const MatrixXd>`.
+- **Parameters.** Non-template functions with a concrete element type take
+  inputs as `tensor_view<const float> const&` and outputs as
+  `tensor_view<float>`, like Eigen's `Ref<const MatrixXd>`. The implicit
+  conversion from `tensor<float>` applies there. It does not apply to a
+  function template that deduces `T` from a `tensor_view<const T>`
+  parameter: deduction ignores user-defined conversions, so
+  `matmul(a, b)` on two `tensor<float>` would not compile. Library entry
+  points that deduce `T` are constrained forwarding templates instead
+  ([section 11](#11-linearalgebra-adapter)).
 - **Rebinding.** Because `operator=` writes through, re-pointing a view uses
   `v.rebind(other)`. Assigning elements of a `std::vector<tensor_view<T>>`
   writes data, the same caveat as Eigen `Ref`.
 - **`noalias()`.** `tensor<T>` and `tensor_view<T>` have `noalias()`, which
   returns a proxy offering only `=`, `+=` and `-=` ([section 6](#6-aliasing-and-overlap)).
   It is deleted on `tensor_view<const T>`.
-- **Fast path by type.** When every expression leaf is a `tensor<T>`,
-  contiguity is known at compile time and planning reduces to a shape
-  comparison.
+- **Fast path by type.** When the destination and every expression leaf
+  are `tensor<T>`, contiguity is known at compile time and planning reduces
+  to a shape comparison. A `tensor_view` destination is checked at run time
+  ([section 5](#contiguous-fast-path)).
 
 ---
 
@@ -210,6 +224,14 @@ struct strided_ref
 - An rvalue (`a.t() + b`, `tensor(n) + a`) is moved into the node and keeps
   its storage alive. Eigen does not do this; dangling `auto` expressions are
   a known Eigen pitfall.
+- The rule only holds if the operand's value category reaches the node.
+  Every function that builds a node (operators, `matmul`, `bmm`) takes
+  operands by forwarding reference and passes them on with `std::forward`.
+  A `const&` parameter turns a temporary view into an lvalue, so the node
+  would store a pointer to a descriptor that dies at the end of the
+  statement. A conversion inside such a function (for example
+  `tensor<T>` to `tensor_view<const T>`) creates a temporary too, and is
+  captured by value.
 
 ### Lowering
 
@@ -223,7 +245,8 @@ emitter walks.
 Modelled on PyTorch's `TensorIterator`; runs once per evaluation at
 O(leaves × rank) cost.
 
-1. Collect each leaf's shape, strides, offset, device and storage identity.
+1. Collect each leaf's shape, strides, offset, device, storage identity and
+   provenance.
 2. Broadcast shapes and validate them in every build type. Construction
    infers the result shape; assignment requires it to equal the
    destination's.
@@ -249,20 +272,26 @@ O(leaves × rank) cost.
 Planning costs more than the arithmetic for small tensors. An O(leaves)
 check runs first:
 
-1. Every leaf has the `contiguous` flag from `tensor_impl::flags_`.
+1. The destination and every leaf have the `contiguous` flag from
+   `tensor_impl::flags_`. A `tensor<T>` destination has it by invariant.
 2. Every leaf has the destination's shape.
 
-When both hold, evaluation goes straight to tier 0 with no sort, merge or
-lattice test. The overlap check is ordered cheapest first:
+The destination is part of condition 1: packed sources of matching shape
+assigned into a transpose or a stepped slice would otherwise be written at
+packed positions. When both hold, evaluation goes straight to tier 0 with
+no sort, merge or lattice test. The overlap check is ordered cheapest first:
 
-1. Different storage → `none`.
-2. Same base pointer, sizes and strides → `full`.
-3. Only then the lattice test.
+1. Different storage, both with `allocated` provenance
+   ([section 3](#3-layers-storage-geometry-kernel-descriptor)) → `none`.
+2. Same data address (`base + offset`), sizes and strides → `full`.
+3. Disjoint address ranges → `none`. This is the first test that can clear
+   `adopted` storage.
+4. Only then the lattice test.
 
-Two distinct `tensor<T>` objects can never partially overlap, so step 1 or 2
-always decides for them. A freshly constructed `tensor<T>` destination skips
-the check. The target is Eigen-like cost for trees of packed tensors, not
-`TensorIterator`'s microsecond-level setup.
+Two distinct `tensor<T>` objects with `allocated` storage can never overlap,
+so step 1 always decides for them. A freshly constructed `tensor<T>`
+destination skips the check. The target is Eigen-like cost for trees of
+packed tensors, not `TensorIterator`'s microsecond-level setup.
 
 #### Iteration plan and threading
 
@@ -413,23 +442,74 @@ pair is classified like PyTorch's `get_overlap_status`:
 
 | Status | Detection | Elementwise ops | `matmul_out` and other non-elementwise ops |
 |---|---|---|---|
-| `none` | Different storage, disjoint address ranges, or the lattice test proves no shared element | Run | Run |
-| `full` | Same pointer, sizes and strides | Run in place (`a = a + 1`) | Error |
+| `none` | Different storage with `allocated` provenance, disjoint address ranges, or the lattice test proves no shared element | Run | Run |
+| `full` | Same data address, sizes and strides | Run in place (`a = a + 1`) | Error |
 | `partial` | The lattice test finds a shared element | Error | Error |
-| `too_hard` | Strides are not nested, so the test cannot decide | Error | Error |
+| `too_hard` | The lattice test's preconditions fail, so it cannot decide | Error | Error |
 
-- **Lattice test.** For two views with equal strides that each divide the
-  next, decompose the offset difference greedily across dimensions. The
-  views share an element exactly when it decomposes and each coefficient is
-  smaller than its dimension size. This covers shifted and interleaved
-  slices.
+- **Storage provenance.** Different storage proves `none` only when both
+  storages are `allocated`. Adopted storage is compared by address: an
+  adopted buffer may overlap another adopted buffer or an allocation under
+  a different control block. Address ranges are compared in bytes on the
+  same device, from `base + offset` over the span in
+  [section 7](#7-slice-steps). When ranges intersect across different
+  storage, the lattice test runs on element offsets taken from the byte
+  difference. If that difference is not a multiple of `sizeof(T)`, or the
+  element types differ, the result is `too_hard`.
+- **Lattice test.** Two views share an element when
+  `off_b − off_a = Σ dᵢ·sᵢ` for integers `dᵢ = aᵢ − bᵢ`, bounded by
+  `−(n_b,ᵢ − 1) ≤ dᵢ ≤ n_a,ᵢ − 1`. The coefficients are signed. A greedy
+  decomposition that accepts only non-negative coefficients misses shared
+  elements. For example, shape `(2, 2)` with strides `(3, 1)` at offsets 0
+  and 2 touches `{0, 1, 3, 4}` and `{2, 3, 5, 6}`. The views share element
+  3, since `2 = 1·3 − 1·1`.
+  - *Preconditions.* Both views have equal strides after size-1 dimensions
+    are dropped. Sorted ascending, each stride divides the next, and both
+    views are injective in that order (`sᵢ₊₁ ≥ nᵢ·sᵢ`; see
+    [internal overlap](#internal-overlap)).
+  - *Procedure.* Work from the innermost dimension. Divide the residual by
+    `s₀`; a remainder means `none`. At each level `dᵢ` must be congruent to
+    the residual modulo `sᵢ₊₁ / sᵢ`. Injectivity bounds the `dᵢ` interval to
+    fewer than two periods, so at most two candidates fit, and the carry
+    leaves at most two residuals for the next level. The outermost residual
+    must lie within its own bound. The cost is O(rank) with at most two live
+    states.
+  - *Coverage.* This covers shifted, interleaved and row-offset slices.
+    Unequal or non-nested strides and non-injective layouts return
+    `too_hard`, never `none`.
 - **Deviation from PyTorch.** PyTorch lets `too_hard` cases run silently;
   this design errors on them.
 - **Escape hatches.** For `partial` the error names `dst = src.clone();`.
   For `too_hard` it also names `dst.noalias() = …`.
-- **Internal overlap.** A destination that overlaps itself (stride 0 from
-  `expand`) is always an error, with or without `noalias()`. This check is
-  already implemented.
+
+### Internal overlap
+
+A destination must be proven injective: no two logical indices may map to
+the same element. Rejecting zero strides is not enough. Shape `(2, 2)` with
+strides `(1, 1)` touches offsets `{0, 1, 1, 2}` with no zero stride.
+
+- **Proof.** Drop size-1 dimensions and sort the rest by stride. The layout
+  is injective when every stride exceeds the extent of the dimensions
+  inside it: `sᵢ₊₁ > Σ_{j≤i} (nⱼ − 1)·sⱼ`. A zero stride on a non-trivial
+  dimension fails this test. When strides are nested, the test is exact. In
+  general it is sufficient but not necessary: sizes `(3, 2)` with strides
+  `(2, 3)` are injective but fail. Such layouts are treated as unproven.
+- **Flag.** Every view constructor computes the proof in
+  O(rank log rank) and caches it as `non_overlapping` in
+  `tensor_impl::flags_`. `contiguous` and `dense_non_overlapping` imply it.
+  The planner then reads a flag. Views derived from a packed tensor by
+  `slice`, `t`, `permute`, `squeeze`, `unsqueeze` and `view` keep the
+  property, and the check confirms it. `expand`, `broadcast_to` and
+  explicit-stride construction are where it can be lost.
+- **Enforcement.** Writing to a destination without the flag is an error in
+  every build type, with or without `noalias()`, because `noalias()` only
+  covers destination/source overlap. An injective layout that fails the
+  proof must be rebuilt with nested strides before it is written. Sources
+  have no such requirement. A non-injective source matters only when its
+  address range meets the destination's, and the lattice test then
+  returns `too_hard`.
+- **Status.** The stride-0 case is implemented. The general proof is not
+  started.
 
 ### `noalias()`
 
@@ -576,20 +656,54 @@ synchronize.
 ## 11. LinearAlgebra adapter
 
 ```cpp
-template <typename T>
-product_expression<T> matmul(tensor_view<const T> const& a, tensor_view<const T> const& b);
+// True for tensor<T>, tensor_view<T> and tensor_view<const T> (any cv/ref)
+// whose element types match; mirrors is_pure_expression in tensor.h.
+template <typename... Ops>
+inline constexpr bool are_tensor_operands_v = /* ... */;
 
-template <typename T>
-void matmul_out(
-    tensor_view<T> c, tensor_view<const T> const& a, tensor_view<const T> const& b,
-    T alpha = T(1), T beta = T(0));
+template <typename C>
+inline constexpr bool is_writable_tensor_operand_v = /* ... */;
 
-template <typename T>
-T dot(tensor_view<const T> const& a, tensor_view<const T> const& b);
+// Lazy: operands are forwarded into the node and captured by section 5's rule.
+template <typename A, typename B,
+          std::enable_if_t<are_tensor_operands_v<A, B>, bool> = true>
+product_expression<std::decay_t<A>, std::decay_t<B>> matmul(A&& a, B&& b);
 
-template <typename T>
-product_expression<T> bmm(tensor_view<const T> const& a, tensor_view<const T> const& b);
+template <typename A, typename B,
+          std::enable_if_t<are_tensor_operands_v<A, B>, bool> = true>
+product_expression<std::decay_t<A>, std::decay_t<B>> bmm(A&& a, B&& b);
+
+// Eager: nothing is captured, so these convert and call a non-deducing
+// implementation taking tensor_view<const T> const& / tensor_view<T>.
+template <typename C, typename A, typename B,
+          std::enable_if_t<are_tensor_operands_v<C, A, B> &&
+                               is_writable_tensor_operand_v<C>, bool> = true>
+void matmul_out(C&& c, A const& a, B const& b,
+                operand_value_t<A> alpha = 1, operand_value_t<A> beta = 0);
+
+template <typename A, typename B,
+          std::enable_if_t<are_tensor_operands_v<A, B>, bool> = true>
+operand_value_t<A> dot(A const& a, B const& b);
 ```
+
+- **Why not `tensor_view<const T> const&`.** Deduction does not consider
+  the implicit `tensor<T>` → view conversion, so that signature rejects
+  owning tensors. It would also turn temporary views into lvalues inside
+  `matmul`, and the deferred product would point at descriptors that die
+  at the end of the statement ([section 5](#capture)). The forwarding form
+  fixes both. An lvalue `tensor<T>` is captured by pointer with no atomic
+  operation, and an rvalue view such as `a.t()` is moved into the node.
+- **Element types.** Mixed element types are a compile error; there is no
+  implicit promotion.
+- **Expressions as operands.** Elementwise expressions do not satisfy
+  `are_tensor_operands_v`; `matmul(a + b, c)` must materialize `a + b`
+  first. Eigen evaluates nested product operands into temporaries
+  implicitly; requiring it here keeps the allocation visible.
+- **Reference points.** Eigen's `MatrixBase::operator*` takes
+  `MatrixBase<Derived> const&` and stores nested operands through
+  `ref_selector`, by value for expressions and by reference for plain
+  objects. PyTorch takes `const Tensor&` but computes eagerly, so lifetime
+  never arises.
 
 Shapes follow PyTorch's `matmul` rules for vectors, matrices and batches.
 Inner dimensions are validated in every build type.
@@ -729,6 +843,9 @@ Vectorization then bumps the submodule.
   endpoints alive.
 - **Stream events** (`record_event` / `wait_event`) for cross-stream
   ordering, separate from `record_stream`.
+- **Provenance query** on `retained_ptr` (`allocated` or `adopted`), so the
+  overlap classifier knows when distinct storage proves disjointness
+  ([section 6](#6-aliasing-and-overlap)).
 - **`record_stream`** becomes a no-op for adopted memory with an invalid
   allocation id instead of failing the allocator lookup.
 
@@ -906,14 +1023,14 @@ Design elements in this plan that run into enabled checks:
 | `tensor` / `tensor_view` moves ([section 4](#4-tensor-and-tensor_view)) | `performance-noexcept-move-constructor` | Move constructor and move assignment are `noexcept`; `retained_ptr` moves must be `noexcept` too (Memory U1) |
 | `tensor::operator=` (deep copy), `tensor_view::operator=` (write-through) | `bugprone-unhandled-self-assignment` | Explicit self-assignment check; for a view, self-assignment is `full` overlap and returns immediately |
 | Forwarding-reference constructors (`tensor(E&&)`, `product_expression`, `store_operand`) | `bugprone-forwarding-reference-overload` | Constrain the template with a trait, as `tensor(E&&)` already does, then remove its bare `NOLINT` |
-| Rvalue capture into expression nodes ([section 5](#capture)) | `bugprone-use-after-move`, `performance-move-const-arg` | Move each operand once into the node; never `std::move` a `const` operand |
+| Rvalue capture into expression nodes ([section 5](#capture)) | `bugprone-use-after-move`, `performance-move-const-arg` | Move each operand once into the node; never `std::move` a `const` operand. Node-building functions take forwarding references and `std::forward` each operand exactly once |
 | `overlap_status`, loop tier, `reduce_op` | `performance-enum-size` | `enum class … : std::uint8_t` |
 | `noexcept` loops (`loop_row`, `loop2d`), destructors (`stream_guard`, `copy_token`, `noalias_proxy`) | `bugprone-exception-escape` | No `VECTORIZATION_CHECK` inside; validate in the planner before the loop; destructors never throw |
 | 32-bit GPU indexing and offset arithmetic ([section 5](#cuda--hip--offset-calculator-and-indexing-width)) | `bugprone-implicit-widening-of-multiplication-result`, `bugprone-too-small-loop-variable`, `bugprone-misplaced-widening-cast` | Widen before multiplying (`static_cast<int64_t>(i) * stride`); the loop counter type matches its bound after the index-width decision. `bugprone-narrowing-conversions` is disabled, so the span check, not clang-tidy, guards narrowing to 32 bits |
 | Overlap classifier address comparisons ([section 6](#6-aliasing-and-overlap)) | `bugprone-casting-through-void` | `reinterpret_cast<std::uintptr_t>(ptr)`, not a cast through `void*` |
 | Metal pipeline cache ([section 5](#metal--pipeline-cache-synchronization-and-buffers)) | `bugprone-dynamic-static-initializers` | Keep the cache a function-local static, never a namespace-scope variable in a header |
 | `tensor_view<const T>` storage | `portability-std-allocator-const` | Allocate as `std::remove_const_t<T>`, as `tensor_impl` does ([section 3](#3-layers-storage-geometry-kernel-descriptor)) |
-| Input views ([section 4](#4-tensor-and-tensor_view)) | `performance-unnecessary-value-param` | Inputs take `tensor_view<const T> const&`; outputs are taken by value only because they are written through |
+| Input views ([section 4](#4-tensor-and-tensor_view)) | `performance-unnecessary-value-param` | Non-template inputs take `tensor_view<const T> const&`; outputs are taken by value only because they are written through. Deducing entry points use constrained forwarding templates ([section 11](#11-linearalgebra-adapter)) |
 | New headers and macros | `bugprone-reserved-identifier`, `bugprone-macro-parentheses` | `#pragma once`; `VECTORIZATION_*` macro names with parenthesized arguments |
 | Every `if` / `else` / `for` / `while` body | `readability-braces-around-statements` | Always braced |
 
@@ -955,14 +1072,14 @@ phase changes.
 | Phase | Repository | Scope | Status | Correctness gate | Performance gate |
 |---|---|---|---|---|---|
 | P0 | Vectorization | Result shape from broadcasting; every leaf's shape validated; Release checks on view operations; overlap classifier raising errors; copy constructor keeps source strides; clang-tidy baseline cleared and coverage gaps closed ([section 15](#15-clang-tidy-conformance)) | Partly done: classifier and clang-tidy work missing | Every [section 1](#implementation-status) item marked Done has a passing Release test; the clang-tidy CI job analyzes the test target and passes | Release benchmarks at today's speed; shape checks outside the inner loop |
-| P1 | Vectorization | `retained_ptr` storage, explicit offset, views retain storage, rvalue capture into expressions | Not started | Lifetime tests (view outlives owner, deferred expression) clean under AddressSanitizer | CPU tensor construction and destruction: one heap allocation after U1 |
-| P2 | Vectorization | `tensor` / `tensor_view` split; `noalias()` proxy for elementwise assignment | Not started | View assignment writes through; `noalias()` overlap caught in Debug; existing tests pass unchanged | Expression building with `tensor<T>` leaves adds no atomic operations |
+| P1 | Vectorization | `retained_ptr` storage with provenance, explicit offset, views retain storage, rvalue capture into expressions, `non_overlapping` flag | Not started | Lifetime tests (view outlives owner, deferred expression) clean under AddressSanitizer; `(1, 1)`-stride destination rejected | CPU tensor construction and destruction: one heap allocation after U1 |
+| P2 | Vectorization | `tensor` / `tensor_view` split; `noalias()` proxy for elementwise assignment | Not started | View assignment writes through; `noalias()` overlap caught in Debug; signed lattice counterexample reported `partial`; overlapping adopted buffers not reported `none`; existing tests pass unchanged | Expression building with `tensor<T>` leaves adds no atomic operations |
 | P3 | Vectorization | CPU planner tiers 0–2 with `run_range`; contiguous fast path; `loop2d`; threading policy (bytes and op cost, intra-row splits, BLAS coordination); tiled transpose; `flip`; tier-2 specialization; planner-owned prefetch; aligned-source variant removed; CPU reductions | Partly done: planner, `loop2d`, row-split threading | Strided, broadcast, `flip` and reduction tests pass; serial SIMD fallback taken with parallel support disabled | Tier 0 ≥ 90% of STREAM triad bandwidth on one thread and scales with threads; tier 1 ≥ 80% for rows ≥ 256 elements; latency at n ≤ 64 within 10% of today; `t().contiguous()` ≥ 50% of tier-0 copy bandwidth |
 | U1 | Memory | [Section 12](#memory-u1) | Not started | Landed upstream with tests; submodule bumped | Offset-aware copy at device-copy bandwidth |
 | U2 | LinearAlgebra | [Section 12](#linearalgebra-u2) | Not started | Landed upstream with tests; submodule bumped | GEMV, DOT and batched GEMM at backend-library speed |
 | U3 | Scalars | [Section 12](#scalars-u3) | Not started | Landed upstream with tests; submodule bumped | Metal interior-slice dispatch with no per-call buffer wrapping |
 | P4 | Vectorization | CUDA/HIP offset calculator with span-checked 32-bit indexing and vector loads; strided GPU destinations; Metal pipeline cache, batched command buffers, per-allocation `MTLBuffer`; GPU reductions; offset-aware transfers; unified launch contract ([section 13](#13-backend-launch-unification)) | Not started | Device clone of an interior slice without host memory (Metal locally; CUDA/HIP in CI); large-stride small tensors take the wide-index path; same launch signature on every backend; macOS `neon` + `metal` clang-tidy job passes | Tier 0 and strided tiers in GB/s on each GPU backend; Metal per-call host overhead after the first call in µs and free of string building |
-| P5 | Vectorization | `matmul_out`, `dot` / `dot_out`, factorization objects; lazy `matmul` / `bmm` with classifier-based lowering; epilogues; size routing | Not started | Rectangular, transposed-view, strided and aliased-output GEMM tests pass | Warmed-up `c = matmul(a, b)` with reusable output, compatible layouts and sufficient workspace performs no tensor-layer allocation; small-matrix GEMM within 2× of Eigen fixed-size products |
+| P5 | Vectorization | `matmul_out`, `dot` / `dot_out`, factorization objects; lazy `matmul` / `bmm` with classifier-based lowering and forwarding entry points; epilogues; size routing | Not started | Rectangular, transposed-view, strided and aliased-output GEMM tests pass; `matmul(a, b)` on owning tensors compiles; deferred `matmul(a.t(), b.t())` clean under AddressSanitizer | Warmed-up `c = matmul(a, b)` with reusable output, compatible layouts and sufficient workspace performs no tensor-layer allocation; small-matrix GEMM within 2× of Eigen fixed-size products |
 | P6 | Vectorization | Optional, measured: streaming stores, true fused epilogues (cuBLASLt), tiny-matrix kernel tuning | Not started | Behind flags; no regression on existing tiers | Streaming stores 1.2–1.5× on write-heavy tier-0 work where they win; no regression on read-after-write chains |
 
 Dependencies: P0 fixes incorrect results and goes first. U1, U2 and U3 run
@@ -983,7 +1100,12 @@ In addition to numerical values:
 - View lifetime: a view returned from a function; deferred expressions
   holding temporaries.
 - Overlap: exact aliasing allowed; shifted, interleaved and `too_hard` cases
-  rejected.
+  rejected. Shape `(2, 2)`, strides `(3, 1)`, offsets 0 and 2 is `partial`.
+  Two adopted storages over overlapping memory are not `none`.
+- Internal overlap: a destination with strides `(1, 1)` on shape `(2, 2)` is
+  rejected in every build type, with and without `noalias()`.
+- Contiguous fast path: packed sources assigned into a transposed or
+  stepped destination take the planner and land at the right positions.
 - `noalias()`: proven overlap rejected in Debug; `too_hard` layouts run;
   internal overlap rejected in every build type; `+=` / `-=` match the
   non-`noalias()` result.
@@ -996,6 +1118,10 @@ In addition to numerical values:
   threshold.
 - GPU index-width selection for small tensors with large strides.
 - Rectangular and batched GEMM with transposed and strided views.
+- `matmul`, `bmm`, `matmul_out` and `dot` accept `tensor<T>`,
+  `tensor_view<T>` and `tensor_view<const T>` in every combination; a
+  deferred product of temporary views evaluates correctly after its
+  construction statement.
 - `c = matmul(a, b)` on disjoint operands writes directly; on overlapping
   operands uses a temporary.
 - `c.noalias() = / += / -= matmul(a, b)` against a reference, with an

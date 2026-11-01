@@ -348,10 +348,10 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE expression_shape expression_result_shape(E
 
 // Copy of `expr` whose leaves read the broadcast result in flat C order.
 template <typename E>
-VECTORIZATION_HOST_FUNCTION_ATTRIBUTE vectorization::remove_cvref_t<E> flat_lowered(
+VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto flat_lowered(
     E const& expr, expression_shape const& shape)
 {
-    vectorization::remove_cvref_t<E> lowered(expr);
+    auto lowered = lower_raw(expr);
     detail::rebase_leaves(lowered, shape);
     return lowered;
 }

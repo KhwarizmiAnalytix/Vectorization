@@ -21,16 +21,14 @@
 
 #include <cstdint>
 
-#include <backend/simd.h>
-#include <math/scalar_helper_functions.h>
 #include "common/vectorization_macros.h"
 #include "common/vectorization_type_traits.h"
 #include "expressions/strided_ref.h"
+#include <backend/simd.h>
+#include <math/scalar_helper_functions.h>
 
 namespace vectorization
 {
-template <typename value_t>
-class tensor;
 
 // Generic fallback: contiguous leaves (data_view, scalars) map flat index to flat.
 // The strided_ref overload in strided_ref.h overrides this via ADL.
@@ -40,8 +38,7 @@ VECTORIZATION_FUNCTION_ATTRIBUTE size_t leaf_offset(L const&, size_t idx) noexce
     return idx;
 }
 
-template <typename LHS, bool vectorize, bool aligned>
-class expression_loader final
+template <typename LHS, bool vectorize, bool aligned> class expression_loader final
 {
 public:
     using rmv_lhs = vectorization::remove_cvref_t<LHS>;
@@ -77,9 +74,13 @@ public:
 
 #if VECTORIZATION_VECTORIZED
                 if constexpr (aligned)
+                {
                     return simd<value_t>::load(ptr);
+                }
                 else
+                {
                     return simd<value_t>::loadu(ptr);
+                }
 #else
                 return simd<value_t>::loadu(ptr);
 #endif

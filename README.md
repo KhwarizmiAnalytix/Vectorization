@@ -121,16 +121,43 @@ MKL comparisons use the SDK's `MKLConfig.cmake` and link only the comparison
 targets. Dependency tests, examples and benchmarks remain disabled, and existing
 dependency targets are reused without reconfiguring them.
 
-Tensors allocate through `memory::data_ptr<T>` and expose the underlying
-`memory::data_view<T>` with `memory_view()`. Slices, reshapes and expression
-operands preserve Memory's allocation identity and base pointer for stream
-tracking. Views borrow storage; their owner must outlive them. Copying a tensor
-creates independent Memory storage and preserves its shape and strides.
-Use `clone()` to request a packed copy.
+`tensor<T>` owns packed C-order storage. Copying it, or explicitly constructing
+it from a view, copies logical values into independent storage. `tensor_view<T>`
+shallow-copies its handle; assignment writes through without changing its shape.
+Use `rebind()` to point a view at another tensor or view. Const tensors produce
+`tensor_view<const T>` inputs, which cannot be assigned to.
+
+Slices, transposes, permutations, reshapes and `contiguous()` return views.
+Views retain their allocation through `memory::retained_ptr<T>`, including when
+`reshape()` or `contiguous()` needs to materialize a packed copy. Saved
+expressions also retain their tensor operands. `clone()` and `to_cpu()` return
+independent owning tensors. Kernel descriptors preserve Memory's allocation
+identity and base pointer for stream tracking.
+
+```cpp
+vectorization::tensor<float> a{{1, 2}, {3, 4}};
+auto transposed = a.t();                    // retaining, writable view
+vectorization::tensor<float> copy(transposed); // independent packed copy
+transposed = copy;                          // writes into a
+copy.noalias() = a + 1.0f;                  // caller asserts no source overlap
+copy.noalias() += a;
+```
+
+Ordinary expression/view assignment permits identical elementwise mappings and
+rejects partial overlap or layouts whose overlap cannot be proven. Use
+`src.clone()` for an independent source. `noalias()` offers `=`, `+=` and `-=`;
+Release skips source overlap classification, while Debug still rejects proven
+partial overlap. Shape, device and destination injectivity checks always run.
+Expanded or otherwise internally overlapping destinations cannot be written.
+
+External buffers can be deliberately borrowed with `tensor_view<T>(ptr, dims)`
+or `tensor_view<T>(storage.view(), dims)`; the caller must keep that external
+memory alive. Pass a `memory::retained_ptr<T>` to retain adopted storage, or
+transfer a `memory::data_ptr<T>` into an owning tensor:
 
 ```cpp
 memory::data_ptr<float> storage(12, memory::device_enum::CPU);
-vectorization::tensor<float> borrowed(storage.view(), {3, 4});
+vectorization::tensor_view<float> borrowed(storage.view(), {3, 4});
 vectorization::tensor<float> owned(std::move(storage), {3, 4});
 ```
 

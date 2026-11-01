@@ -22,13 +22,49 @@
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
+#include <utility>
 
 #include "common/data_view.h"
 #include "common/device.h"
+#include "common/retained_ptr.h"
 #include "common/vectorization_macros.h"
 
 namespace vectorization
 {
+
+// Memory's data_view<const T> instantiates data_ptr<const T>, which its typed
+// allocator intentionally rejects. Keep its allocation identity behind a const
+// facade instead of discarding metadata when converting to a read-only view.
+template <typename T> class const_data_view
+{
+public:
+    using stream_t    = typename memory::data_view<T>::stream_t;
+    const_data_view() = default;
+    const_data_view(memory::data_view<T> view) : view_(view) {}
+    static const_data_view borrow(
+        T const* ptr, size_t n, device_enum dev, int index = 0, stream_t stream = nullptr)
+    {
+        return memory::data_view<T>::borrow(const_cast<T*>(ptr), n, dev, index, stream);
+    }
+    const_data_view subview(size_t offset, size_t n) const { return view_.subview(offset, n); }
+    VECTORIZATION_FUNCTION_ATTRIBUTE T const* data() const { return view_.data(); }
+    VECTORIZATION_FUNCTION_ATTRIBUTE T const* base() const { return view_.base(); }
+    VECTORIZATION_FUNCTION_ATTRIBUTE size_t   size() const { return view_.size(); }
+    auto                                      id() const { return view_.id(); }
+    VECTORIZATION_FUNCTION_ATTRIBUTE bool     is_aligned() const { return view_.is_aligned(); }
+    device_enum                               device() const { return view_.device(); }
+    int                                       device_index() const { return view_.device_index(); }
+    stream_t                                  stream() const { return view_.stream(); }
+    void record_stream(stream_t stream) const { view_.record_stream(stream); }
+
+private:
+    memory::data_view<T> view_{};
+};
+
+template <typename T>
+using tensor_data_view = std::conditional_t<std::is_const_v<T>,
+    const_data_view<std::remove_const_t<T>>,
+    memory::data_view<T>>;
 
 static constexpr int kMaxRank = 8;
 
@@ -36,31 +72,47 @@ static constexpr int kMaxRank = 8;
 // Replaces data_view<T>, preserving shape and strides so the planner and
 // strided evaluation can read them. The embedded data_view handles device
 // placement and stream bookkeeping unchanged.
-template <typename T, int MaxRank = kMaxRank>
-struct strided_ref
+template <typename T, int MaxRank = kMaxRank> struct strided_ref
 {
-    memory::data_view<T> view_{};
-    int     rank{0};
-    int64_t sizes[MaxRank]{};
-    int64_t strides[MaxRank]{};
-    size_t  numel{0};
-    bool    contiguous{false};
-    size_t  align_start{0};
-    size_t  align_end{0};
+    tensor_data_view<T> view_{};
+    int                 rank{0};
+    int64_t             sizes[MaxRank]{};
+    int64_t             strides[MaxRank]{};
+    size_t              numel{0};
+    bool                contiguous{false};
+    size_t              align_start{0};
+    size_t              align_end{0};
 
-    VECTORIZATION_FUNCTION_ATTRIBUTE T*          data()          const noexcept { return view_.data(); }
-    VECTORIZATION_FUNCTION_ATTRIBUTE size_t      size()          const noexcept { return numel; }
-    VECTORIZATION_FUNCTION_ATTRIBUTE device_enum device()        const noexcept { return view_.device(); }
-    VECTORIZATION_FUNCTION_ATTRIBUTE int         device_index()  const noexcept { return view_.device_index(); }
-    VECTORIZATION_FUNCTION_ATTRIBUTE auto        stream()        const noexcept { return view_.stream(); }
-    VECTORIZATION_FUNCTION_ATTRIBUTE bool        is_aligned()    const noexcept { return view_.is_aligned(); }
-    VECTORIZATION_FUNCTION_ATTRIBUTE bool        is_contiguous() const noexcept { return contiguous; }
+    VECTORIZATION_FUNCTION_ATTRIBUTE T*          data() const noexcept { return view_.data(); }
+    VECTORIZATION_FUNCTION_ATTRIBUTE size_t      size() const noexcept { return numel; }
+    VECTORIZATION_FUNCTION_ATTRIBUTE device_enum device() const noexcept { return view_.device(); }
+    VECTORIZATION_FUNCTION_ATTRIBUTE int         device_index() const noexcept
+    {
+        return view_.device_index();
+    }
+    VECTORIZATION_FUNCTION_ATTRIBUTE auto stream() const noexcept { return view_.stream(); }
+    VECTORIZATION_FUNCTION_ATTRIBUTE bool is_aligned() const noexcept { return view_.is_aligned(); }
+    VECTORIZATION_FUNCTION_ATTRIBUTE bool is_contiguous() const noexcept { return contiguous; }
     // Delegation to data_view for allocation-identity checks used by tests.
-    VECTORIZATION_FUNCTION_ATTRIBUTE auto        base()          const noexcept { return view_.base(); }
-    VECTORIZATION_FUNCTION_ATTRIBUTE auto        id()            const noexcept { return view_.id(); }
+    VECTORIZATION_FUNCTION_ATTRIBUTE auto base() const noexcept { return view_.base(); }
+    VECTORIZATION_FUNCTION_ATTRIBUTE auto id() const noexcept { return view_.id(); }
 
     template <typename Stream>
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void record_stream(Stream s) { view_.record_stream(s); }
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void record_stream(Stream s) const
+    {
+        view_.record_stream(s);
+    }
+};
+
+// Host expression leaf. Ownership is removed before kernel dispatch; descriptors
+// passed to a device remain trivially copyable.
+template <typename T> struct retained_ref : strided_ref<T>
+{
+    memory::retained_ptr<std::remove_const_t<T>> storage;
+    retained_ref(strided_ref<T> ref, memory::retained_ptr<std::remove_const_t<T>> keep)
+        : strided_ref<T>(ref), storage(std::move(keep))
+    {
+    }
 };
 
 // Compute the element offset for flat index `flat` using the strided layout.
@@ -76,8 +128,11 @@ VECTORIZATION_FUNCTION_ATTRIBUTE std::size_t strided_offset(
     size_t    rem = flat;
     for (int k = n - 1; k >= 0; --k)
     {
-        const auto   dk  = static_cast<size_t>(s.sizes[k]);
-        if (dk == 0) return 0;
+        const auto dk = static_cast<size_t>(s.sizes[k]);
+        if (dk == 0)
+        {
+            return 0;
+        }
         const size_t idx = rem % dk;
         rem /= dk;
         off += idx * static_cast<size_t>(s.strides[k]);
@@ -93,14 +148,18 @@ VECTORIZATION_FUNCTION_ATTRIBUTE size_t leaf_offset(
     return strided_offset(s, idx);
 }
 
+template <typename T> size_t leaf_offset(retained_ref<T> const& s, size_t idx) noexcept
+{
+    return strided_offset(static_cast<strided_ref<T> const&>(s), idx);
+}
+
 // One operand's current row inside the CPU planner's loop2d kernel
 // (iteration_plan.h). `ptr` is the row's first element; `stride` is the
 // operand's innermost stride after planning: 1 (unit stride), 0 (broadcast
 // along the row) or anything else (strided, scalar loop only). The planner
 // rewrites `ptr` once per row, so element i of the row is ptr[i * stride] and
 // no index is ever divided.
-template <typename T>
-struct row_ref
+template <typename T> struct row_ref
 {
     using value_type = T;
 
@@ -108,23 +167,23 @@ struct row_ref
     int64_t  stride{0};
 };
 
-template <typename T>
-struct is_strided_ref : std::false_type
+template <typename T> struct is_strided_ref : std::false_type
 {
 };
 
-template <typename T, int MaxRank>
-struct is_strided_ref<strided_ref<T, MaxRank>> : std::true_type
+template <typename T, int MaxRank> struct is_strided_ref<strided_ref<T, MaxRank>> : std::true_type
 {
 };
 
-template <typename T>
-struct is_row_ref : std::false_type
+template <typename T> struct is_strided_ref<retained_ref<T>> : std::true_type
 {
 };
 
-template <typename T>
-struct is_row_ref<row_ref<T>> : std::true_type
+template <typename T> struct is_row_ref : std::false_type
+{
+};
+
+template <typename T> struct is_row_ref<row_ref<T>> : std::true_type
 {
 };
 

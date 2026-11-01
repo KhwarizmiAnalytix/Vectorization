@@ -1,13 +1,14 @@
 # Tensor Contiguity
 
-Scope: `Library/Vectorization/terminals/tensor.h`, `contiguous_` and
-`recompute_cpu_simd_alignment_state()`, as of August 2026. What "contiguous"
+Scope: `include/terminals/tensor.h`, `contiguous_` and
+`recompute_cpu_simd_alignment_state()`, as of November 2026. What "contiguous"
 means for `tensor<T>`, how it's computed and kept up to date, which
 operations preserve or break it, and where it's enforced.
 
 Backend dispatch (CPU/CUDA/HIP/Metal) is in
 [vectorization_backends.md](vectorization_backends.md). Storage
-(`data_ptr`/`data_view`) is in [memory_design.md](memory_design.md).
+uses Memory allocations promoted to `retained_ptr`; kernel descriptors use
+`data_view`.
 
 ---
 
@@ -35,17 +36,15 @@ SIMD loops require before they're allowed to read/write through a single
 `value_t*` with a plain `+= 1` stride, instead of walking
 `sizes_and_strides_` one dimension at a time.
 
-A tensor that fails this test isn't broken — `at(i, j)`/`operator[]` and
-`logical_offset()` (§5) always compute the correct strided offset regardless
-of `contiguous_`. It's slower (no flat-pointer fast path, no SIMD alignment
-peeling) and, since this session's hardening of `expressions_evaluator`, it
-is now a hard, catchable `logging::exception` on assignment into or out of
-such a tensor as a *destination*, rather than silently reinterpreting
-strided memory as packed.
+Owning `tensor<T>` values always satisfy this invariant. `tensor_view<T>` can
+carry arbitrary non-negative strides; indexing and CPU expression assignment
+walk those strides when the packed fast path does not apply. View copies are
+shallow and retain storage, while explicit owning construction from a view
+packs its logical elements.
 
 ## 2. Where it's tracked
 
-`contiguous_` (`tensor.h:1565`) is a cached `bool`, not computed on demand.
+`contiguous_` is a cached `bool`, not computed on demand.
 It — along with `numel_`, `align_start_`, `align_end_` — is recomputed by
 `recompute_cpu_simd_alignment_state()` every time `sizes_and_strides_`
 changes:
@@ -53,20 +52,22 @@ changes:
 - every constructor (default, shape, initializer-list, expression, the
   private view constructor used by `t()`/`permute()`/`view()`/`reshape()`/
   `slice()`),
-- copy construction and copy assignment (recomputed from the copied shape —
-  it does **not** just copy the source's `contiguous_` bit, see §4),
+- shallow view construction and `rebind()` (recomputed from the shared geometry),
+- owning copies (canonical packed strides, regardless of source layout),
 - `stamp_contiguous_shape()` (used by `clone()`).
 
-Move construction/assignment is the one exception: `contiguous_` (like
+Move construction and owning move assignment are the exceptions: `contiguous_` (like
 `numel_`, `align_start_`, `align_end_`) is copied directly from the moved-
 from tensor rather than recomputed, and the moved-from tensor is reset to
 its default empty state (`contiguous_ = true`, `numel_ = 0`) — cheaper than
 a redundant recompute, and correct since nothing about the shape changed.
+View move assignment writes through, just like view copy assignment; it keeps
+the destination geometry and does not empty the source.
 
 ## 3. The algorithm
 
 ```cpp
-// recompute_cpu_simd_alignment_state(), tensor.h:1509
+// recompute_cpu_simd_alignment_state()
 if (numel_ == 0) {
     contiguous_ = true;                    // no element can be "out of place"
 } else {
@@ -127,10 +128,12 @@ symptom sharper: what used to just silently skip an optimization now throws.
 | Operation | Result contiguity | Why |
 |---|---|---|
 | Any fresh-shape constructor | always `true` | `make_contiguous_sas()` builds canonical strides from scratch |
-| Copy ctor / copy assignment | mirrors source shape, recomputed | same sizes and strides are copied in; contiguity is re-derived from that shape, not taken from the source flag. The owned buffer is the view's physical span at offset 0 |
-| Move ctor / move assignment | mirrors source's cached flag (not recomputed); moved-from resets to `true`, empty | shape didn't change, no need to redo the O(rank) walk |
+| Owning copy ctor / copy assignment | always `true` | logical elements are packed in C order at offset 0 |
+| View copy ctor | mirrors source, recomputed | shares storage and geometry |
+| View copy/move assignment | unchanged | writes elements through existing geometry |
+| Move ctor / owning move assignment | mirrors source's cached flag (not recomputed); moved-from resets to `true`, empty | shape didn't change, no need to redo the O(rank) walk |
 | `clone()` | always `true` | `stamp_contiguous_shape()` rebuilds canonical strides over the packed copy, regardless of the source's contiguity |
-| `contiguous()` | always `true` | borrows (`is_contiguous()` already `true`) or falls back to `clone()` |
+| `contiguous()` | always `true` | retains existing storage when packed, otherwise retains a new packed copy |
 | `view()` | depends | strides from PyTorch's `computeStride` rule; packed sources stay packed, strided sources keep their gaps; errors when no view exists |
 | `reshape()` | depends | `view()` when one exists, otherwise a packed copy (`true`) |
 | `expand()` / `broadcast_to()` | `false` when any dimension is expanded | expanded dimensions get stride 0 |
@@ -161,40 +164,37 @@ packed in memory.
 | Site | Check | Debug-only or hard? |
 |---|---|---|
 | `tensor::begin()`/`end()` (const and non-const) | `is_contiguous()` | `VECTORIZATION_CHECK_DEBUG` — debug only |
-| `copy_from_host()` (destination) | `is_contiguous()` | `VECTORIZATION_CHECK_DEBUG` — debug only |
-| `expressions_evaluator::run()` on CPU | none: strided sources, destinations and broadcasting go through the iteration planner (`iteration_plan.h`); only a stride-0 destination is rejected | hard `VECTORIZATION_CHECK` — always |
+| `copy_from_host()` (destination) | `is_contiguous()` and matching count | hard `VECTORIZATION_CHECK` — always |
+| `expressions_evaluator::run()` on CPU | none: strided sources, destinations and broadcasting go through the iteration planner (`iteration_plan.h`); destination injectivity must be proven from its strides; source overlap is checked unless `noalias()` skips it in Release | hard `VECTORIZATION_CHECK` — always |
 | `expressions_evaluator::run()` on CUDA/HIP/Metal (destination) | `rhs.is_contiguous()` | hard `VECTORIZATION_CHECK` — always, until the P4 offset-calculator kernels |
 | `expressions_evaluator::run()` and reductions on Metal (sources) | every leaf packed with the result's element count | hard `VECTORIZATION_CHECK` — always; CUDA/HIP rebase strided leaves instead |
-| `expressions_evaluator::fill()` (destination) | `rhs.is_contiguous()` | hard `VECTORIZATION_CHECK` — always |
+| `expressions_evaluator::fill()` (destination) | injective on CPU; contiguous on GPU | hard `VECTORIZATION_CHECK` — always |
 | `logical_offset()` | branches on `contiguous_` (flat passthrough vs. per-dimension divmod) | not a check — always correct either way, just a fast path |
 
-The asymmetry is deliberate: `begin()` and `copy_from_host()` are
-debug-only because they're primarily internal-invariant assertions on
-well-formed call sites, while the GPU kernels and `fill()` sit directly on
-`data[i]` flat-pointer paths where a silent contiguity violation means
-writing through a stride pattern the destination doesn't actually have — so
-those stay hard checks in release builds too.
+CPU assignment and filling support strided destinations, provided each logical
+index writes a distinct element. This proof is cached with the geometry and
+cannot be bypassed by `noalias()`. GPU destinations still require contiguity.
 
 ## 6. Forcing contiguity
 
 `t.contiguous()` is the one call that's always safe regardless of `t`'s
-current state: identity (borrow, same pointer) when already contiguous,
-`clone()` (new packed buffer) otherwise. Prefer it over manually branching
+current state: retaining view (same pointer) when already contiguous,
+a view of a new packed buffer otherwise. Prefer it over manually branching
 on `is_contiguous()` before an expression assignment or a `begin()`-based
 loop.
 
 ## 7. Key files
 
-- `Library/Vectorization/terminals/tensor.h` — `contiguous_`,
+- `include/terminals/tensor.h` — `contiguous_`,
   `recompute_cpu_simd_alignment_state()`, `stamp_contiguous_shape()`,
   `logical_offset()`, `t()`/`permute()`/`view()`/`reshape()`/`slice()`/
   `clone()`/`contiguous()`.
-- `Library/Vectorization/expressions/expression_shape.h` — broadcast shape
+- `include/expressions/expression_shape.h` — broadcast shape
   inference and validation, `leaves_flat()`, `rebase_leaves()`.
-- `Library/Vectorization/expressions/iteration_plan.h` — the CPU planner
+- `include/expressions/iteration_plan.h` — the CPU planner
   (sort/merge, tiers, `loop2d`).
-- `Library/Vectorization/expressions/expressions_evaluator.h` —
+- `include/expressions/expressions_evaluator.h` —
   `run()`/`fill()` dispatch, the GPU/Metal hard checks and `check_cpu_reachable()`.
-- `Library/Vectorization/Testing/Cxx/TestTensor.cpp` — contiguity test
+- `Testing/Cxx/TestTensor.cpp` — contiguity test
   coverage (construction, copy/move, `t()`/`permute()`/`view()`/`reshape()`/
   `slice()`/`clone()`/`contiguous()`, the destination hard-check regression).

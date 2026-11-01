@@ -2,12 +2,14 @@
 
 Scope: `include/terminals/tensor.h`, `include/expressions/`, the CPU, CUDA,
 HIP and Metal evaluators, and the parts of Memory, Scalars and LinearAlgebra
-they build on, as of October 31, 2026. This is the **single proposed plan**
-for the tensor and evaluator redesign. It is not the current contract.
+they build on, updated November 1, 2026. This is the **single implementation
+plan** for the tensor and evaluator redesign. The status table and
+implementation notes record delivered work; remaining requirements describe
+targets, not the current contract.
 
 It covers storage ownership, the `tensor` / `tensor_view` split,
 broadcasting and strided evaluation, aliasing and `noalias()`, slice steps,
-transfers, reductions, the LinearAlgebra adapter, backend launch
+transfers, reductions, the PyTorch-style matrix LinearAlgebra adapter, backend launch
 unification, allocation, clang-tidy conformance, phased implementation with
 per-phase performance gates, and the benchmark protocol.
 
@@ -74,8 +76,10 @@ expression must fuse.
 
 ### Implementation status
 
-Confirmed by source inspection on October 31, 2026. "Done" items still need
-their correctness and performance gates verified ([section 16](#16-implementation-phases)).
+Updated by source inspection on November 1, 2026. "Done" means implemented;
+it does not imply that every backend or performance gate has passed.
+Recorded verification and remaining gates are listed in
+[section 17](#recorded-verification).
 
 | Item | Status | Where |
 |---|---|---|
@@ -84,26 +88,27 @@ their correctness and performance gates verified ([section 16](#16-implementatio
 | CPU `parallel_for` above a 32,768-element grain | Done; serial SIMD fallback fixed in `c4fde41`, not yet benchmarked | `iteration_plan.h`, `expressions_evaluator.h` |
 | Strided expression leaves (`strided_ref`) — transposes need no materialization | Done | `strided_ref.h`, `store_operand()` |
 | Stride-0 destination rejected | Done | `make_iteration_plan()` |
-| General destination injectivity proof (`non_overlapping` flag) | Not started: only stride 0 is rejected | [section 6](#internal-overlap) |
+| General destination injectivity proof (`non_overlapping_` flag) | Done: cached stride-sorted proof; unproven destinations rejected even with `noalias()` | `tensor.h`, `overlap.h` |
 | `slice(dim, optional start, optional stop, step ≥ 1)` | Done | `tensor.h` |
 | `expand`, `broadcast_to`, `squeeze`, `unsqueeze`, `flatten`; Release checks on view operations | Done | `tensor.h` |
-| Copy constructor keeps the source layout | Done in `c7f436f` | `tensor.h` |
+| Copy semantics | Done: owners pack logical values into independent C-order storage; view copies share storage and geometry. Supersedes the source-stride-preserving copy from `c7f436f` | `tensor.h` |
 | CUDA/HIP strided sources | Partial: leaves are rebased, destination must be contiguous | `rebase_leaves()` |
-| `retained_ptr` storage; views retain storage | Not started: storage is `data_ptr` + `data_view`, views borrow | `tensor.h` |
-| Expression leaves keep rvalue operands alive | Not started: leaves borrow through `strided_ref` | `store_operand()` |
-| `tensor` / `tensor_view` split, `noalias()` | Not started | — |
-| Destination/source overlap classifier, signed-coefficient lattice test, provenance-aware storage shortcut | Not started: `expression_aliases_ptr()` is never called | `expression_interface.h` |
-| `flip`, tiled transpose | Not started | — |
+| `retained_ptr` storage; views retain storage | Done for owned/adopted storage; explicit raw-pointer and `data_view` construction remains an unsafe borrow | `tensor.h` |
+| Expression leaves keep operands alive | Done: `retained_ref` snapshots descriptors and retains lvalue and rvalue storage; `lower_raw()` removes ownership before dispatch | `strided_ref.h`, `expression_interface.h` |
+| `tensor` / `tensor_view` split, const views, `rebind()`, elementwise `noalias()` | Done: distinct `tensor_impl<T, IsView>` instantiations; write-through view assignment; proxy offers `=`, `+=`, `-=` | `tensor.h`, `tensor_view.h`, `noalias.h` |
+| Destination/source overlap classifier and signed-coefficient lattice test | Done: address ranges, identical mappings, dense spans, stride GCD and nested-stride carry intervals | `overlap.h` |
+| Provenance-aware storage shortcut and explicit offset field | Not started: classifier compares addresses conservatively; offsets are derived from `data_view` | `tensor.h`, Memory U1 |
+| `flip`, tiled transpose | Partial: CPU logical copies have an 8×8 transpose path; planner-wide transpose, GPU copy kernels and `flip` remain | `tensor.h`, `iteration_plan.h` |
 | Planner-owned prefetch; removal of the aligned-source variant | Not started: per-leaf prefetch and both alignment variants remain | `expressions_evaluator.h` |
-| Axis reductions; strided reductions | Not started | `reduce_op.h` |
+| Axis reductions; strided reductions | Partial: CPU whole-tensor strided/broadcast reductions exist; axis reductions and general strided GPU reductions remain | `expressions_evaluator.h`, `reduce_op.h` |
 | GPU `clone()` of a strided slice without host staging | Not started: stages through host | `tensor::clone()` |
 | CUDA/HIP offset calculator, 32-bit indexing, vector loads | Not started: one thread per element, scalar loads | `expressions_evaluator_gpu.h` |
 | GPU reduction without per-pass allocation | Not started | `reduce_gpu_partials()` |
 | Metal pipeline cache, batched command buffers, per-allocation `MTLBuffer` | Not started: MSL rebuilt per call, commit-and-wait, per-call buffer wrapping | `expressions_evaluator_metal.h`, Scalars `metal_dispatch.mm` |
 | Unified launch contract across backends | Not started | [section 13](#13-backend-launch-unification) |
-| Tensor-level `matmul`, `dot`, factorizations | Not started: matrix block under `#if 0` | `tensor.h` |
+| Tensor-level `matmul`, `dot` and PyTorch-style matrix linear algebra | Not started: matrix block under `#if 0`; dependency algorithms still need tensor adapters | [section 11](#11-linearalgebra-adapter), `tensor.h` |
 | Memory U1 and LinearAlgebra U2 APIs | Not started | [section 12](#12-upstream-api-changes) |
-| clang-tidy coverage of `include/` and `Testing/` | Not started: CI analyzes one source file; 65 findings in a two-file baseline | [section 15](#15-clang-tidy-conformance) |
+| clang-tidy coverage of `include/` and `Testing/` | Repository-wide work remains: changed-code analysis is clean for this delivery, but CI coverage and the historical baseline are not cleared | [section 15](#15-clang-tidy-conformance) |
 
 ---
 
@@ -116,8 +121,10 @@ their correctness and performance gates verified ([section 16](#16-implementatio
 | Opting out of the overlap check | `dst.noalias() = expr`: the caller asserts no overlap. It skips the O(rank) check in Release and lets `too_hard` layouts run. It does not decide whether a product needs a temporary; the classifier does | Eigen `noalias()`; PyTorch has only `out=` and the internal `check_mem_overlap(false)` |
 | Negative slice steps | Forbidden: `step < 1` is an error, strides are never negative, `flip` returns a copy | PyTorch; NumPy supports them |
 | `*` on tensors | Elementwise; matrix multiplication only through the `matmul` family | PyTorch, Eigen `Array` |
+| Math on a matrix product | `exp`, `sqr`, `sqrt` and `log` accept `matmul` / `bmm` results directly and act elementwise; `sqr` corresponds to PyTorch `square` | PyTorch pointwise semantics; lazy evaluation here |
+| Matrix linear algebra | Functional `vectorization::linalg` API follows `torch.linalg` names, matrix/batch dimensions, options and result fields; reusable factorization objects are additional conveniences | PyTorch `torch.linalg` |
 | Backend selection | Compile-time; no runtime-polymorphic launch interface | Eigen `TensorDevice`; deviates from PyTorch's runtime dispatcher |
-| GPU synchronization | Asynchronous launch on every GPU backend; the host waits only on a read or an explicit event | CUDA streams; PyTorch MPS commit-and-continue |
+| GPU synchronization | Asynchronous launches; host waits on reads, explicit events, or numerical status in checked linear algebra. `_ex(check_errors=false)` keeps status on device | CUDA streams; PyTorch checked / `_ex` linear algebra; MPS commit-and-continue |
 | Memory / LinearAlgebra / Scalars API changes | Designed and landed in their own repositories first, then the submodule is bumped | — |
 | Static analysis | All first-party C++ is clang-tidy clean under `.clang-tidy`, warnings as errors, in every configuration CI builds; suppressions name the check and a reason | PyTorch gates on clang-tidy through lintrunner with named `NOLINTNEXTLINE`; Eigen does not gate on clang-tidy |
 
@@ -127,6 +134,14 @@ PyTorch handle copy. Code that only needs to borrow takes a view.
 ---
 
 ## 3. Layers: storage, geometry, kernel descriptor
+
+The compact state below is the **target layout**. The current public aliases
+use `tensor_impl<T, false>` and `tensor_impl<T, true>` to share implementation.
+They retain storage and cache `contiguous_` and `non_overlapping_` as separate
+booleans, while a `data_view` carries the current window. The explicit offset,
+packed flags, provenance shortcut and CPU control-block coallocation remain
+targets. Read-only descriptors use `const_data_view` to preserve Memory's
+allocation identity without instantiating its unsupported `data_ptr<const T>`.
 
 ```cpp
 // Shared state of tensor<T> and tensor_view<T>.
@@ -156,22 +171,23 @@ struct strided_ref
     `retained_ptr(data_ptr&&)`, which does not reallocate.
   - External buffers use `retained_ptr::adopt`: a real deleter transfers
     ownership; an explicit no-op deleter is a deliberate unsafe borrow.
-  - Storage records its provenance: `allocated` (issued by a Memory
+  - **Provenance — target:** record `allocated` (issued by a Memory
     allocator) or `adopted`. Two distinct `allocated` storages never share
     an address. Adopting overlapping external buffers independently creates
     distinct control blocks over the same memory, so storage identity proves
     nothing about adopted storage ([section 6](#6-aliasing-and-overlap)).
-  - Every view keeps its storage alive, at the cost of one atomic increment
-    per view.
+  - Every view of owned/adopted storage keeps its allocation alive, at the
+    cost of one atomic increment per shared handle. A no-op deleter retains
+    only the borrow handle; callers still keep external memory alive.
   - PyTorch's `TensorImpl` holds `intrusive_ptr<StorageImpl>` the same way.
     Eigen `Block` / `Map` hold raw pointers, which only works because they
     are expression types not meant to be stored.
-- **The offset is a field**, not recomputed by pointer subtraction, so
+- **Explicit offset — target:** store it as a field, not recomputed by pointer subtraction, so
   copies, overlap checks and GPU transfers work from `(base, offset)`.
 - **Kernels only see `strided_ref`.** Reference-counted handles never reach
   a device. Worker threads also use `strided_ref` and raw pointers, so they
   never contend on a shared control block.
-- **One allocation per CPU tensor** (Memory U1): for sized CPU allocations
+- **One allocation per CPU tensor — target** (Memory U1): for sized CPU allocations
   the control block sits in the same allocation as the data, as
   `std::make_shared` does. GPU and adopted storage keep a separate control
   block ([section 14](#14-allocation-and-workspace)).
@@ -187,11 +203,18 @@ struct strided_ref
 | `operator=` | Deep copy / evaluate | Writes through | Deleted |
 | Converts to | Either view type, implicitly | `tensor<T>`, explicitly (packed copy) | `tensor<T>`, explicitly |
 
+The split, const access and write-through semantics are implemented. A const
+owner converts only to a read-only view. `clone()`, `to_cpu()` and expression
+construction return independent owning tensors. Raw-pointer or `data_view`
+construction copies for `tensor<T>` and deliberately borrows for
+`tensor_view<T>`; a view can also retain an adopted `retained_ptr` directly.
+
 - **Return types.**
-  - Views: `slice`, `t`, `permute`, `expand`, `view`, `squeeze`,
-    `unsqueeze`.
-  - Tensors: `clone`, `flip`, construction from an expression.
-  - Lazy products: `matmul`, `bmm` ([section 11](#11-linearalgebra-adapter)).
+  - Views: `as_view`, `slice`, `t`, `permute`, `expand`, `broadcast_to`,
+    `view`, `squeeze`, `unsqueeze`, `flatten`.
+  - Tensors: `clone`, `to_cpu`, construction from an expression; `flip`
+    remains planned.
+  - Planned lazy products: `matmul`, `bmm` ([section 11](#11-linearalgebra-adapter)).
   - `reshape` and `contiguous` return a view: of the existing storage when
     possible, otherwise of a new packed copy.
 - **Parameters.** Non-template functions with a concrete element type take
@@ -209,10 +232,11 @@ struct strided_ref
 - **`noalias()`.** `tensor<T>` and `tensor_view<T>` have `noalias()`, which
   returns a proxy offering only `=`, `+=` and `-=` ([section 6](#6-aliasing-and-overlap)).
   It is deleted on `tensor_view<const T>`.
-- **Fast path by type.** When the destination and every expression leaf
+- **Fast path by type — target.** When the destination and every expression leaf
   are `tensor<T>`, contiguity is known at compile time and planning reduces
   to a shape comparison. A `tensor_view` destination is checked at run time
-  ([section 5](#contiguous-fast-path)).
+  ([section 5](#contiguous-fast-path)). Current evaluation still checks
+  cached contiguity and leaf element counts at run time.
 
 ---
 
@@ -220,25 +244,37 @@ struct strided_ref
 
 ### Capture
 
-- An lvalue tensor or view is stored as a `tensor_impl const*`.
-- An rvalue (`a.t() + b`, `tensor(n) + a`) is moved into the node and keeps
-  its storage alive. Eigen does not do this; dangling `auto` expressions are
-  a known Eigen pitfall.
-- The rule only holds if the operand's value category reaches the node.
-  Every function that builds a node (operators, `matmul`, `bmm`) takes
-  operands by forwarding reference and passes them on with `std::forward`.
-  A `const&` parameter turns a temporary view into an lvalue, so the node
-  would store a pointer to a descriptor that dies at the end of the
-  statement. A conversion inside such a function (for example
-  `tensor<T>` to `tensor_view<const T>`) creates a temporary too, and is
-  captured by value.
+- **Implemented.** `store_operand()` stores every tensor/view leaf as a
+  `retained_ref`: a snapshot of its `strided_ref` plus a shared storage
+  handle. This applies to lvalues and rvalues, including temporary views
+  and temporary owners. Rebinding or destroying the source handle does
+  not invalidate the saved expression's descriptor or allocation.
+- **Cost.** Capturing an lvalue currently increments the reference count;
+  nested expression copies can also copy retained handles. The original
+  atomic-free lvalue capture gate is not met.
+- **Remaining optimization.** Borrowing stable lvalue descriptors and moving
+  rvalues into nodes is a possible optimization, subject to explicit
+  lifetime semantics and benchmarks. If that route is taken, every builder,
+  including planned `matmul` and `bmm`, must preserve value categories with
+  forwarding references and `std::forward`; temporary conversions must be
+  retained by value.
 
 ### Lowering
 
-At evaluation the tree is converted at compile time (`lower_t<E>`) into a
-tree whose leaves are `strided_ref`, or `T*` for tier-0 leaves on GPU. The
-lowered tree is what CUDA/HIP kernels take by value and what the Metal
-emitter walks.
+**Implemented:** `raw_lowered_t<E>` and `lower_raw()` rebuild host trees with
+trivially copyable `strided_ref` leaves before evaluator dispatch. CPU worker
+trees and CUDA/HIP kernel arguments do not contain retained storage handles;
+the Metal emitter also consumes the lowered tree. `flat_lowered()` then
+rebases strides for broadcasting where needed.
+
+**Product target:** product nodes will be scheduled and evaluated through the
+LinearAlgebra adapter before elementwise lowering
+([section 11](#elementwise-math-on-products)). Their results become tensor
+leaves. The remaining tree is converted at compile time (`lower_t<E>`)
+into a tree whose leaves are `strided_ref`, or `T*` for tier-0 leaves on
+GPU. The lowered tree is what CUDA/HIP kernels take by value and what the
+Metal emitter walks. A product never performs a dot product inside an
+elementwise coefficient evaluator.
 
 ### Planner
 
@@ -268,6 +304,13 @@ O(leaves × rank) cost.
 | 3 | Anything else | Tiled transpose or lane-reversing `flip` when the shape permits; otherwise scalar on CPU, offset-calculator kernel on GPU |
 
 #### Contiguous fast path
+
+The storage-provenance ordering and type-based shortcut below remain
+optimization targets. Current assignment checks overlap before calling the
+evaluator; the evaluator's runtime flat-path check avoids sort/merge planning
+for packed, compatible operands. The classifier uses addresses even when
+storage handles differ, so independent adoption cannot incorrectly prove
+disjointness.
 
 Planning costs more than the arithmetic for small tensors. An O(leaves)
 check runs first:
@@ -447,6 +490,13 @@ pair is classified like PyTorch's `get_overlap_status`:
 | `partial` | The lattice test finds a shared element | Error | Error |
 | `too_hard` | The lattice test's preconditions fail, so it cannot decide | Error | Error |
 
+**Implemented for elementwise assignment:** `classify_overlap()` and
+`check_assignment_overlap()` in `overlap.h`. Disjoint byte ranges are cleared
+first; identical injective mappings are `full`; intersecting dense spans are
+`partial`. A stride-GCD test can prove that interleaved slices are disjoint
+before the nested-stride lattice test. The provenance shortcut and all
+product-specific behavior in this section remain targets.
+
 - **Storage provenance.** Different storage proves `none` only when both
   storages are `allocated`. Adopted storage is compared by address: an
   adopted buffer may overlap another adopted buffer or an allocation under
@@ -467,16 +517,18 @@ pair is classified like PyTorch's `get_overlap_status`:
     are dropped. Sorted ascending, each stride divides the next, and both
     views are injective in that order (`sᵢ₊₁ ≥ nᵢ·sᵢ`; see
     [internal overlap](#internal-overlap)).
-  - *Procedure.* Work from the innermost dimension. Divide the residual by
-    `s₀`; a remainder means `none`. At each level `dᵢ` must be congruent to
-    the residual modulo `sᵢ₊₁ / sᵢ`. Injectivity bounds the `dᵢ` interval to
-    fewer than two periods, so at most two candidates fit, and the carry
-    leaves at most two residuals for the next level. The outermost residual
-    must lie within its own bound. The cost is O(rank) with at most two live
-    states.
+  - *Implemented procedure.* Work from the innermost dimension. Divide the
+    residual by `s₀`; a remainder means `none`. Track the possible residuals
+    as an integer interval `[lo, hi]`. For signed coefficient bounds `[L, U]`
+    and period `p = sᵢ₊₁ / sᵢ`, propagate the carry interval as
+    `[ceil((lo − U) / p), floor((hi − L) / p)]`. An empty interval means
+    `none`; at the outermost dimension the interval must intersect its
+    coefficient bounds. Overflow uncertainty returns `too_hard`. The carry
+    walk costs O(rank) after axes have been sorted.
   - *Coverage.* This covers shifted, interleaved and row-offset slices.
     Unequal or non-nested strides and non-injective layouts return
-    `too_hard`, never `none`.
+    `too_hard` unless an earlier range or GCD test already proves
+    disjointness.
 - **Deviation from PyTorch.** PyTorch lets `too_hard` cases run silently;
   this design errors on them.
 - **Escape hatches.** For `partial` the error names `dst = src.clone();`.
@@ -494,11 +546,11 @@ strides `(1, 1)` touches offsets `{0, 1, 1, 2}` with no zero stride.
   dimension fails this test. When strides are nested, the test is exact. In
   general it is sufficient but not necessary: sizes `(3, 2)` with strides
   `(2, 3)` are injective but fail. Such layouts are treated as unproven.
-- **Flag.** Every view constructor computes the proof in
-  O(rank log rank) and caches it as `non_overlapping` in
-  `tensor_impl::flags_`. `contiguous` and `dense_non_overlapping` imply it.
-  The planner then reads a flag. Views derived from a packed tensor by
-  `slice`, `t`, `permute`, `squeeze`, `unsqueeze` and `view` keep the
+- **Flag.** View geometry construction computes the proof in
+  O(rank log rank) and caches it as `tensor_impl::non_overlapping_`.
+  Assignment and fill validate it before dispatch. Consolidating geometry
+  booleans into `flags_` remains a layout optimization. Views derived from
+  a packed tensor by `slice`, `t`, `permute`, `squeeze`, `unsqueeze` and `view` keep the
   property, and the check confirms it. `expand`, `broadcast_to` and
   explicit-stride construction are where it can be lost.
 - **Enforcement.** Writing to a destination without the flag is an error in
@@ -508,13 +560,19 @@ strides `(1, 1)` touches offsets `{0, 1, 1, 2}` with no zero stride.
   have no such requirement. A non-injective source matters only when its
   address range meets the destination's, and the lattice test then
   returns `too_hard`.
-- **Status.** The stride-0 case is implemented. The general proof is not
-  started.
+- **Status.** Implemented, including `(2, 2)` / `(1, 1)` rejection and
+  rejection of injective layouts that fail the sufficient proof. CPU scalar
+  filling now supports proven strided destinations; GPU destinations still
+  require contiguity.
 
 ### `noalias()`
 
 ```cpp
-c.noalias() = a + b;          // skip the overlap classifier
+c.noalias() = a + b;         // implemented; classifier skipped in Release
+c.noalias() += a;            // implemented elementwise update
+c.noalias() -= b;            // implemented elementwise update
+
+// Planned with P5 products:
 c.noalias() = matmul(a, b);   // GEMM straight into c, check skipped in Release
 c.noalias() += matmul(a, b);  // beta = 1
 c.noalias() -= matmul(a, b);  // alpha = -1, beta = 1
@@ -527,8 +585,9 @@ c.noalias() -= matmul(a, b);  // alpha = -1, beta = 1
   (`partial`, or `full` for a non-elementwise operation); `too_hard` is
   accepted. Release skips the classifier; a false assertion is undefined
   behavior, as in Eigen.
-- **Proxy.** `noalias()` returns a non-copyable
-  `noalias_proxy<tensor_view<T>>` holding a reference to the destination.
+- **Proxy.** Implemented in `noalias.h` as a non-copyable
+  `noalias_proxy<Destination>` holding a reference to either an owning
+  tensor or a writable view.
   `+=` and `-=` on an elementwise expression evaluate `dst = dst ± expr`,
   which is `full` overlap and safe. The proxy never resizes; the result shape
   must equal the destination's.
@@ -578,8 +637,8 @@ free of reversed dimensions.
   Errors when no view exists; never copies.
 - **`reshape(shape)`**: `view` when possible, otherwise a packed copy viewed
   with the new shape.
-- **`contiguous()`**: a view of the same storage when already packed (safe
-  once views retain storage), otherwise a packed copy.
+- **`contiguous()`**: implemented as a retaining view of the same storage
+  when already packed, otherwise a retaining view of a new packed copy.
 - **`expand` / `broadcast_to`** (stride-0 views, never valid destinations),
   **`squeeze`**, **`unsqueeze`**, **`flatten`**: implemented. **`flip`** as a
   copy ([section 7](#7-slice-steps)): not yet.
@@ -655,6 +714,14 @@ synchronize.
 
 ## 11. LinearAlgebra adapter
 
+The tensor-facing matrix API follows the functional design of
+[`torch.linalg`](https://docs.pytorch.org/docs/stable/linalg.html).
+Public functions live in `vectorization::linalg`; they adapt tensors to the
+separate dependency's `::linalg` kernels. `linalg::matmul` also exposes the
+existing `vectorization::matmul` entry point with identical behavior.
+Backend enums, workspace pointers and destructive LAPACK-style buffers
+remain implementation details.
+
 ```cpp
 // True for tensor<T>, tensor_view<T> and tensor_view<const T> (any cv/ref)
 // whose element types match; mirrors is_pure_expression in tensor.h.
@@ -688,11 +755,11 @@ operand_value_t<A> dot(A const& a, B const& b);
 
 - **Why not `tensor_view<const T> const&`.** Deduction does not consider
   the implicit `tensor<T>` → view conversion, so that signature rejects
-  owning tensors. It would also turn temporary views into lvalues inside
-  `matmul`, and the deferred product would point at descriptors that die
-  at the end of the statement ([section 5](#capture)). The forwarding form
-  fixes both. An lvalue `tensor<T>` is captured by pointer with no atomic
-  operation, and an rvalue view such as `a.t()` is moved into the node.
+  owning tensors. Forwarding also preserves temporary value categories if
+  product capture later uses the borrowed-lvalue optimization
+  ([section 5](#capture)). Current elementwise capture retains every leaf;
+  atomic-free lvalue capture is a remaining performance target, not an
+  implemented property.
 - **Element types.** Mixed element types are a compile error; there is no
   implicit promotion.
 - **Expressions as operands.** Elementwise expressions do not satisfy
@@ -705,8 +772,90 @@ operand_value_t<A> dot(A const& a, B const& b);
   objects. PyTorch takes `const Tensor&` but computes eagerly, so lifetime
   never arises.
 
-Shapes follow PyTorch's `matmul` rules for vectors, matrices and batches.
-Inner dimensions are validated in every build type.
+### PyTorch matrix semantics
+
+`matmul` follows [PyTorch's rank and batch rules](https://docs.pytorch.org/docs/stable/generated/torch.matmul.html):
+
+| Left shape | Right shape | Result shape |
+|---|---|---|
+| `(k)` | `(k)` | `()` (0-d tensor expression) |
+| `(m, k)` | `(k)` | `(m)` |
+| `(k)` | `(k, n)` | `(n)` |
+| `(m, k)` | `(k, n)` | `(m, n)` |
+| `(..., m, k)` | `(..., k, n)` | `(broadcast_batch..., m, n)` |
+
+A left vector is temporarily promoted to `(1, k)` and a right vector to
+`(k, 1)`; remove only those introduced dimensions after multiplication.
+Batch dimensions align from the right and broadcast by the usual
+equal-or-size-1 rule. Matrix dimensions never broadcast. Scalar operands,
+unequal contraction dimensions and incompatible batches are errors in
+every build type. Empty output dimensions are valid; a zero contraction
+dimension produces zeros before any elementwise math is applied.
+
+`bmm` requires two rank-3 operands `(batch, m, k)` and `(batch, k, n)`
+with equal batch sizes, returning `(batch, m, n)`.
+[Like PyTorch `bmm`](https://docs.pytorch.org/docs/stable/generated/torch.bmm.html),
+it does not broadcast. `*` remains elementwise at every rank. These shape
+and math rules do not change the library's same-type operand requirement,
+value semantics or lazy evaluation.
+
+### Elementwise math on products
+
+`product_expression` participates in the public expression traits, shape
+inference and unary/binary builders. Callers can compose products directly:
+
+```cpp
+out = ::exp(matmul(a, b));
+out = ::sqr(matmul(a, b));
+out = ::sqrt(matmul(a, b));
+out = ::log(matmul(a, b));
+out = ::log(::sqrt(::sqr(matmul(a, b)) + epsilon));
+out = ::exp(matmul(a, b) + bias);  // bias broadcasts over the product
+out = ::log(bmm(batch_a, batch_b));
+```
+
+These functions preserve the product's shape and apply to each element.
+`sqr(x)` means `x * x`, corresponding to
+[PyTorch `square`](https://docs.pytorch.org/docs/stable/generated/torch.square.html);
+`sqrt(x)` takes the
+[elementwise square root](https://docs.pytorch.org/docs/stable/generated/torch.sqrt.html).
+`exp` is the
+[elementwise exponential](https://docs.pytorch.org/docs/stable/generated/torch.exp.html)
+and `log` is the
+[elementwise natural logarithm](https://docs.pytorch.org/docs/stable/generated/torch.log.html).
+For real floating-point inputs, negative `sqrt` / `log` inputs yield NaN,
+`log(0)` yields negative infinity, and overflow can yield infinity.
+No implicit clamping is added. Dtype support follows the selected backend.
+
+- **Build and capture.** Unary/binary builders accept a product wherever
+  they accept an elementwise expression and forward operands by the
+  capture rules in section 5. Construction computes metadata only. A
+  deferred `auto e = ::exp(matmul(a.t(), b));` owns its temporary nodes
+  and view descriptors; the lvalue owners must still outlive evaluation.
+  This does not relax the explicit-materialization rule for expressions
+  used as inputs to `matmul` / `bmm` above.
+- **Evaluate once.** Before any output write, validate the whole tree's
+  shapes, devices and destination overlap. Evaluate each product node
+  occurrence once through GEMM, GEMV, DOT or batched dispatch, replace it
+  with a leaf retaining the result storage, then run the remaining
+  elementwise tree in one traversal or kernel. Repeated product syntax
+  does not imply common-subexpression elimination; callers can explicitly
+  materialize a product to reuse its values. Vector/vector products use
+  `dot_out` into a 0-d tensor, so composing unary math on a GPU product
+  does not extract a host scalar.
+- **Storage and aliasing.** The default for a product nested under unary
+  math is a packed intermediate. Keep it alive through the consumer's
+  completion; GPU producer and consumer run in order on the same stream,
+  with storage recorded there and no host read between stages. Before
+  considering destination reuse, classify every original product input
+  and remaining leaf. `a = ::exp(matmul(a, b))` must finish the product
+  before overwriting `a`. `noalias()` never removes a required evaluation
+  stage or bypasses destination injectivity checks.
+- **Fusion boundary.** P5 guarantees composition through a product stage
+  followed by an elementwise stage. For `::exp(matmul(a, b) + bias)`, the
+  addition and exponential share the elementwise pass. A backend fused
+  epilogue or safe destination reuse is an optional measured optimization;
+  arbitrary unary math is not assumed to be supported by GEMM.
 
 ### Assignment and `noalias()`
 
@@ -747,8 +896,9 @@ product.
 - **True fused epilogues** (bias, activation) are a separate P6 study using
   backend support such as cuBLASLt epilogues, subject to dtype, layout and
   batching constraints.
-- Any other tree containing a product evaluates the product into a temporary
-  leaf. Eigen recognizes `scalar * product` the same way.
+- Any other tree containing a product, including the unary math above,
+  evaluates the product into a temporary leaf before elementwise lowering.
+  Eigen recognizes `scalar * product` the same way.
 
 ### Routing by size and shape
 
@@ -807,13 +957,179 @@ allocation. Packing and workspace growth are measured separately from the
 steady-state call, and backend-internal allocation separately from
 tensor-layer allocation.
 
-### Factorizations
+### Matrix linear algebra API
 
-Reusable factorization objects hold their factors and pivots and offer
-`.solve(b)`: `lu_factorization<T>`, `cholesky<T>`, `qr<T>`, and SVD where
-the backend supports it. Models: Eigen `PartialPivLU` / `LLT` /
-`HouseholderQR`, PyTorch `lu_factor` / `lu_solve`. Factorization and later
-solves are measured separately.
+The following is the planned tensor API, not a claim that these adapters
+are implemented. Each operation must have an explicit backend/dtype
+capability entry before it is enabled. Let `batch...` denote leading
+dimensions and `k = min(m, n)`.
+
+| Family | Public operations | Matrix and result contract |
+|---|---|---|
+| Square systems | `solve`, `solve_ex` | `A: (..., n, n)`; solve `A X = B` by default or `X A = B` with `left=false`; preserve vector versus matrix RHS conventions and broadcast compatible batches |
+| Triangular systems | `solve_triangular` | `upper` is required; `left=true`, `unitriangular=false` by default; read only the selected triangle and ignore its diagonal when unit triangular |
+| Reuse of factors | `lu_factor`, `lu_factor_ex`, `lu_solve`, `cholesky_solve` | Packed LU plus integer pivots, or a triangular Cholesky factor, reused for multiple RHS; `cholesky_solve(B, L, upper=false)` retains PyTorch's argument order |
+| Least squares | `lstsq` | Rectangular `A: (..., m, n)` and matrix RHS `B: (..., m, nrhs)`; result fields `solution`, `residuals`, `rank`, `singular_values` |
+| Inverses | `inv`, `inv_ex`, `pinv` | `inv` requires square invertible input; `pinv` maps `(..., m, n)` to `(..., n, m)` with explicit `atol`, `rtol`, `hermitian` options |
+| Cholesky | `cholesky`, `cholesky_ex` | Symmetric/Hermitian positive-definite `(..., n, n)` to the same shape; lower factor by default, `upper=false` |
+| LU | `lu`, `lu_factor` | `lu` returns `P`, `L`, `U` with `A = P L U`; `lu_factor` returns `LU`, `pivots`; rectangular inputs supported |
+| QR | `qr` | Fields `Q`, `R`; `mode=reduced` by default, with `complete` and `r` modes |
+| Singular values | `svd`, `svdvals` | Fields `U`, `S`, `Vh`; `full_matrices=true` by default; `S: (..., k)` is real and descending; `svdvals` computes only `S` |
+| Symmetric spectrum | `eigh`, `eigvalsh` | `UPLO=L` by default; eigenvalues real and ascending, eigenvectors in columns; read only the selected triangle |
+| General spectrum | `eig`, `eigvals` | Square inputs; complex eigenvalues and eigenvectors even for real inputs; no assumed eigenvalue ordering |
+| Determinants | `det`, `slogdet` | Square inputs; `det: batch...`; `slogdet` fields `sign`, `logabsdet`, each of shape `batch...` |
+| Norms and conditioning | `vector_norm`, `matrix_norm`, `cond` | Preserve the operation's `ord`, `dim`, `keepdim` rules; matrix norm defaults to Frobenius over `(-2, -1)`; condition number defaults to the 2-norm |
+| Numerical rank | `matrix_rank` | Rectangular matrices to integer `batch...`; `atol`, `rtol`, `hermitian` follow the same threshold conventions as `pinv` |
+| Matrix functions | `matrix_exp`, `matrix_power` | Square matrices to the same shape; exponential is a matrix function, power takes an integer exponent |
+| Symmetric matrix root | `matrix_sqrth` | Principal symmetric/Hermitian positive-definite root, using the lower triangle; availability follows the pinned PyTorch reference version |
+| Matrix chains | `multi_dot` | PyTorch's rank-2 matrix chain with optional vector endpoints; choose parenthesization to reduce arithmetic; no batch broadcasting |
+
+`cholesky_solve` is a top-level function in PyTorch; placing it in this
+library's `linalg` namespace is an explicit organizational difference.
+LDL, polar, Householder, tensor inverse/solve and other `torch.linalg`
+families remain separate follow-up adapters. Their absence must be visible
+in the capability table; adding a backend algorithm alone does not expose
+a tensor operation.
+
+#### Shapes, defaults and results
+
+- **Matrix axes.** Unless an operation exposes `dim`, the last two axes
+  are matrix axes and preceding axes are batches. A unary operation keeps
+  those batches; multiple inputs broadcast only where that specific
+  PyTorch operation permits. Do not apply `matmul`'s vector promotion to
+  all solvers. A single-matrix scalar result is a 0-d tensor on the input
+  device, not a host `T`.
+- **Solves.** Follow the exact RHS rank rules of
+  [`torch.linalg.solve`](https://docs.pytorch.org/docs/stable/generated/torch.linalg.solve.html),
+  including a vector RHS and `left=false`. Solve through factors rather
+  than constructing an inverse. `lu_solve` exposes `left` and `adjoint`;
+  the latter means conjugate transpose for complex data.
+- **Named results.** Return structs supporting field access and structured
+  binding in PyTorch's order: `svd_result{U, S, Vh}`,
+  `qr_result{Q, R}`, `lu_factor_result{LU, pivots}`,
+  `eigh_result{eigenvalues, eigenvectors}` and
+  `slogdet_result{sign, logabsdet}`. `_ex` adds the operation's `info`
+  tensor. Pivots use PyTorch's
+  [1-based row-interchange convention](https://docs.pytorch.org/docs/stable/generated/torch.linalg.lu_factor.html);
+  normalize backend index width/base at the adapter boundary. Rank outputs
+  are int64; pivots and `info` use the pinned reference's integer dtypes.
+- **Decomposition dimensions.**
+  [Reduced QR](https://docs.pytorch.org/docs/stable/generated/torch.linalg.qr.html)
+  returns `Q: (..., m, k)`, `R: (..., k, n)`; complete QR returns
+  `Q: (..., m, m)`, `R: (..., m, n)`. Mode `r` returns an empty `Q`.
+  [Full SVD](https://docs.pytorch.org/docs/stable/generated/torch.linalg.svd.html)
+  returns `U: (..., m, m)` and `Vh: (..., n, n)`; reduced SVD returns
+  `U: (..., m, k)`, `Vh: (..., k, n)`. Reorder singular vectors along
+  with singular values when the backend does not sort them.
+- **Tolerances and drivers.** Match
+  [`pinv`](https://docs.pytorch.org/docs/stable/generated/torch.linalg.pinv.html)
+  and `matrix_rank` defaults, including dtype-dependent tolerances and
+  broadcastable tolerance tensors. Match
+  [`lstsq`](https://docs.pytorch.org/docs/stable/generated/torch.linalg.lstsq.html)
+  driver-dependent residual/rank/singular-value fields, including empty
+  fields when unavailable. Unsupported drivers/options raise an explicit
+  error; never silently substitute a different numerical contract.
+- **Dtypes.** Start with supported float/double backends and publish the
+  limits, including Metal float-only. Complex input and output require
+  tensor, Scalars and LinearAlgebra support together. Until complex output
+  exists, general `eig` / `eigvals` are unavailable rather than dropping
+  imaginary components. Real singular values, Hermitian eigenvalues,
+  norms and `logabsdet` remain real when complex input is supported.
+
+#### Matrix functions and elementwise math
+
+The API keeps both meanings explicit:
+
+| Elementwise expression | Matrix operation |
+|---|---|
+| `::exp(a)` | `linalg::matrix_exp(a)` computes the matrix exponential |
+| `::sqr(a)` | `linalg::matrix_power(a, 2)` computes `a @ a` |
+| `::sqrt(a)` | `linalg::matrix_sqrth(a)` computes the positive-definite matrix root |
+| `::log(a)` | `linalg::matrix_log(a)` is a separately documented library extension |
+
+[`matrix_power`](https://docs.pytorch.org/docs/stable/generated/torch.linalg.matrix_power.html)
+with exponent 0 returns identity; a negative exponent requires an
+invertible matrix. [`matrix_exp`](https://docs.pytorch.org/docs/stable/generated/torch.linalg.matrix_exp.html)
+operates on square matrices and preserves batches.
+[`matrix_sqrth`](https://docs.pytorch.org/docs/main/generated/torch.linalg.matrix_sqrth.html)
+has the symmetric/Hermitian positive-definite domain of the referenced
+PyTorch API; the dependency's general Schur square-root algorithm does not
+define that public contract.
+
+`matrix_log` and a general `matrix_sqrt` expose existing dependency
+algorithms as extensions, outside the PyTorch parity set. Their principal
+branch/domain restrictions follow `logarithm.h` and `square_root.h`, and
+their names never alias pointwise `log` / `sqrt`. Pin and record the
+PyTorch reference version for parity tests; version-specific functions
+such as `matrix_sqrth` need a version gate, not a fabricated reference.
+
+#### Evaluation, outputs and numerical errors
+
+These functional operations evaluate eagerly and return owning tensors or
+named tensor results. They preserve input data even if a backend factors
+destructively; copy into factor/output storage as required. Entry points
+accept tensors and const/mutable views through constrained templates,
+following the deduction rules above. Expression inputs require explicit
+materialization. The returned tensors compose with the elementwise API:
+
+```cpp
+namespace la = vectorization::linalg;
+auto x = la::solve(a, b);
+auto factors = la::lu_factor(a);
+auto y = la::lu_solve(factors.LU, factors.pivots, another_rhs);
+auto decomposition = la::svd(a);  // U, S, Vh; full matrices by default
+out = ::log(la::matrix_exp(a));   // matrix exponential, then pointwise log
+```
+
+- **Output variants.** Provide `_out` counterparts where the matching
+  PyTorch function supports `out`, with output arguments first, matching
+  this library's `matmul_out` convention. Require exact output shapes,
+  device/dtypes and injective destinations. Classify all input/output
+  pairs and pairs of outputs before writing; reject overlap by default.
+  Support strided output through a packed temporary and copy when needed.
+  Any permitted in-place case must be documented per operation.
+- **Checked calls.** Validate shapes/options on the host in every build.
+  Singular solves/inverses, failed positive-definiteness and backend
+  non-convergence raise numerical errors with operation and batch index
+  when backend status is available. Preserve PyTorch's per-operation
+  behavior: a singular determinant is zero, and singular `slogdet`
+  returns sign zero and `logabsdet=-inf` rather than raising.
+- **Asynchronous status.** `solve_ex`, `inv_ex`, `cholesky_ex` and
+  `lu_factor_ex` return device `info` with `check_errors=false` by default.
+  They avoid a host status read; `check_errors=true` and checked wrappers
+  may synchronize to report numerical failure. Invalid metadata always
+  errors immediately. Upstream must expose status instead of replacing
+  failure with NaNs if an `_ex` adapter is to claim this contract.
+- **Layouts and lifetime.** Reuse section 11's stride packing, stream
+  recording and workspace rules for every operation. Batched fallbacks
+  must preserve batch order and status per matrix. No implicit CPU
+  fallback or device transfer for an unsupported operation.
+
+#### Reusable factorization objects
+
+`lu_factorization<T>`, `cholesky_factorization<T>` and
+`qr_factorization<T>` are convenience wrappers over the functional tensor
+results, with owned factors, explicit metadata and supported `.solve(b)`
+methods. They do not replace `lu_factor`, `cholesky`, `qr` or `svd`.
+Construction factors once; subsequent solves reuse storage/workspace and
+never refactor. Measure factorization separately from repeated solves.
+
+#### P5 delivery order
+
+Keep the phase numbers stable and deliver P5 in reviewable parts:
+
+1. Products, product/elementwise composition and tensor layout adaptation.
+2. `solve`, triangular/factor-reuse solves, LU, Cholesky, inverse,
+   determinants and their listed `_ex` status paths.
+3. QR, SVD, Hermitian spectrum, least squares, pseudoinverse, rank,
+   norms and conditioning; general spectrum once complex output is ready.
+4. Matrix exponential/power, version-gated symmetric root, matrix chains
+   and the separately specified logarithm/general-root extensions.
+
+P5 is complete only when the planned set has tested capability entries
+and all supported configurations meet the contracts above. Deferred
+families and unsupported backend/dtype combinations are recorded
+explicitly; their absence must not be represented as full PyTorch parity.
 
 ### Cleanup
 
@@ -858,6 +1174,18 @@ Vectorization then bumps the submodule.
   stride per operand (0 for broadcasting), positive leading dimensions, a
   stream and a workspace. The square
   `batched_matrix_multiplication(dim, count, …)` stays as a wrapper.
+- Tensor-adapter coverage for the [matrix API](#matrix-linear-algebra-api):
+  explicit matrix sizes, leading dimensions, multiple RHS, batches,
+  transpose/adjoint/triangle options and per-backend capabilities. Audit
+  existing algorithms first; add missing contracts upstream rather than
+  assuming the pointer APIs already match PyTorch.
+- Full and reduced SVD/QR modes, sorted spectra with associated vector
+  permutations, normalized LU pivots, rank/tolerance controls and
+  driver-dependent least-squares outputs.
+- Device numerical-status outputs for the listed `_ex` calls, with no
+  forced host synchronization when `check_errors=false`; separate host
+  launch validation from numerical status. Add complex result support
+  before enabling general eigendecomposition.
 
 ### Scalars (U3)
 
@@ -918,7 +1246,7 @@ void eval_reduce(Lowered const& expr, iteration_plan const& plan, Op op,
 | Topic | Unified behavior |
 |---|---|
 | Streams | A real `gpu_stream_t` on every GPU backend; on Metal it names a command queue / shared command buffer. Silently ignoring `stream` is the current bug |
-| Sync | Asynchronous launch everywhere; the host waits on a read or an event ([section 5](#metal--pipeline-cache-synchronization-and-buffers)) |
+| Sync | Asynchronous launch; the host waits on a read, an event or a checked linear-algebra status read. `_ex(check_errors=false)` leaves status on device ([section 11](#evaluation-outputs-and-numerical-errors)) |
 | Types | Metal float-only remains an allocator constraint; no second Metal `double` evaluator |
 | Ops | One functor set. Metal `cdf` / `inv_cdf` get an MSL approximation or fail through `VECTORIZATION_CHECK`, not a backend-specific `std::runtime_error` |
 | Reductions | `accumulate` / `hmin` / `hmax` branch on `device()` the way `run` does |
@@ -1020,9 +1348,9 @@ Design elements in this plan that run into enabled checks:
 
 | Design element | Check | Rule |
 |---|---|---|
-| `tensor` / `tensor_view` moves ([section 4](#4-tensor-and-tensor_view)) | `performance-noexcept-move-constructor` | Move constructor and move assignment are `noexcept`; `retained_ptr` moves must be `noexcept` too (Memory U1) |
+| `tensor` / `tensor_view` moves ([section 4](#4-tensor-and-tensor_view)) | `performance-noexcept-move-constructor`, `bugprone-exception-escape` | Move construction transfers handles without throwing. View move assignment writes through and can reject shape or overlap, so it must be allowed to throw; its named suppression explains this. Owning moves and `retained_ptr` moves should not throw |
 | `tensor::operator=` (deep copy), `tensor_view::operator=` (write-through) | `bugprone-unhandled-self-assignment` | Explicit self-assignment check; for a view, self-assignment is `full` overlap and returns immediately |
-| Forwarding-reference constructors (`tensor(E&&)`, `product_expression`, `store_operand`) | `bugprone-forwarding-reference-overload` | Constrain the template with a trait, as `tensor(E&&)` already does, then remove its bare `NOLINT` |
+| Expression constructors and forwarding-reference builders (`product_expression`, `store_operand`) | `bugprone-forwarding-reference-overload` | Constrain templates with expression/operand traits. The implemented owning expression constructor takes `E const&`; planned forwarding overloads must preserve copy/move overload resolution |
 | Rvalue capture into expression nodes ([section 5](#capture)) | `bugprone-use-after-move`, `performance-move-const-arg` | Move each operand once into the node; never `std::move` a `const` operand. Node-building functions take forwarding references and `std::forward` each operand exactly once |
 | `overlap_status`, loop tier, `reduce_op` | `performance-enum-size` | `enum class … : std::uint8_t` |
 | `noexcept` loops (`loop_row`, `loop2d`), destructors (`stream_guard`, `copy_token`, `noalias_proxy`) | `bugprone-exception-escape` | No `VECTORIZATION_CHECK` inside; validate in the planner before the loop; destructors never throw |
@@ -1071,15 +1399,15 @@ phase changes.
 
 | Phase | Repository | Scope | Status | Correctness gate | Performance gate |
 |---|---|---|---|---|---|
-| P0 | Vectorization | Result shape from broadcasting; every leaf's shape validated; Release checks on view operations; overlap classifier raising errors; copy constructor keeps source strides; clang-tidy baseline cleared and coverage gaps closed ([section 15](#15-clang-tidy-conformance)) | Partly done: classifier and clang-tidy work missing | Every [section 1](#implementation-status) item marked Done has a passing Release test; the clang-tidy CI job analyzes the test target and passes | Release benchmarks at today's speed; shape checks outside the inner loop |
-| P1 | Vectorization | `retained_ptr` storage with provenance, explicit offset, views retain storage, rvalue capture into expressions, `non_overlapping` flag | Not started | Lifetime tests (view outlives owner, deferred expression) clean under AddressSanitizer; `(1, 1)`-stride destination rejected | CPU tensor construction and destruction: one heap allocation after U1 |
-| P2 | Vectorization | `tensor` / `tensor_view` split; `noalias()` proxy for elementwise assignment | Not started | View assignment writes through; `noalias()` overlap caught in Debug; signed lattice counterexample reported `partial`; overlapping adopted buffers not reported `none`; existing tests pass unchanged | Expression building with `tensor<T>` leaves adds no atomic operations |
+| P0 | Vectorization | Result shape from broadcasting; every leaf's shape validated; Release checks on view operations; overlap classifier raising errors; copy semantics aligned with P2; clang-tidy baseline cleared and coverage gaps closed ([section 15](#15-clang-tidy-conformance)) | Partly done: shape, view checks and classifier implemented; repository-wide clang-tidy and performance gates remain | Local Debug/Release tests pass; changed-code analysis clean. CI must still analyze the full test target and clear the repository baseline | Release benchmarks at today's speed; shape checks outside the inner loop |
+| P1 | Vectorization | `retained_ptr` storage with provenance, explicit offset, views retain storage, safe expression capture, `non_overlapping` flag | Partly done: retaining views/leaves and cached injectivity implemented; provenance, explicit offset and allocation gate remain | Local AddressSanitizer lifetime/adopted-deleter tests and internal-overlap rejection pass; CUDA/HIP still need verification | CPU tensor construction and destruction: one heap allocation after U1; current promotion uses a separate control block |
+| P2 | Vectorization | `tensor` / `tensor_view` split; const views; `rebind()`; `noalias()` proxy for elementwise assignment | Semantics implemented and locally verified; performance gate open | Updated tests cover packed owner copies, shallow view copies, write-through copy/move assignment, const access, signed lattice intersections and adopted storage. Debug/Release CPU and Metal GPU pass; CUDA/HIP and LibTorch remain unverified | Expression building with `tensor<T>` leaves adds no atomic operations: not met by current retain-all capture; benchmark and resolve before closing the phase |
 | P3 | Vectorization | CPU planner tiers 0–2 with `run_range`; contiguous fast path; `loop2d`; threading policy (bytes and op cost, intra-row splits, BLAS coordination); tiled transpose; `flip`; tier-2 specialization; planner-owned prefetch; aligned-source variant removed; CPU reductions | Partly done: planner, `loop2d`, row-split threading | Strided, broadcast, `flip` and reduction tests pass; serial SIMD fallback taken with parallel support disabled | Tier 0 ≥ 90% of STREAM triad bandwidth on one thread and scales with threads; tier 1 ≥ 80% for rows ≥ 256 elements; latency at n ≤ 64 within 10% of today; `t().contiguous()` ≥ 50% of tier-0 copy bandwidth |
 | U1 | Memory | [Section 12](#memory-u1) | Not started | Landed upstream with tests; submodule bumped | Offset-aware copy at device-copy bandwidth |
 | U2 | LinearAlgebra | [Section 12](#linearalgebra-u2) | Not started | Landed upstream with tests; submodule bumped | GEMV, DOT and batched GEMM at backend-library speed |
 | U3 | Scalars | [Section 12](#scalars-u3) | Not started | Landed upstream with tests; submodule bumped | Metal interior-slice dispatch with no per-call buffer wrapping |
 | P4 | Vectorization | CUDA/HIP offset calculator with span-checked 32-bit indexing and vector loads; strided GPU destinations; Metal pipeline cache, batched command buffers, per-allocation `MTLBuffer`; GPU reductions; offset-aware transfers; unified launch contract ([section 13](#13-backend-launch-unification)) | Not started | Device clone of an interior slice without host memory (Metal locally; CUDA/HIP in CI); large-stride small tensors take the wide-index path; same launch signature on every backend; macOS `neon` + `metal` clang-tidy job passes | Tier 0 and strided tiers in GB/s on each GPU backend; Metal per-call host overhead after the first call in µs and free of string building |
-| P5 | Vectorization | `matmul_out`, `dot` / `dot_out`, factorization objects; lazy `matmul` / `bmm` with classifier-based lowering and forwarding entry points; epilogues; size routing | Not started | Rectangular, transposed-view, strided and aliased-output GEMM tests pass; `matmul(a, b)` on owning tensors compiles; deferred `matmul(a.t(), b.t())` clean under AddressSanitizer | Warmed-up `c = matmul(a, b)` with reusable output, compatible layouts and sufficient workspace performs no tensor-layer allocation; small-matrix GEMM within 2× of Eigen fixed-size products |
+| P5 | Vectorization | Lazy products, elementwise composition, epilogues and size routing; functional PyTorch-style matrix API, named results, `_ex` status and reusable factors, delivered in [four parts](#p5-delivery-order) | Not started | Product shapes, layouts, aliasing and deferred lifetimes pass; matrix operations match pinned LibTorch shapes/defaults/result fields; reconstruction/residual and numerical-status tests pass for each enabled capability | Warmed-up `c = matmul(a, b)` with reusable output, compatible layouts and sufficient workspace performs no tensor-layer allocation; small-matrix GEMM within 2× of Eigen fixed-size products; composed math evaluates each product occurrence once, then uses one elementwise pass; factor-reuse solves never refactor; packing, workspace and status-read costs reported separately |
 | P6 | Vectorization | Optional, measured: streaming stores, true fused epilogues (cuBLASLt), tiny-matrix kernel tuning | Not started | Behind flags; no regression on existing tiers | Streaming stores 1.2–1.5× on write-heavy tier-0 work where they win; no regression on read-after-write chains |
 
 Dependencies: P0 fixes incorrect results and goes first. U1, U2 and U3 run
@@ -1087,9 +1415,51 @@ in parallel with P1–P3. P1's allocation gate needs U1; P4 needs U1 and U3;
 P5 needs U2. Only P6 is a tuning phase; every other phase meets its own
 performance gate.
 
+Remaining work after the tensor/view and `noalias()` delivery:
+
+1. Close P0's repository-wide clang-tidy baseline and CI coverage gaps;
+   changed-line analysis alone does not close that gate.
+2. Complete P1's explicit-offset representation and provenance-aware
+   shortcut with Memory U1, then verify allocation counts.
+3. Measure expression construction and small-tensor latency. Resolve the
+   retain-all capture cost against P2's atomic-free target without weakening
+   the documented deferred-expression lifetime contract.
+4. Run CUDA/HIP and optional LibTorch coverage for the split, including
+   stream bookkeeping and view/noalias assignment.
+5. Continue P3's CPU kernels/reductions and P4's GPU indexing, copies and
+   Metal dispatch work; P5 products and matrix APIs remain separate work.
+
 ---
 
 ## 17. Verification and benchmark protocol
+
+### Recorded verification
+
+The tensor/view and elementwise `noalias()` delivery was verified locally on
+November 1, 2026. These results cover that delivery, not completion of every
+phase or subsequent unrelated edits.
+
+| Check | Recorded result |
+|---|---|
+| CMake Debug, NEON CPU | Full CTest suite passed |
+| CMake Release, scalar CPU, C++17 | Full CTest suite passed; exercises the Release `noalias()` path |
+| CMake Debug with AddressSanitizer | Full CTest suite passed, including retained view/expression lifetimes and adopted-storage release |
+| CMake Debug, NEON + Metal, Apple Clang | Full CTest suite passed with GPU access outside the sandbox, including `TensorGpu.ViewNoaliasFloat` and assignment profiler markers |
+| Bazel `//Testing/Cxx:VectorizationCxxTests` | Passed |
+| clang-tidy on `TestTensorView.cpp` with first-party headers and changed-line filtering | No diagnostics in the selected changed code; pre-existing diagnostics suppressed, so repository-wide conformance is still open |
+| Formatting and whitespace | Checked touched implementation/test files with clang-format; `git diff --check` passed |
+| CUDA/HIP and optional LibTorch | Not run |
+| Performance and allocation gates | Not measured; no bandwidth, latency, allocation-count or atomic-free capture claim |
+
+`TestTensorView.cpp` covers retaining view copies, write-through assignment,
+const views, explicit packed owner construction, temporary expressions,
+adopted deleter lifetime, reshape materialization, partial/unknown overlap,
+interleaved disjoint slices and destination injectivity. Its lattice test
+compares nested two-axis layouts with explicit address sets, including signed
+inner coefficients. `TestTensorGpu.cpp` adds retaining GPU views, direct
+view assignment, const-view expressions and `noalias()` updates. Existing
+copy/contiguity tests and LibTorch comparison helper signatures were migrated
+to the split; LibTorch runtime parity remains unverified.
 
 ### Correctness tests
 
@@ -1099,14 +1469,15 @@ In addition to numerical values:
 - Invalid shapes, axes, reshape sizes and slice steps rejected in Release.
 - View lifetime: a view returned from a function; deferred expressions
   holding temporaries.
-- Overlap: exact aliasing allowed; shifted, interleaved and `too_hard` cases
-  rejected. Shape `(2, 2)`, strides `(3, 1)`, offsets 0 and 2 is `partial`.
+- Overlap: exact elementwise aliasing allowed; shifted intersections and
+  `too_hard` cases rejected; provably disjoint interleaved slices allowed.
+  Shape `(2, 2)`, strides `(3, 1)`, offsets 0 and 2 is `partial`.
   Two adopted storages over overlapping memory are not `none`.
 - Internal overlap: a destination with strides `(1, 1)` on shape `(2, 2)` is
   rejected in every build type, with and without `noalias()`.
 - Contiguous fast path: packed sources assigned into a transposed or
   stepped destination take the planner and land at the right positions.
-- `noalias()`: proven overlap rejected in Debug; `too_hard` layouts run;
+- `noalias()`: proven partial overlap rejected in Debug; `too_hard` layouts run;
   internal overlap rejected in every build type; `+=` / `-=` match the
   non-`noalias()` result.
 - Zero and negative slice steps rejected in Release; negative `start` /
@@ -1118,16 +1489,56 @@ In addition to numerical values:
   threshold.
 - GPU index-width selection for small tensors with large strides.
 - Rectangular and batched GEMM with transposed and strided views.
+- PyTorch shape parity: vector/vector gives rank 0, matrix/vector,
+  vector/matrix, matrix/matrix, unequal-rank broadcast batches and singleton
+  dimensions. Reject scalar operands, bad contraction dimensions,
+  incompatible batches, and `bmm` broadcasting or non-rank-3 inputs in
+  Release. Cover empty outputs and zero contraction dimensions.
 - `matmul`, `bmm`, `matmul_out` and `dot` accept `tensor<T>`,
   `tensor_view<T>` and `tensor_view<const T>` in every combination; a
   deferred product of temporary views evaluates correctly after its
   construction statement.
+- `::exp`, `::sqr`, `::sqrt` and `::log` directly on `matmul` and `bmm`,
+  nested unary chains and broadcast bias against LibTorch two-stage
+  references. Compare `sqr` to `torch::square`; compare shapes as well as
+  values, using dtype/backend tolerances and explicit NaN/infinity checks.
+  Include negative and zero product entries and exponential overflow.
+- Deferred `auto e = ::exp(matmul(a.t(), b));` survives its construction
+  statement under AddressSanitizer. Instrument dispatch to verify one
+  product evaluation per node occurrence and one remaining elementwise
+  traversal/kernel; on GPU, verify stream ordering without a host read.
+- Composed assignments with the output aliasing either matrix input or a
+  broadcast leaf, and with transposed/stepped output views, follow the
+  classifier and produce the same values as an explicit intermediate.
 - `c = matmul(a, b)` on disjoint operands writes directly; on overlapping
   operands uses a temporary.
 - `c.noalias() = / += / -= matmul(a, b)` against a reference, with an
   allocation counter confirming no temporary.
 - Epilogues against two-pass references, including `d` aliasing `c`, `a`
   or `b`.
+- Matrix API parity against a pinned LibTorch version: all listed
+  operations' shapes, defaults, named fields, integer/real/complex result
+  dtypes and permitted batch broadcasting. Include vector versus multiple
+  RHS solves, left/right and adjoint solves, triangular options, QR modes,
+  full/reduced SVD, triangle selection and driver-dependent empty fields.
+- Numerical invariants: `A X ≈ B`, `A ≈ P L U`, `A ≈ Q R`,
+  `A ≈ U diag(S) Vh`, orthogonality/unitarity and eigenpair residuals.
+  Compare invariant subspaces for repeated spectra rather than requiring
+  identical eigenvector/singular-vector signs, phases or bases.
+- Singular/indefinite and rank-deficient inputs: checked failures versus
+  per-batch `_ex.info`, determinant/slogdet singular behavior, tolerance
+  cutoffs for rank/pseudoinverse, and least-squares residuals. Test empty
+  matrices/batches per operation rather than assuming GEMM's rules apply.
+- Matrix-function identities: exponential of zero is identity; integer
+  power zero is identity and power two matches `matmul`; symmetric root
+  squares to the original SPD matrix. Test non-diagonal matrices to
+  distinguish these from pointwise operations. For extension matrix
+  logarithm/root, use independent references and documented domain tests.
+- Functional calls preserve inputs; factor objects survive input
+  destruction and repeated solves reuse factors. `_out` rejects overlap
+  between outputs or with inputs and handles supported strided layouts.
+- GPU checked versus `_ex` synchronization and per-batch `info`; unsupported
+  backend/dtype/driver combinations fail explicitly without host fallback.
 - Stream transitions: allocation reuse after `record_stream`; ordering
   through events.
 - Reductions on contiguous and strided inputs over each axis, on CPU and
@@ -1159,7 +1570,16 @@ In addition to numerical values:
 - **Products.** Square and rectangular GEMM from n = 2 to 4,096;
   matrix × vector; batched small matrices; `c = matmul(a, b)` with and
   without `noalias()`; epilogues; packing and workspace growth separate from
-  the steady-state call; factorization separate from solve.
+  the steady-state call; factorization separate from solve. Measure
+  `exp`, `sqr`, `sqrt` and `log` after products against explicit two-stage
+  references and eager LibTorch, including intermediate allocation/traffic
+  and GPU enqueue overhead. Report optional fused epilogues separately.
+- **Matrix algorithms.** Solves with one and many RHS; factorization
+  versus factor reuse; rectangular QR/SVD/least squares; batched
+  inverses, determinants and matrix functions. Compare the same modes,
+  triangle, tolerances and drivers against LibTorch. Report checked
+  status synchronization separately from `_ex` enqueue/device time, and
+  adapter copies/packing separately from numerical kernels.
 - **Metal.** First-call and steady-state host overhead; chained expressions
   with and without a host read between them.
 
@@ -1189,12 +1609,19 @@ synchronization or the numerical kernel.
 
 ## 18. Key files
 
-- `include/terminals/tensor.h` — `tensor<T>`, views, `clone()`,
-  `contiguous()`, `init_from_expression()`, the `#if 0` matrix block.
+- `include/terminals/tensor.h` — shared `tensor_impl<T, IsView>`, owning/view
+  semantics, `clone()`, `contiguous()`, cached injectivity, checked assignment,
+  `init_from_expression()`, the `#if 0` matrix block.
+- `include/terminals/tensor_view.h` — public view include.
+- `include/terminals/noalias.h` — non-copyable assignment/update proxy.
 - `include/terminals/sizes_and_strides.h` — inline sizes/strides storage.
-- `include/expressions/strided_ref.h` — kernel-side leaf descriptor.
+- `include/expressions/strided_ref.h` — kernel-side leaf descriptor,
+  host-side `retained_ref` and read-only Memory view facade.
 - `include/expressions/expression_interface.h` — `store_operand()`,
-  expression nodes, `buffers_overlap()` / `expression_aliases_ptr()`.
+  expression nodes, `raw_lowered_t` / `lower_raw()`; legacy
+  `buffers_overlap()` / `expression_aliases_ptr()` helpers.
+- `include/expressions/overlap.h` — active overlap classifier, signed carry
+  lattice test and assignment checks.
 - `include/expressions/expression_shape.h` — broadcast shape inference,
   `rebase_leaves()`.
 - `include/expressions/iteration_plan.h` — CPU planner, tiers, `loop2d`,
@@ -1203,10 +1630,13 @@ synchronization or the numerical kernel.
   dispatch, contiguous SIMD loop, prefetch and alignment variants.
 - `include/expressions/expressions_evaluator_gpu.h` — CUDA/HIP kernels and
   reductions.
-- `include/expressions/expressions_evaluator_metal.h` — MSL emitter.
+- `include/expressions/expressions_evaluator_metal.h` — MSL emitter and
+  direct leaf assignment dispatch.
 - `include/expressions/expressions_builder.h` — operators, including
   elementwise `*`.
 - `include/expressions/reduce_op.h` — reduction operations.
+- `Testing/Cxx/TestTensorView.cpp`, `TestTensorGpu.cpp` — split, ownership,
+  overlap and `noalias()` regression coverage on CPU and supported GPUs.
 - `ThirdParty/Scalars/include/backend/gpu/metal/metal_dispatch.mm` — Metal
   buffers and dispatch.
 - `ThirdParty/Memory/include/common/retained_ptr.h`, `data_ptr.h`,
@@ -1215,6 +1645,9 @@ synchronization or the numerical kernel.
   `gpu_workspace.h` — GPU allocation and workspace.
 - `ThirdParty/LinearAlgebra/include/matrix_operation/multiplication.h`,
   `multiplication_batched.h` — GEMM entry points.
+- `ThirdParty/LinearAlgebra/include/matrix_operation/` — solve,
+  factorization, inverse, norm, spectral and matrix-function algorithms;
+  tensor adapters must normalize their contracts before public exposure.
 - `ThirdParty/LinearAlgebra/include/common/backend.h` — `linalg_backend`.
 - `.clang-tidy`, `Cmake/tools/clang_tidy.cmake`, `.lintrunner.toml`,
   `.github/workflows/ci.yml` (`static-analysis` job) — clang-tidy checks,

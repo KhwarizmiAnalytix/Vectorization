@@ -43,7 +43,8 @@ template <typename T> void iota(vectorization::tensor<T>& t, T start = T(1))
     }
 }
 
-template <typename T> std::vector<int64_t> shape_of(vectorization::tensor<T> const& t)
+template <typename T, bool IsView>
+std::vector<int64_t> shape_of(vectorization::tensor_impl<T, IsView> const& t)
 {
     auto const d = t.dimensions();
     return std::vector<int64_t>(d.begin(), d.end());

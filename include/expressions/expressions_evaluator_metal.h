@@ -520,8 +520,7 @@ inline bool metal_fuse_fits(metal_fuse_state const& st)
 // the same way.
 // ---------------------------------------------------------------------------
 
-template <typename E, typename T>
-void run_metal(E const& expr, T& rhs)
+template <typename E, typename T> void run_metal(E const& expr, T& rhs)
 {
     using RE            = vectorization::remove_cvref_t<E>;
     const std::size_t n = rhs.size();
@@ -536,38 +535,38 @@ void run_metal(E const& expr, T& rhs)
         return;
     }
 
-    static_assert(
-        vectorization::is_pure_expression<RE>::value,
-        "run_metal: expression is neither a tensor leaf nor a unary/binary/trinary node");
-
-    if constexpr (metal_detail::metal_expr_fusable<RE>::value)
-    {
-        metal_detail::metal_fuse_state st;
-        metal_detail::metal_fuse_emit(expr, st);
-        if (!metal_detail::metal_fuse_fits(st))
-        {
-            throw std::runtime_error("Metal fused kernel exceeds the device buffer limit");
-        }
-        std::string const src = metal_detail::metal_fuse_source(st);
-        scalars::metal_backend::dispatch_fused(
-            src, st.buffers, st.n_buffers, st.scalars, st.n_scalars, rhs.data(), n);
-    }
     else
     {
-        throw std::runtime_error(
-            "Metal backend: operator has no fused Metal kernel (cdf/inv_cdf are "
-            "unsupported; MSL has no erf/erfinv)");
+        static_assert(vectorization::is_pure_expression<RE>::value,
+            "run_metal: expression is neither a tensor leaf nor a unary/binary/trinary node");
+
+        if constexpr (metal_detail::metal_expr_fusable<RE>::value)
+        {
+            metal_detail::metal_fuse_state st;
+            metal_detail::metal_fuse_emit(expr, st);
+            if (!metal_detail::metal_fuse_fits(st))
+            {
+                throw std::runtime_error("Metal fused kernel exceeds the device buffer limit");
+            }
+            std::string const src = metal_detail::metal_fuse_source(st);
+            scalars::metal_backend::dispatch_fused(
+                src, st.buffers, st.n_buffers, st.scalars, st.n_scalars, rhs.data(), n);
+        }
+        else
+        {
+            throw std::runtime_error(
+                "Metal backend: operator has no fused Metal kernel (cdf/inv_cdf are "
+                "unsupported; MSL has no erf/erfinv)");
+        }
     }
 }
 
-template <typename T>
-void fill_metal(T& rhs, float value)
+template <typename T> void fill_metal(T& rhs, float value)
 {
     scalars::metal_backend::dispatch_fill(rhs.data(), value, rhs.size());
 }
 
-template <reduce_op Op>
-float reduce_metal_buffer(void const* data, std::size_t n)
+template <reduce_op Op> float reduce_metal_buffer(void const* data, std::size_t n)
 {
     if constexpr (Op == reduce_op::sum)
     {

@@ -443,6 +443,37 @@ void test_reductions()
 // --------------------------------------------------------------------------
 // Scalar fill
 // --------------------------------------------------------------------------
+VECTORIZATIONTEST(TensorGpu, ViewNoaliasFloat)
+{
+    int ndev = 0;
+    gpuGetDeviceCount(&ndev);
+    if (ndev == 0)
+    {
+        GTEST_SKIP() << "No GPU device";
+    }
+    auto retained = []
+    {
+        tensor<float> temporary(32u, kActiveGpuDevice);
+        temporary = 2.0f;
+        return temporary.view({32});
+    }();
+    tensor<float> output(32u, kActiveGpuDevice);
+    output.as_view() = retained;
+    EXPECT_EQ(output.to_host_vector(), std::vector<float>(32, 2.0f));
+    tensor_view<const float> readonly(retained);
+    output.noalias() = readonly + 3.0f;
+    output.noalias() += readonly;
+    output.noalias() -= readonly;
+    EXPECT_EQ(output.to_host_vector(), std::vector<float>(32, 5.0f));
+    auto first   = output.slice(0, 0, 16);
+    auto shifted = output.slice(0, 1, 17);
+    EXPECT_ANY_THROW(first = shifted);
+#ifndef NDEBUG
+    EXPECT_ANY_THROW(first.noalias() = shifted);
+#endif
+    END_TEST();
+}
+
 VECTORIZATIONTEST(TensorGpu, FillFloat)
 {
     int ndev = 0;

@@ -35,33 +35,29 @@
 namespace vectorization
 {
 // std::conditional_t instantiates both branches, so a helper trait is required:
-// tensor leaves become a strided_ref (pointer, shape and strides; GPU-memcpy-safe);
-// nested expression nodes stay by value.
+// tensor leaves retain storage on the host; lowering strips ownership before
+// kernel dispatch. Nested expression nodes stay by value.
 template <typename T, bool = is_tensor<vectorization::remove_cvref_t<T>>::value>
 struct stored_operand
 {
     using type = vectorization::remove_cvref_t<T>;
 };
 
-template <typename T>
-struct stored_operand<T, true>
+template <typename T> struct stored_operand<T, true>
 {
-    using type = strided_ref<typename vectorization::remove_cvref_t<T>::value_type>;
+    using type = retained_ref<typename vectorization::remove_cvref_t<T>::element_type>;
 };
 
-template <typename T>
-using stored_operand_t = typename stored_operand<T>::type;
+template <typename T> using stored_operand_t = typename stored_operand<T>::type;
 
-// Tensor leaves are borrowed, not cloned. The source tensor must outlive the
-// expression (the usual ET contract: `c = a + b` is fine; `auto e = tensor(n) + a`
-// dangles). Nested expression nodes are moved when they are rvalues.
-template <typename T>
-VECTORIZATION_FUNCTION_ATTRIBUTE stored_operand_t<T> store_operand(T&& x)
+// Tensor leaves retain their allocation and snapshot shape/strides. Temporaries
+// and views therefore stay valid for the lifetime of a saved expression.
+template <typename T> VECTORIZATION_FUNCTION_ATTRIBUTE stored_operand_t<T> store_operand(T&& x)
 {
     using raw = vectorization::remove_cvref_t<T>;
     if constexpr (is_tensor<raw>::value)
     {
-        return x.to_strided_ref();
+        return {x.to_strided_ref(), x.retained_storage()};
     }
     else
     {
@@ -74,8 +70,7 @@ VECTORIZATION_FUNCTION_ATTRIBUTE stored_operand_t<T> store_operand(T&& x)
  *
  * This expression applies an unary operator on each element of a sub expression
  */
-template <typename LHS, typename EVALUATOR>
-class unary_expression final
+template <typename LHS, typename EVALUATOR> class unary_expression final
 {
     using rmv_lhs    = vectorization::remove_cvref_t<LHS>;
     using stored_lhs = stored_operand_t<rmv_lhs>;
@@ -83,7 +78,10 @@ class unary_expression final
 
 public:
     // Element count of the broadcast result (see expression_shape.h).
-    VECTORIZATION_FUNCTION_ATTRIBUTE size_t size() const noexcept { return expression_numel(*this); }
+    VECTORIZATION_FUNCTION_ATTRIBUTE size_t size() const noexcept
+    {
+        return expression_numel(*this);
+    }
 
     static constexpr size_t length() { return rmv_lhs::length(); }
 
@@ -103,8 +101,8 @@ public:
     VECTORIZATION_FUNCTION_ATTRIBUTE unary_expression(unary_expression&& e) noexcept = default;
 
     // Expressions are invariant
-    VECTORIZATION_FUNCTION_ATTRIBUTE unary_expression& operator=(unary_expression const& e) =
-        delete;
+    VECTORIZATION_FUNCTION_ATTRIBUTE unary_expression& operator=(
+        unary_expression const& e)                                                     = delete;
     VECTORIZATION_FUNCTION_ATTRIBUTE unary_expression& operator=(unary_expression&& e) = delete;
 
     VECTORIZATION_FUNCTION_ATTRIBUTE const auto& rhs() const { return lhs_; }
@@ -136,8 +134,7 @@ public:
  * A binary expression has a left hand side expression and a right hand side expression and for each
  * element applies a binary operator to both expressions.
  */
-template <typename LHS, typename RHS, typename EVALUATOR>
-class binary_expression final
+template <typename LHS, typename RHS, typename EVALUATOR> class binary_expression final
 {
     using rmv_lhs    = vectorization::remove_cvref_t<LHS>;
     using rmv_rhs    = vectorization::remove_cvref_t<RHS>;
@@ -149,13 +146,15 @@ class binary_expression final
 
 public:
     // Element count of the broadcast result (see expression_shape.h).
-    VECTORIZATION_FUNCTION_ATTRIBUTE size_t size() const noexcept { return expression_numel(*this); }
+    VECTORIZATION_FUNCTION_ATTRIBUTE size_t size() const noexcept
+    {
+        return expression_numel(*this);
+    }
 
     VECTORIZATION_FUNCTION_ATTRIBUTE static constexpr size_t length()
     {
-        if constexpr (
-            vectorization::is_expression<rmv_rhs>::value &&
-            vectorization::is_expression<rmv_lhs>::value)
+        if constexpr (vectorization::is_expression<rmv_rhs>::value &&
+                      vectorization::is_expression<rmv_lhs>::value)
         {
             static_assert(
                 rmv_rhs::length() == rmv_lhs::length(), "expressions have different strides!");
@@ -171,9 +170,8 @@ public:
         }
         else
         {
-            static_assert(
-                vectorization::is_expression<rmv_lhs>::value ||
-                    vectorization::is_expression<rmv_rhs>::value,
+            static_assert(vectorization::is_expression<rmv_lhs>::value ||
+                              vectorization::is_expression<rmv_rhs>::value,
                 "binary_expression: neither operand is an expression");
             return 0;  // unreachable; satisfies the compiler
         }
@@ -193,8 +191,8 @@ public:
     VECTORIZATION_FUNCTION_ATTRIBUTE binary_expression(binary_expression&& e) noexcept = default;
 
     // Expressions are invariant
-    VECTORIZATION_FUNCTION_ATTRIBUTE binary_expression& operator=(binary_expression const& e) =
-        delete;
+    VECTORIZATION_FUNCTION_ATTRIBUTE binary_expression& operator=(
+        binary_expression const& e)                                                      = delete;
     VECTORIZATION_FUNCTION_ATTRIBUTE binary_expression& operator=(binary_expression&& e) = delete;
 
     VECTORIZATION_FUNCTION_ATTRIBUTE const auto& lhs() const { return lhs_; }
@@ -248,10 +246,9 @@ public:
     // Element count of the broadcast result (see expression_shape.h).
     VECTORIZATION_FUNCTION_ATTRIBUTE size_t size() const noexcept
     {
-        static_assert(
-            vectorization::is_expression<rmv_lhs>::value ||
-                vectorization::is_expression<rmv_mhs>::value ||
-                vectorization::is_expression<rmv_rhs>::value,
+        static_assert(vectorization::is_expression<rmv_lhs>::value ||
+                          vectorization::is_expression<rmv_mhs>::value ||
+                          vectorization::is_expression<rmv_rhs>::value,
             "trinary_expression: no operand is an expression");
         return expression_numel(*this);
     }
@@ -266,10 +263,9 @@ public:
             return rmv_rhs::length();
         else
         {
-            static_assert(
-                vectorization::is_expression<rmv_lhs>::value ||
-                    vectorization::is_expression<rmv_mhs>::value ||
-                    vectorization::is_expression<rmv_rhs>::value,
+            static_assert(vectorization::is_expression<rmv_lhs>::value ||
+                              vectorization::is_expression<rmv_mhs>::value ||
+                              vectorization::is_expression<rmv_rhs>::value,
                 "trinary_expression: no operand is an expression");
             return 0;  // unreachable; satisfies the compiler
         }
@@ -282,8 +278,7 @@ public:
     }
 
     VECTORIZATION_FUNCTION_ATTRIBUTE trinary_expression(rmv_lhs&& lhs, rmv_mhs&& mhs, rmv_rhs&& rhs)
-        : lhs_(store_operand(std::move(lhs))),
-          mhs_(store_operand(std::move(mhs))),
+        : lhs_(store_operand(std::move(lhs))), mhs_(store_operand(std::move(mhs))),
           rhs_(store_operand(std::move(rhs)))
     {
     }
@@ -292,8 +287,8 @@ public:
     VECTORIZATION_FUNCTION_ATTRIBUTE trinary_expression(trinary_expression&& e) noexcept = default;
 
     // Expressions are invariant
-    VECTORIZATION_FUNCTION_ATTRIBUTE trinary_expression& operator=(trinary_expression const& e) =
-        delete;
+    VECTORIZATION_FUNCTION_ATTRIBUTE trinary_expression& operator=(
+        trinary_expression const& e)                                                       = delete;
     VECTORIZATION_FUNCTION_ATTRIBUTE trinary_expression& operator=(trinary_expression&& e) = delete;
 
     VECTORIZATION_FUNCTION_ATTRIBUTE const auto& lhs() const { return lhs_; }
@@ -327,6 +322,68 @@ public:
         expression_loader<stored_rhs, vectorize, aligned>::prefetch(expr.rhs(), index);
     }
 };
+
+// Strip host ownership before passing a tree to CPU workers or GPU kernels.
+template <typename E> struct raw_lowered
+{
+    using type = E;
+};
+template <typename T, bool IsView> struct raw_lowered<tensor_impl<T, IsView>>
+{
+    using type = strided_ref<T>;
+};
+template <typename T> struct raw_lowered<retained_ref<T>>
+{
+    using type = strided_ref<T>;
+};
+template <typename E> using raw_lowered_t = typename raw_lowered<remove_cvref_t<E>>::type;
+template <typename L, typename Ev> struct raw_lowered<unary_expression<L, Ev>>
+{
+    using type = unary_expression<raw_lowered_t<stored_operand_t<remove_cvref_t<L>>>, Ev>;
+};
+template <typename L, typename R, typename Ev> struct raw_lowered<binary_expression<L, R, Ev>>
+{
+    using type = binary_expression<raw_lowered_t<stored_operand_t<remove_cvref_t<L>>>,
+        raw_lowered_t<stored_operand_t<remove_cvref_t<R>>>,
+        Ev>;
+};
+template <typename L, typename M, typename R, typename Ev>
+struct raw_lowered<trinary_expression<L, M, R, Ev>>
+{
+    using type = trinary_expression<raw_lowered_t<stored_operand_t<remove_cvref_t<L>>>,
+        raw_lowered_t<stored_operand_t<remove_cvref_t<M>>>,
+        raw_lowered_t<stored_operand_t<remove_cvref_t<R>>>,
+        Ev>;
+};
+
+template <typename E> raw_lowered_t<E> lower_raw(E const& expr)
+{
+    using raw = remove_cvref_t<E>;
+    if constexpr (is_pure_expression<raw>::value)
+    {
+        if constexpr (VECTORIZATION_EXPR_HAS_MHS(expr))
+        {
+            return raw_lowered_t<E>(
+                lower_raw(expr.lhs()), lower_raw(expr.mhs()), lower_raw(expr.rhs()));
+        }
+        else if constexpr (VECTORIZATION_EXPR_HAS_LHS(expr))
+        {
+            return raw_lowered_t<E>(lower_raw(expr.lhs()), lower_raw(expr.rhs()));
+        }
+        else
+        {
+            return raw_lowered_t<E>(lower_raw(expr.rhs()));
+        }
+    }
+    else if constexpr (is_tensor<raw>::value)
+    {
+        return expr.to_strided_ref();
+    }
+    else
+    {
+        return raw_lowered_t<E>(expr);
+    }
+}
 
 template <typename E>
 VECTORIZATION_FUNCTION_ATTRIBUTE bool expression_operands_aligned(E const& expr)

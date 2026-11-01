@@ -38,8 +38,7 @@ namespace
 // merging them back together.
 
 /// @brief Construction, copy/move semantics, and external-data borrowing.
-template <typename T>
-VECTORIZATION_NOINLINE void test_tensor_construction()
+template <typename T> VECTORIZATION_NOINLINE void test_tensor_construction()
 {
     using tensor_t = vectorization::tensor<T>;
     using dims_t   = typename tensor_t::dimensions_type;
@@ -148,8 +147,8 @@ VECTORIZATION_NOINLINE void test_tensor_construction()
 
     // External data wrap (non-owning borrow)
     {
-        std::vector<T> buf(6, T(9));
-        tensor_t       ext(buf.data(), dims_t{2, 3});
+        std::vector<T>                buf(6, T(9));
+        vectorization::tensor_view<T> ext(buf.data(), dims_t{2, 3});
         EXPECT_EQ(ext.dimension(0), 2u);
         EXPECT_EQ(ext.dimension(1), 3u);
         EXPECT_EQ(ext.size(), 6u);
@@ -158,7 +157,7 @@ VECTORIZATION_NOINLINE void test_tensor_construction()
         EXPECT_EQ(static_cast<T>(ext.at(1u, 2u)), T(9));
         tensor_t cloned(ext);
         EXPECT_NE(cloned.data(), ext.data());
-        EXPECT_TRUE(cloned == ext);
+        EXPECT_EQ(cloned.to_host_vector(), ext.to_host_vector());
         ext.at(0u, 0u) = T(1);
         EXPECT_EQ(static_cast<T>(cloned.at(0u, 0u)), T(9));
     }
@@ -210,8 +209,7 @@ VECTORIZATION_NOINLINE void test_tensor_construction()
 }
 
 /// @brief Shape metadata, element access, cloning, and view creation.
-template <typename T>
-VECTORIZATION_NOINLINE void test_tensor_shape_access()
+template <typename T> VECTORIZATION_NOINLINE void test_tensor_shape_access()
 {
     using tensor_t = vectorization::tensor<T>;
     using dims_t   = typename tensor_t::dimensions_type;
@@ -317,7 +315,7 @@ VECTORIZATION_NOINLINE void test_tensor_shape_access()
         tensor_t packed_cpu(2u, 3u);
         packed_cpu = T(4);
         auto alias = packed_cpu.to_cpu();
-        EXPECT_EQ(alias.data(), packed_cpu.data());
+        EXPECT_NE(alias.data(), packed_cpu.data());
         EXPECT_TRUE(alias.is_contiguous());
     }
 
@@ -360,8 +358,7 @@ VECTORIZATION_NOINLINE void test_tensor_shape_access()
 }
 
 /// @brief Slicing, permutation, and expression assignment into views.
-template <typename T>
-VECTORIZATION_NOINLINE void test_tensor_views_slices()
+template <typename T> VECTORIZATION_NOINLINE void test_tensor_views_slices()
 {
     using tensor_t = vectorization::tensor<T>;
     using dims_t   = typename tensor_t::dimensions_type;
@@ -628,7 +625,7 @@ VECTORIZATION_NOINLINE void test_tensor_views_slices()
         logging::set_exception_mode(logging::exception_mode::THROW);
         // [2, 3] result into a [3, 2] destination: same element count, wrong shape.
         EXPECT_THROW({ tv = a + b; }, logging::exception);
-        EXPECT_THROW({ tv = T(1); }, logging::exception);
+        EXPECT_NO_THROW({ tv = T(1); });
         // A stride-0 destination would write the same element repeatedly.
         auto row = tensor_t(dims_t{3}).expand(dims_t{2, 3});
         EXPECT_THROW({ row = a + b; }, logging::exception);
@@ -646,8 +643,7 @@ VECTORIZATION_NOINLINE void test_tensor_views_slices()
 }
 
 /// @brief Shape/state predicates and expression evaluation.
-template <typename T>
-VECTORIZATION_NOINLINE void test_tensor_predicates()
+template <typename T> VECTORIZATION_NOINLINE void test_tensor_predicates()
 {
     using tensor_t = vectorization::tensor<T>;
     const T eps    = std::is_same<T, float>::value ? T(1e-5) : T(1e-10);
@@ -747,8 +743,7 @@ VECTORIZATION_NOINLINE void test_tensor_predicates()
 }
 
 /// @brief Contiguity semantics and stream formatting.
-template <typename T>
-VECTORIZATION_NOINLINE void test_tensor_contiguity()
+template <typename T> VECTORIZATION_NOINLINE void test_tensor_contiguity()
 {
     using tensor_t = vectorization::tensor<T>;
     using dims_t   = typename tensor_t::dimensions_type;
@@ -780,26 +775,25 @@ VECTORIZATION_NOINLINE void test_tensor_contiguity()
         EXPECT_TRUE(empty_dim.is_contiguous());
     }
 
-    // Copy construction/assignment recomputes contiguity from the copied
-    // shape/strides -- it mirrors the source, it is not always true.
+    // Owning copies of views pack logical values into independent C-order storage.
     {
         tensor_t m(dims_t{3, 4});
-        tensor_t transposed = m.t();
+        auto     transposed = m.t();
         EXPECT_FALSE(transposed.is_contiguous());
 
         tensor_t copy_ctor(transposed);
-        EXPECT_FALSE(copy_ctor.is_contiguous());
+        EXPECT_TRUE(copy_ctor.is_contiguous());
         EXPECT_NE(copy_ctor.data(), transposed.data());
         EXPECT_EQ(copy_ctor.dimension(0), transposed.dimension(0));
         EXPECT_EQ(copy_ctor.dimension(1), transposed.dimension(1));
-        EXPECT_EQ(copy_ctor.stride(0), transposed.stride(0));
-        EXPECT_EQ(copy_ctor.stride(1), transposed.stride(1));
+        EXPECT_EQ(copy_ctor.stride(0), static_cast<int64_t>(copy_ctor.dimension(1)));
+        EXPECT_EQ(copy_ctor.stride(1), 1);
 
         tensor_t copy_assign;
         copy_assign = transposed;
-        EXPECT_FALSE(copy_assign.is_contiguous());
-        EXPECT_EQ(copy_assign.stride(0), transposed.stride(0));
-        EXPECT_EQ(copy_assign.stride(1), transposed.stride(1));
+        EXPECT_TRUE(copy_assign.is_contiguous());
+        EXPECT_EQ(copy_assign.stride(0), static_cast<int64_t>(copy_assign.dimension(1)));
+        EXPECT_EQ(copy_assign.stride(1), 1);
 
         tensor_t contiguous_src(dims_t{3, 4});
         tensor_t copy_of_contiguous(contiguous_src);
@@ -811,16 +805,15 @@ VECTORIZATION_NOINLINE void test_tensor_contiguity()
     // default empty/contiguous state.
     {
         tensor_t m(dims_t{3, 4});
-        tensor_t transposed = m.t();
+        auto     transposed = m.t();
         EXPECT_FALSE(transposed.is_contiguous());
 
-        tensor_t moved(std::move(transposed));
+        auto moved(std::move(transposed));
         EXPECT_FALSE(moved.is_contiguous());
         EXPECT_TRUE(transposed.is_contiguous());  // moved-from: reset to empty/contiguous
         EXPECT_EQ(transposed.size(), 0u);
 
-        tensor_t move_target;
-        move_target = std::move(moved);
+        auto move_target(std::move(moved));
         EXPECT_FALSE(move_target.is_contiguous());
         EXPECT_TRUE(moved.is_contiguous());
     }
@@ -837,7 +830,7 @@ VECTORIZATION_NOINLINE void test_tensor_contiguity()
 
         tensor_t col(dims_t{5, 1});
         EXPECT_TRUE(col.is_contiguous());
-        tensor_t row = col.t();
+        auto row = col.t();
         EXPECT_EQ(row.dimension(0), 1u);
         EXPECT_EQ(row.dimension(1), 5u);
         EXPECT_TRUE(row.is_contiguous());
@@ -902,7 +895,7 @@ VECTORIZATION_NOINLINE void test_tensor_contiguity()
     // whether the source was contiguous.
     {
         tensor_t m(dims_t{3, 4});
-        tensor_t transposed = m.t();
+        auto     transposed = m.t();
         EXPECT_FALSE(transposed.is_contiguous());
         tensor_t cloned = transposed.clone();
         EXPECT_TRUE(cloned.is_contiguous());
@@ -913,12 +906,12 @@ VECTORIZATION_NOINLINE void test_tensor_contiguity()
     // (new pointer) otherwise; the result is always contiguous either way.
     {
         tensor_t m(dims_t{3, 4});
-        tensor_t already = m.contiguous();
+        auto     already = m.contiguous();
         EXPECT_TRUE(already.is_contiguous());
         EXPECT_EQ(already.data(), m.data());
 
-        tensor_t transposed = m.t();
-        tensor_t packed     = transposed.contiguous();
+        auto transposed = m.t();
+        auto packed     = transposed.contiguous();
         EXPECT_TRUE(packed.is_contiguous());
         EXPECT_NE(packed.data(), transposed.data());
     }
@@ -939,8 +932,7 @@ VECTORIZATION_NOINLINE void test_tensor_contiguity()
 }
 
 /// @brief Runs the full tensor test suite for element type @p T.
-template <typename T>
-void test_tensor()
+template <typename T> void test_tensor()
 {
     test_tensor_construction<T>();
     test_tensor_shape_access<T>();
@@ -958,8 +950,8 @@ VECTORIZATIONTEST(Math, TensorMemoryStorage)
     {
         storage.data()[i] = static_cast<float>(i);
     }
-    const auto original = storage.view();
-    tensor_t   borrowed(original, tensor_t::dimensions_type{3, 4});
+    const auto                        original = storage.view();
+    vectorization::tensor_view<float> borrowed(original, tensor_t::dimensions_type{3, 4});
     EXPECT_EQ(borrowed.data(), storage.data());
     EXPECT_EQ(borrowed.memory_view().id(), original.id());
 
@@ -973,7 +965,7 @@ VECTORIZATIONTEST(Math, TensorMemoryStorage)
     EXPECT_EQ(rows.reshape({8}).memory_view().id(), original.id());
     EXPECT_EQ(rows.view({8}).memory_view().id(), original.id());
     EXPECT_EQ(rows.contiguous().memory_view().id(), original.id());
-    EXPECT_EQ(rows.to_cpu().memory_view().id(), original.id());
+    EXPECT_NE(rows.to_cpu().memory_view().id(), original.id());
     auto empty = borrowed.slice(0, 3, 3);
     EXPECT_TRUE(empty.empty());
     EXPECT_EQ(empty.device(), borrowed.device());
@@ -998,24 +990,23 @@ VECTORIZATIONTEST(Math, TensorMemoryStorage)
     EXPECT_EQ(owned.data(), original.data());
     EXPECT_EQ(owned.memory_view().id(), original.id());
 
-    // Copies keep the source layout on independent storage. The owned buffer
-    // starts at offset 0 (the prefix before an interior view is not copied).
+    // Owning copies pack logical values into independent storage at offset 0.
     auto     transposed = owned.t();
     tensor_t copied(transposed);
-    EXPECT_FALSE(copied.is_contiguous());
-    EXPECT_EQ(copied.stride(0), transposed.stride(0));
-    EXPECT_EQ(copied.stride(1), transposed.stride(1));
+    EXPECT_TRUE(copied.is_contiguous());
+    EXPECT_EQ(copied.stride(0), static_cast<int64_t>(copied.dimension(1)));
+    EXPECT_EQ(copied.stride(1), 1);
     EXPECT_NE(copied.memory_view().id(), original.id());
     for (size_t i = 0; i < copied.size(); ++i)
     {
         EXPECT_EQ(copied[i], transposed[i]);
     }
-    tensor_t assigned;
+    tensor_t   assigned;
     const auto strided = owned.slice(1, 1, 4, 2);
-    assigned = strided;
-    EXPECT_FALSE(assigned.is_contiguous());
-    EXPECT_EQ(assigned.stride(0), strided.stride(0));
-    EXPECT_EQ(assigned.stride(1), strided.stride(1));
+    assigned           = strided;
+    EXPECT_TRUE(assigned.is_contiguous());
+    EXPECT_EQ(assigned.stride(0), static_cast<int64_t>(assigned.dimension(1)));
+    EXPECT_EQ(assigned.stride(1), 1);
     EXPECT_NE(assigned.memory_view().id(), original.id());
     EXPECT_EQ(assigned.memory_view().base(), assigned.data());
     EXPECT_EQ(assigned.to_host_vector(), (std::vector<float>{1, 3, 5, 7, 9, 11}));

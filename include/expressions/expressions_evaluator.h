@@ -34,6 +34,7 @@ Do_not_include_expression_evaluator_directly_use_expression_it;
 #include "common/vectorization_type_traits.h"
 #include "expressions/expression_interface_loader.h"
 #include "expressions/iteration_plan.h"
+#include "expressions/overlap.h"
 #include "expressions/reduce_op.h"
 
 #if VECTORIZATION_HAS_CUDA || VECTORIZATION_HAS_HIP
@@ -178,6 +179,13 @@ public:
     template <typename E, typename T>
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE static void run(
         E const& expr, T& rhs, gpu_stream_t stream = nullptr)
+    {
+        const auto lowered = lower_raw(expr);
+        run_lowered(lowered, rhs, stream);
+    }
+
+    template <typename E, typename T>
+    static void run_lowered(E const& expr, T& rhs, gpu_stream_t stream)
     {
         // Operands broadcast against each other; the result must have exactly the
         // destination's shape, which is never broadcast (design §5, planner step 2).
@@ -395,8 +403,17 @@ public:
     {
         // See the matching check in run() above: every destination path below assumes a
         // packed buffer.
-        VECTORIZATION_CHECK(
-            rhs.is_contiguous(), "expressions_evaluator::fill: destination must be contiguous");
+        VECTORIZATION_CHECK(rhs.is_non_overlapping(), "fill: destination has internal overlap");
+        if (!rhs.is_contiguous() && rhs.device() == device_enum::CPU)
+        {
+            auto ref = rhs.to_strided_ref();
+            for (size_t i = 0; i < ref.numel; ++i)
+            {
+                ref.data()[strided_offset(ref, i)] = value;
+            }
+            return;
+        }
+        check_contiguous(rhs, "expressions_evaluator::fill");
 
 #if (VECTORIZATION_HAS_CUDA && defined(__CUDACC__)) || (VECTORIZATION_HAS_HIP && defined(__HIPCC__))
         if (rhs.device() == device_enum::CUDA || rhs.device() == device_enum::HIP)
@@ -541,7 +558,8 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool try_reduce_gpu(E const& expr, value_t
                 // Strided or broadcast leaves: rebase them so the kernel's flat index is exact.
                 const auto shape   = expression_result_shape(expr);
                 const auto lowered = flat_lowered(expr, shape);
-                out = reduce_gpu<E, value_t, Op>(lowered, shape.numel(), kind, index, stream);
+                out                = reduce_gpu<remove_cvref_t<decltype(lowered)>, value_t, Op>(
+                    lowered, shape.numel(), kind, index, stream);
                 return true;
             }
         }
@@ -550,7 +568,9 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool try_reduce_gpu(E const& expr, value_t
             VECTORIZATION_CHECK(
                 flat, "accumulate/hmin/hmax: strided GPU tensor; call contiguous() first");
         }
-        out = reduce_gpu<E, value_t, Op>(expr, expr.size(), kind, index, stream);
+        const auto lowered = lower_raw(expr);
+        out                = reduce_gpu<remove_cvref_t<decltype(lowered)>, value_t, Op>(
+            lowered, expr.size(), kind, index, stream);
         return true;
     }
 #endif
@@ -562,7 +582,8 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool try_reduce_gpu(E const& expr, value_t
             VECTORIZATION_CHECK(flat,
                 "accumulate/hmin/hmax (Metal): strided or broadcast operands are not supported "
                 "on Metal yet; call contiguous() on them first");
-            out = reduce_metal<E, Op>(expr, expr.size());
+            const auto lowered = lower_raw(expr);
+            out = reduce_metal<remove_cvref_t<decltype(lowered)>, Op>(lowered, expr.size());
             return true;
         }
     }
@@ -603,7 +624,9 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool reduce_strided(E const& expr, value_t
         const auto lowered = flat_lowered(expr, shape);
         for (size_t i = 0, n = shape.numel(); i < n; ++i)
         {
-            acc = combine(acc, expression_loader<E, false, false>::evaluate(lowered, i));
+            acc = combine(acc,
+                expression_loader<remove_cvref_t<decltype(lowered)>, false, false>::evaluate(
+                    lowered, i));
         }
         return true;
     }

@@ -31,9 +31,10 @@ using namespace libtorch_test;
 // Compare a 2-D tensor element-wise via xs.at(dims_t{i,j}) vs the contiguous
 // C-order layout of th.  Uses the N-D at() overload which multiplies by strides,
 // so it works correctly for non-contiguous views (transpose, slice, etc.).
-template <typename T>
-double max_diff_2d(const vectorization::tensor<T>& xs, const torch::Tensor& th)
+template <typename Tensor>
+double max_diff_2d(Tensor const& xs, const torch::Tensor& th)
 {
+    using T = typename Tensor::value_type;
     using dims_t           = typename vectorization::tensor<T>::dimensions_type;
     auto              th_c = th.cpu().to(TorchDtype<T>::value).contiguous();
     const T*          p    = reinterpret_cast<const T*>(th_c.data_ptr());
@@ -46,9 +47,10 @@ double max_diff_2d(const vectorization::tensor<T>& xs, const torch::Tensor& th)
 }
 
 // Compare a 3-D tensor element-wise via xs.at(dims_t{i,j,k}).
-template <typename T>
-double max_diff_3d(const vectorization::tensor<T>& xs, const torch::Tensor& th)
+template <typename Tensor>
+double max_diff_3d(Tensor const& xs, const torch::Tensor& th)
 {
+    using T = typename Tensor::value_type;
     using dims_t           = typename vectorization::tensor<T>::dimensions_type;
     auto              th_c = th.cpu().to(TorchDtype<T>::value).contiguous();
     const T*          p    = reinterpret_cast<const T*>(th_c.data_ptr());
@@ -68,9 +70,10 @@ double max_diff_3d(const vectorization::tensor<T>& xs, const torch::Tensor& th)
 // Compare a 1-D strided view via xs.at(dims_t{i}) vs the contiguous copy of th.
 // Uses the N-D at() overload so stride-based indexing is applied (needed for
 // slices with step > 1).
-template <typename T>
-double max_diff_1d(const vectorization::tensor<T>& xs, const torch::Tensor& th)
+template <typename Tensor>
+double max_diff_1d(Tensor const& xs, const torch::Tensor& th)
 {
+    using T = typename Tensor::value_type;
     using dims_t  = typename vectorization::tensor<T>::dimensions_type;
     auto     th_c = th.cpu().to(TorchDtype<T>::value).contiguous();
     const T* p    = reinterpret_cast<const T*>(th_c.data_ptr());

@@ -60,9 +60,10 @@ std::vector<T> rand_vec(std::size_t n, T lo, T hi, unsigned seed = 42)
 }
 
 // Returns the max absolute element-wise difference between an XSigma tensor and a torch::Tensor.
-template <typename T>
-double max_diff(const vectorization::tensor<T>& xs, const torch::Tensor& th)
+template <typename Tensor>
+double max_diff(Tensor const& xs, const torch::Tensor& th)
 {
+    using T = typename Tensor::value_type;
     auto     th_cpu = th.cpu().to(TorchDtype<T>::value).contiguous();
     const T* ptr    = reinterpret_cast<const T*>(th_cpu.data_ptr());
     double   d      = 0.0;

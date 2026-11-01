@@ -1723,7 +1723,7 @@ public:
     }
 
 private:
-    template <typename U> friend stored_operand_t<U> store_operand(U&&);
+    template <typename U> friend VECTORIZATION_FUNCTION_ATTRIBUTE stored_operand_t<U> store_operand(U&&);
     memory::retained_ptr<value_t> const& retained_storage() const noexcept { return storage_; }
     template <typename U, bool V> void   share_from(tensor_impl<U, V> const& rhs)
     {

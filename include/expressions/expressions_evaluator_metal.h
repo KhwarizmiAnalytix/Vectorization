@@ -49,6 +49,7 @@
 
 #if VECTORIZATION_HAS_METAL
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -212,8 +213,8 @@ struct metal_expr_fusable<trinary_expression<L, M, R, Ev>>
 struct metal_fuse_state
 {
     static constexpr int kMaxSlots = 29;
-    void const*          buffers[kMaxSlots]{};
-    float                scalars[kMaxSlots]{};
+    std::array<void const*, kMaxSlots> buffers{};
+    std::array<float, kMaxSlots>       scalars{};
     int                  n_buffers{0};
     int                  n_scalars{0};
     std::string          body;
@@ -552,7 +553,7 @@ template <typename E, typename T> void run_metal(E const& expr, T& rhs)
             }
             std::string const src = metal_detail::metal_fuse_source(st);
             scalars::metal_backend::dispatch_fused(
-                src, st.buffers, st.n_buffers, st.scalars, st.n_scalars, rhs.data(), n);
+                src, st.buffers.data(), st.n_buffers, st.scalars.data(), st.n_scalars, rhs.data(), n);
         }
         else
         {
@@ -711,9 +712,9 @@ reduce_accumulator_t<float, Op> metal_reduce_extended(E const& expr, std::size_t
         const auto          width = metal_reduce_simd_width();
         metal_reduce_buffer current(metal_alloc_t::allocate(n, memory::device_enum::METAL));
         scalars::metal_backend::dispatch_fused(metal_reduce_source<Op>(st, false),
-            st.buffers,
+            st.buffers.data(),
             st.n_buffers,
-            st.scalars,
+            st.scalars.data(),
             st.n_scalars,
             current.get(),
             n);
@@ -726,7 +727,7 @@ reduce_accumulator_t<float, Op> metal_reduce_extended(E const& expr, std::size_t
             partial.n_buffers  = 1;
             metal_reduce_buffer next(metal_alloc_t::allocate(n, memory::device_enum::METAL));
             scalars::metal_backend::dispatch_fused(metal_reduce_source<Op>(partial, true),
-                partial.buffers,
+                partial.buffers.data(),
                 1,
                 nullptr,
                 0,
@@ -795,7 +796,7 @@ reduce_accumulator_t<float, Op> reduce_metal(E const& expr, std::size_t n)
                 std::string const src = metal_detail::metal_fuse_source(st);
                 float* tmp = metal_detail::metal_alloc_t::allocate(n, memory::device_enum::METAL);
                 scalars::metal_backend::dispatch_fused(
-                    src, st.buffers, st.n_buffers, st.scalars, st.n_scalars, tmp, n);
+                    src, st.buffers.data(), st.n_buffers, st.scalars.data(), st.n_scalars, tmp, n);
                 float const result = reduce_metal_buffer<Op>(tmp, n);
                 metal_detail::metal_alloc_t::free(tmp, memory::device_enum::METAL);
                 return result;

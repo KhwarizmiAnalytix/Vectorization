@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -76,8 +77,8 @@ template <typename T, int MaxRank = kMaxRank> struct strided_ref
 {
     tensor_data_view<T> view_{};
     int                 rank{0};
-    int64_t             sizes[MaxRank]{};
-    int64_t             strides[MaxRank]{};
+    std::array<int64_t, MaxRank> sizes{};
+    std::array<int64_t, MaxRank> strides{};
     size_t              numel{0};
     bool                contiguous{false};
     size_t              align_start{0};

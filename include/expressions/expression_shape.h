@@ -37,8 +37,8 @@ namespace vectorization
 // (design §5, planner step 2). Scalars do not contribute.
 struct expression_shape
 {
-    int     rank{0};
-    int64_t sizes[kMaxRank]{};
+    int                            rank{0};
+    std::array<int64_t, kMaxRank> sizes{};
 
     VECTORIZATION_FUNCTION_ATTRIBUTE size_t numel() const noexcept
     {
@@ -71,7 +71,7 @@ VECTORIZATION_CUDA_FUNCTION_TYPE inline bool broadcast_into(
         return false;
     }
     const int out_rank = acc.rank > rank ? acc.rank : rank;
-    int64_t   out[kMaxRank]{};
+    std::array<int64_t, kMaxRank> out{};
     for (int i = 0; i < out_rank; ++i)
     {
         const int64_t a = i < acc.rank ? acc.sizes[acc.rank - 1 - i] : 1;
@@ -113,7 +113,7 @@ VECTORIZATION_FUNCTION_ATTRIBUTE bool accumulate_shape(
     }
     else if constexpr (is_strided_ref<expr_t>::value)
     {
-        return broadcast_into(acc, expr.rank, expr.sizes);
+        return broadcast_into(acc, expr.rank, expr.sizes.data());
     }
     else if constexpr (is_data_view<expr_t>::value)
     {
@@ -279,8 +279,8 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void rebase_leaves(E& expr, expression_sha
     }
     else if constexpr (is_strided_ref<expr_t>::value)
     {
-        int64_t strides[kMaxRank]{};
-        broadcast_strides(out, expr.rank, expr.sizes, expr.strides, strides);
+        std::array<int64_t, kMaxRank> strides{};
+        broadcast_strides(out, expr.rank, expr.sizes.data(), expr.strides.data(), strides.data());
         expr.rank = out.rank;
         for (int d = 0; d < out.rank; ++d)
         {
@@ -288,7 +288,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void rebase_leaves(E& expr, expression_sha
             expr.strides[d] = strides[d];
         }
         expr.numel      = out.numel();
-        expr.contiguous = is_packed(expr.rank, expr.sizes, expr.strides);
+        expr.contiguous = is_packed(expr.rank, expr.sizes.data(), expr.strides.data());
     }
     else if constexpr (is_data_view<expr_t>::value)
     {

@@ -114,7 +114,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto reduce_expression(E const& expression
         const size_t batch =
             reduce_is_count<Op> && remaining > 4096 * length ? 4096 * length : remaining;
         const size_t       end = i + batch;
-        typename S::simd_t accumulators[packet];
+        std::array<typename S::simd_t, packet> accumulators;
         unroll<packet>(
             [&](auto k)
             {
@@ -150,10 +150,10 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto reduce_expression(E const& expression
         }
         if constexpr (reduce_is_count<Op> || Op == reduce_op::product)
         {
-            T lanes[length];
+            std::array<T, length> lanes;
             for (size_t k = 0; k < packet; ++k)
             {
-                S::storeu(accumulators[k], lanes);
+                S::storeu(accumulators[k], lanes.data());
                 for (size_t lane = 0; lane < length; ++lane)
                 {
                     result = reduce_combine<acc_t, Op>(result, static_cast<acc_t>(lanes[lane]));

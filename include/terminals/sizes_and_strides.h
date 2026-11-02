@@ -20,6 +20,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 
 #include "common/span.h"
@@ -84,7 +85,7 @@ public:
         }
         return !(
             isInline()
-                ? std::memcmp(inlineStorage_, other.inlineStorage_, sizeof(inlineStorage_))
+                ? std::memcmp(inlineStorage_.data(), other.inlineStorage_.data(), sizeof(inlineStorage_))
                 : std::memcmp(outOfLineStorage_, other.outOfLineStorage_, storageBytes(size_)));
     }
 
@@ -125,7 +126,7 @@ public:
     {
         if (VECTORIZATION_LIKELY(isInline()))
         {
-            memcpy(inlineStorage_, rhs.inlineStorage_, sizeof(inlineStorage_));
+            memcpy(inlineStorage_.data(), rhs.inlineStorage_.data(), sizeof(inlineStorage_));
         }
         else
         {
@@ -151,7 +152,7 @@ public:
             }
             // The branch proves the inline precondition. Keep moves noexcept
             // without calling copyDataInline's throwing Debug check.
-            memcpy(inlineStorage_, rhs.inlineStorage_, sizeof(inlineStorage_));
+            memcpy(inlineStorage_.data(), rhs.inlineStorage_.data(), sizeof(inlineStorage_));
         }
         else
         {
@@ -336,7 +337,7 @@ private:
     void copyDataInline(const sizes_and_strides& rhs)
     {
         VECTORIZATION_CHECK_DEBUG(rhs.isInline());
-        memcpy(inlineStorage_, rhs.inlineStorage_, sizeof(inlineStorage_));
+        memcpy(inlineStorage_.data(), rhs.inlineStorage_.data(), sizeof(inlineStorage_));
     }
 
     static size_t storageBytes(size_t size) noexcept { return size * 2 * sizeof(int64_t); }
@@ -366,7 +367,7 @@ private:
     union
     {
         int64_t* outOfLineStorage_;
-        int64_t  inlineStorage_[MAX_INLINE_SIZE * 2]{};
+        std::array<int64_t, MAX_INLINE_SIZE * 2> inlineStorage_{};
     };
 };
 

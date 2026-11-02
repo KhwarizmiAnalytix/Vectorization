@@ -59,9 +59,9 @@ struct iteration_plan
     int         n_operands{0};  // destination + every tensor leaf, in tree order
     int         tier{3};
     int64_t     numel{0};
-    int64_t     sizes[kMaxRank]{};                  // outermost first; sizes[rank - 1] is the row
-    int64_t     strides[kMaxOperands][kMaxRank]{};  // operand 0 is the destination
-    void const* bases[kMaxOperands]{};              // first element of each source (index 0 unused)
+    std::array<int64_t, kMaxRank>                            sizes{};    // outermost first; sizes[rank - 1] is the row
+    std::array<std::array<int64_t, kMaxRank>, kMaxOperands> strides{};  // operand 0 is the destination
+    std::array<void const*, kMaxOperands>                   bases{};    // first element of each source (index 0 unused)
 
     VECTORIZATION_FUNCTION_ATTRIBUTE int64_t row_size() const noexcept
     {
@@ -112,13 +112,13 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void plan_leaves(
         plan.bases[op] = expr.data();
         if constexpr (is_strided_ref<expr_t>::value)
         {
-            broadcast_strides(out, expr.rank, expr.sizes, expr.strides, plan.strides[op]);
+            broadcast_strides(out, expr.rank, expr.sizes.data(), expr.strides.data(), plan.strides[op].data());
         }
         else
         {
             const int64_t size   = static_cast<int64_t>(expr.size());
             const int64_t stride = 1;
-            broadcast_strides(out, 1, &size, &stride, plan.strides[op]);
+            broadcast_strides(out, 1, &size, &stride, plan.strides[op].data());
         }
     }
 }
@@ -245,7 +245,7 @@ inline bool dim_outer_than(iteration_plan const& plan, int a, int b) noexcept
 // adjacent in memory for every operand (planner step 4), then classifies the tier.
 inline void sort_merge_classify(iteration_plan& plan)
 {
-    int perm[kMaxRank];
+    std::array<int, kMaxRank> perm;
     int m = 0;
     for (int d = 0; d < plan.rank; ++d)
     {
@@ -280,8 +280,8 @@ inline void sort_merge_classify(iteration_plan& plan)
         perm[j] = d;
     }
 
-    int64_t sizes[kMaxRank];
-    int64_t strides[kMaxOperands][kMaxRank];
+    std::array<int64_t, kMaxRank>                            sizes;
+    std::array<std::array<int64_t, kMaxRank>, kMaxOperands> strides;
     int     r = 0;
     sizes[0]  = plan.sizes[perm[0]];
     for (int op = 0; op < plan.n_operands; ++op)
@@ -393,8 +393,8 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void loop2d(L lowered,
 {
     const int     outer   = plan.rank - 1;
     const int64_t inner_n = plan.row_size();
-    int64_t       coord[kMaxRank]{};
-    int64_t       offsets[kMaxOperands]{};
+    std::array<int64_t, kMaxRank>     coord{};
+    std::array<int64_t, kMaxOperands> offsets{};
 
     int64_t rem = row_begin;
     for (int d = outer - 1; d >= 0; --d)
@@ -411,7 +411,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void loop2d(L lowered,
     for (int64_t row = row_begin; row < row_end; ++row)
     {
         int op = 1;
-        bind_row(lowered, plan, offsets, op);
+        bind_row(lowered, plan, offsets.data(), op);
         loop_row(lowered, dst + offsets[0], dst_stride, inner_n, plan.tier);
 
         for (int d = outer - 1; d >= 0; --d)

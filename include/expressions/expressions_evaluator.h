@@ -120,7 +120,7 @@ private:
         {
             VECTORIZATION_CHECK(false,
                 "expression result shape {} does not match destination shape {}",
-                shape_to_string(shape.rank, shape.sizes),
+                shape_to_string(shape.rank, shape.sizes.data()),
                 shape_to_string(static_cast<int>(dims.size()), dims.data()));
         }
     }
@@ -697,7 +697,7 @@ template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto accumulate(E
 
         if (i < n)
         {
-            simd_t sum_packet[packet];
+            std::array<simd_t, packet> sum_packet;
             detail::unroll<packet>([&](auto k)
                 { sum_packet[decltype(k)::value] = simd<value_t>::set(static_cast<value_t>(0.)); });
 
@@ -776,7 +776,7 @@ template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto accumulate(E
         const size_t loop_peel = length * (n / length);
         if (loop_peel > 0)
         {
-            simd_t sum_packet[packet];
+            std::array<simd_t, packet> sum_packet;
             detail::unroll<packet>([&](auto k)
                 { sum_packet[decltype(k)::value] = simd<value_t>::set(static_cast<value_t>(0.)); });
 
@@ -872,7 +872,7 @@ template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmin(EXPR&& 
 
         if (i < n)
         {
-            simd_t min_packet[packet];
+            std::array<simd_t, packet> min_packet;
             detail::unroll<packet>(
                 [&](auto k)
                 {
@@ -960,7 +960,7 @@ template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmin(EXPR&& 
         const size_t loop_peel = length * (n / length);
         if (loop_peel > 0)
         {
-            simd_t min_packet[packet];
+            std::array<simd_t, packet> min_packet;
             detail::unroll<packet>(
                 [&](auto k)
                 {
@@ -1063,7 +1063,7 @@ template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmax(EXPR&& 
 
         if (i < n)
         {
-            simd_t max_packet[packet];
+            std::array<simd_t, packet> max_packet;
             detail::unroll<packet>(
                 [&](auto k)
                 {
@@ -1151,7 +1151,7 @@ template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmax(EXPR&& 
         const size_t loop_peel = length * (n / length);
         if (loop_peel > 0)
         {
-            simd_t max_packet[packet];
+            std::array<simd_t, packet> max_packet;
             detail::unroll<packet>(
                 [&](auto k)
                 {

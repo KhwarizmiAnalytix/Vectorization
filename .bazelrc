@@ -20,6 +20,25 @@ build:windows --cxxopt=/std:c++20 --host_cxxopt=/std:c++20
 #   bazel build //:Vectorization --define=vectorization_cpu_backend=avx2
 #   bazel build //:Vectorization --define=vectorization_gpu_backend=metal
 #   bazel build //:Vectorization --define=vectorization_cpu_backend=avx2 --define=vectorization_gpu_backend=metal
+#
+# GPU backend (VECTORIZATION_GPU_BACKEND). CUDA requires rules_cuda (MODULE.bazel)
+# and a CUDA toolkit; HIP requires a ROCm toolchain on the system path.
+#   bazel build //:Vectorization --define=vectorization_gpu_backend=cuda --define=memory_gpu_backend=cuda
+#   bazel build //:Vectorization --define=vectorization_gpu_backend=hip --define=memory_gpu_backend=hip
+#
+# Override CUDA SM targets (default: inherits from CMAKE_CUDA_ARCHITECTURES or 75;80;86;89;90):
+#   bazel build //:Vectorization --define=vectorization_gpu_backend=cuda --define=memory_gpu_backend=cuda \
+#       --@rules_cuda//cuda:archs=sm_80,sm_86,sm_90
+#
+# CPU SIMD + GPU combined (AVX2 host, CUDA GPU):
+#   bazel build //:Vectorization \
+#       --define=vectorization_cpu_backend=avx2 \
+#       --define=vectorization_gpu_backend=cuda --define=memory_gpu_backend=cuda
+#
+# CPU SIMD backend (VECTORIZATION_CPU_BACKEND). x86-64: sse | avx | avx2 | avx512
+# AArch64: neon | sve
+#   bazel build //:Vectorization --define=vectorization_cpu_backend=avx2
+#   bazel build //:Vectorization --define=vectorization_cpu_backend=neon
 
 # Profiler is off by default under Bazel: bazel/profiler.BUILD still targets
 # Profiler's pre-include/ source layout and does not yet wire its kineto/ittapi
@@ -29,3 +48,11 @@ build:windows --cxxopt=/std:c++20 --host_cxxopt=/std:c++20
 # mirrors Memory's own .bazelrc default.
 build --define=vectorization_enable_profiler=false
 build --define=memory_enable_profiler=false
+
+# HIP device compilation uses ROCm Clang as Bazel's C/C++ toolchain.
+# Set the actual SDK root and compiler paths for your installation:
+#   bazel build //:Vectorization --define=vectorization_gpu_backend=hip --define=memory_gpu_backend=hip \
+#       --repo_env=ROCM_PATH=/opt/rocm \
+#       --repo_env=CC=/opt/rocm/llvm/bin/clang \
+#       --repo_env=CXX=/opt/rocm/llvm/bin/clang++
+# On a headless machine also pass --copt=--offload-arch=gfx90a (or your GPU).

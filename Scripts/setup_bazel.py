@@ -18,13 +18,11 @@ here as --define=vectorization_cpu_backend=... and
 backend — this mirrors CMakeLists.txt's own
 `set(MEMORY_GPU_BACKEND "${VECTORIZATION_GPU_BACKEND}" ...)` propagation.
 
-CUDA/HIP are wired the same way Memory's own bazel/BUILD.bazel wires them
-(select() on @local_config_cuda / @local_config_hip) but neither this repo's
-MODULE.bazel nor Memory's defines those external repositories yet, so
-`--gpu_backend=cuda` / `--gpu_backend=hip` will fail to resolve until a CUDA/
-HIP Bazel toolchain is added — same limitation Memory itself currently has.
-Metal is fully wired (Apple frameworks only, no external toolchain repo
-needed) and builds today on macOS.
+CUDA uses rules_cuda and an installed CUDA toolkit (CUDA_PATH). HIP uses
+an installed ROCm SDK (ROCM_PATH) and the ROCm Clang C++ toolchain; see
+.bazelrc for CC/CXX selection and headless architecture flags. GPU tensor
+expression translation units are compiled in device-language mode.
+Metal links Apple frameworks on macOS.
 
 Usage:
     python Scripts/setup_bazel.py config.build.test
@@ -450,13 +448,6 @@ class VectorizationBazelConfiguration:
         print(f"\n{COLOR_CYAN}Vectorization module (Bazel flags):{COLOR_RESET}")
         self._pf("CPU backend", (self.cpu_backend or "no (default)").upper())
         self._pf("GPU backend", (self.gpu_backend or "none").upper())
-        if self.gpu_backend in ("cuda", "hip"):
-            print_status(
-                f"GPU backend '{self.gpu_backend}' selects @local_config_{self.gpu_backend}, which this "
-                "workspace does not define yet — the build will fail until a CUDA/HIP Bazel toolchain "
-                "is wired (same limitation as Memory's own bazel/BUILD.bazel).",
-                "WARNING",
-            )
         self._pf("Shared libs", self._on_off(self.shared_libs))
         self._pf("Coverage", self._on_off(self.run_coverage))
         self._pf("Testing", self._on_off(self.run_tests))
@@ -933,7 +924,7 @@ def print_help() -> None:
     print("     python setup_bazel.py build.test.avx2.release")
     print("  4. Metal GPU backend (macOS only; fully wired):")
     print("     python setup_bazel.py build.test.metal")
-    print("  5. CUDA/HIP GPU backend (NOT YET wired end-to-end; see module docstring):")
+    print("  5. CUDA/HIP GPU backend (requires the corresponding SDK/toolchain):")
     print("     python setup_bazel.py build.test.cuda")
     print("     python setup_bazel.py build.test --gpu_backend=hip")
     print("  6. Coverage (llvm-profdata/llvm-cov + genhtml report; Clang only):")

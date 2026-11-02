@@ -47,8 +47,10 @@ python setup.py --help                          # full option list
 
 `Scripts/setup_bazel.py` drives the equivalent Bazel build (`MODULE.bazel`,
 `BUILD.bazel`, `bazel/`). CPU SIMD backends and the Metal GPU
-backend are fully wired; CUDA/HIP select a `@local_config_{cuda,hip}` label
-that this workspace does not define yet (see the script's `--help`):
+backend are wired alongside CUDA/HIP. CUDA requires an installed toolkit
+(`CUDA_PATH`); HIP requires a ROCm SDK (`ROCM_PATH`) and ROCm Clang selected
+with Bazel's `--repo_env=CC` and `--repo_env=CXX`. See `.bazelrc` for commands
+and architecture overrides. Tensor expression tests use the device compiler:
 
 ```sh
 python Scripts/setup_bazel.py build.test.avx2

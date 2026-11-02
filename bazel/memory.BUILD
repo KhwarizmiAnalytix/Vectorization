@@ -1,9 +1,10 @@
-load("@rules_cc//cc:defs.bzl", "cc_library")
 # Standalone Memory library (KhwarizmiAnalytix/Memory). Public headers live under
 # memory/, which is also the include root (e.g. "include/allocator.h",
 # "include/common/data_ptr.h") — the submodule was restructured from a flat
 # include/ layout to this memory/ layout.
 load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@xsigma_vectorization//bazel:vectorization.bzl", "vectorization_gpu_copts")
 load("//bazel:memory.bzl", "memory_copts", "memory_defines", "memory_linkopts")
 
 package(default_visibility = ["//visibility:public"])
@@ -60,23 +61,36 @@ cc_library(
         "//conditions:default": [],
     }),
     hdrs = [":memory_hdrs"] + select({
-        "//bazel:enable_metal": glob(["include/gpu/*.h", "include/gpu/metal/*.h"], allow_empty = True),
+        "//bazel:enable_metal": glob(
+            [
+                "include/gpu/*.h",
+                "include/gpu/metal/*.h",
+            ],
+            allow_empty = True,
+        ),
         "//conditions:default": [],
     }),
     copts = memory_copts() + select({
-        "//bazel:enable_metal": ["-x", "objective-c++", "-fobjc-arc"],
+        "//bazel:enable_metal": [
+            "-x",
+            "objective-c++",
+            "-fobjc-arc",
+        ],
         "//conditions:default": [],
     }),
     defines = memory_defines() + select({
-        "//bazel:shared_libs": ["MEMORY_SHARED_DEFINE", "MEMORY_BUILDING_DLL"],
+        "//bazel:shared_libs": [
+            "MEMORY_SHARED_DEFINE",
+            "MEMORY_BUILDING_DLL",
+        ],
         "//conditions:default": ["MEMORY_STATIC_DEFINE"],
     }),
     includes = ["include"],
+    visibility = ["//visibility:private"],
     deps = ["@logging//:Logging"] + select({
         "//bazel:disable_profiler": [],
         "//conditions:default": ["@profiler//:Profiler"],
     }),
-    visibility = ["//visibility:private"],
 )
 
 cc_library(
@@ -84,35 +98,68 @@ cc_library(
     srcs = [
         ":memory_srcs",
     ] + select({
-        "//bazel:enable_cuda": glob(["src/gpu/*.cpp"], allow_empty = True),
-        "//bazel:enable_hip": glob(["src/gpu/*.cpp"], allow_empty = True),
+        "//bazel:enable_cuda": glob(
+            ["src/gpu/*.cpp"],
+            allow_empty = True,
+        ),
+        "//bazel:enable_hip": glob(
+            ["src/gpu/*.cpp"],
+            allow_empty = True,
+        ),
         # gpu/*.cpp (cuda_caching_allocator.cpp) is included for Metal too, matching CMake
         # (CMakeLists.txt only strips it for GPU backend "none") -- the file's own
         # #if MEMORY_HAS_CUDA || MEMORY_HAS_HIP guard makes it compile to an empty TU here.
-        "//bazel:enable_metal": glob(["src/gpu/*.cpp"], allow_empty = True),
+        "//bazel:enable_metal": glob(
+            ["src/gpu/*.cpp"],
+            allow_empty = True,
+        ),
         "//conditions:default": [],
     }),
     hdrs = [
         ":memory_hdrs",
     ] + select({
-        "//bazel:enable_cuda": glob(["include/gpu/*.h"], allow_empty = True),
-        "//bazel:enable_hip": glob(["include/gpu/*.h"], allow_empty = True),
-        "//bazel:enable_metal": glob(["include/gpu/*.h", "include/gpu/metal/*.h"], allow_empty = True),
+        "//bazel:enable_cuda": glob(
+            ["include/gpu/*.h"],
+            allow_empty = True,
+        ),
+        "//bazel:enable_hip": glob(
+            ["include/gpu/*.h"],
+            allow_empty = True,
+        ),
+        "//bazel:enable_metal": glob(
+            [
+                "include/gpu/*.h",
+                "include/gpu/metal/*.h",
+            ],
+            allow_empty = True,
+        ),
         "//conditions:default": [],
     }),
-    copts = memory_copts(),
+    copts = memory_copts() + vectorization_gpu_copts(),
     defines = memory_defines() + select({
-        "//bazel:shared_libs": ["MEMORY_SHARED_DEFINE", "MEMORY_BUILDING_DLL"],
+        "//bazel:shared_libs": [
+            "MEMORY_SHARED_DEFINE",
+            "MEMORY_BUILDING_DLL",
+        ],
         "//conditions:default": ["MEMORY_STATIC_DEFINE"],
     }),
     includes = ["include"],
     linkopts = memory_linkopts() + select({
         "@platforms//os:windows": [],
         "@platforms//os:macos": [],
-        "//conditions:default": ["-lpthread", "-ldl", "-lrt"],
+        "//conditions:default": [
+            "-lpthread",
+            "-ldl",
+            "-lrt",
+        ],
     }) + select({
         # Mirrors Cmake/metal.cmake's find_library(Metal)/find_library(Foundation).
-        "//bazel:enable_metal": ["-framework", "Metal", "-framework", "Foundation"],
+        "//bazel:enable_metal": [
+            "-framework",
+            "Metal",
+            "-framework",
+            "Foundation",
+        ],
         "//conditions:default": [],
     }) + select({
         # Mirrors Cmake/numa.cmake's find_package(Numa) -> Numa::numa (a plain system
@@ -124,6 +171,7 @@ cc_library(
         "//bazel:shared_libs": False,
         "//conditions:default": True,
     }),
+    visibility = ["//visibility:public"],
     deps = [
         "@logging//:Logging",
     ] + select({
@@ -131,9 +179,9 @@ cc_library(
         "//conditions:default": ["@profiler//:Profiler"],
     }) + select({
         "//bazel:disable_mimalloc": [],
-        "//conditions:default": ["@mimalloc//:mimalloc"],
+        "//conditions:default": ["@mimalloc"],
     }) + select({
-        "//bazel:enable_cuda": ["@local_config_cuda//:cuda"],
+        "//bazel:enable_cuda": ["@rules_cuda//cuda:runtime"],
         "//conditions:default": [],
     }) + select({
         "//bazel:enable_hip": ["@local_config_hip//:hip"],
@@ -148,11 +196,10 @@ cc_library(
         "//conditions:default": [],
     }),
     alwayslink = False,
-    visibility = ["//visibility:public"],
 )
 
 cc_library(
     name = "Memory",
-    deps = [":memory_lib"],
     visibility = ["//visibility:public"],
+    deps = [":memory_lib"],
 )

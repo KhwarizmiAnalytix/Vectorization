@@ -103,16 +103,18 @@ config_setting(
 # =============================================================================
 # GPU Backend Configuration (mirrors VECTORIZATION_GPU_BACKEND)
 #
-# CUDA/HIP select() branches reference @local_config_cuda / @local_config_hip,
-# the same labels Memory's own bazel/BUILD.bazel uses -- neither this
-# workspace nor Memory's defines those external repositories yet, so
-# selecting cuda/hip fails to resolve until a CUDA/HIP Bazel toolchain is
-# added. Metal needs no external toolchain repo (Apple frameworks only) and
-# is fully wired end-to-end.
+# CUDA uses rules_cuda; HIP uses the local ROCm SDK and ROCm Clang C++
+# toolchain (see .bazelrc). Metal links Apple frameworks.
 # =============================================================================
 
 config_setting(
     name = "enable_cuda",
+    define_values = {"vectorization_gpu_backend": "cuda"},
+)
+
+config_setting(
+    name = "enable_cuda_windows",
+    constraint_values = ["@platforms//os:windows"],
     define_values = {"vectorization_gpu_backend": "cuda"},
 )
 

@@ -1,3 +1,5 @@
+"""Compiler options and feature definitions for Vectorization targets."""
+
 # C++ standard for Vectorization — mirrors CMake VECTORIZATION_CXX_STANDARD (default: 20)
 VECTORIZATION_CXX_STD = "c++20"
 
@@ -6,14 +8,14 @@ def vectorization_copts():
         "@platforms//os:windows": [
             "/std:" + VECTORIZATION_CXX_STD,
             "/Zc:__cplusplus",  # expose correct __cplusplus value (mirrors CMake /Zc:__cplusplus)
-            "/EHsc",            # structured exception handling
-            "/bigobj",          # large object files (mirrors CMake /bigobj)
-            "/utf-8",           # UTF-8 source/output encoding (mirrors CMake /utf-8)
-            "/wd4244",          # narrowing conversion (mirrors CMake /wd4244)
-            "/wd4267",          # size_t → int conversion (mirrors CMake /wd4267)
-            "/wd4715",          # not all control paths return (mirrors CMake /wd4715)
-            "/wd4018",          # signed/unsigned comparison (mirrors CMake /wd4018)
-            "/WX",              # warnings as errors (mirrors CMake /WX)
+            "/EHsc",  # structured exception handling
+            "/bigobj",  # large object files (mirrors CMake /bigobj)
+            "/utf-8",  # UTF-8 source/output encoding (mirrors CMake /utf-8)
+            "/wd4244",  # narrowing conversion (mirrors CMake /wd4244)
+            "/wd4267",  # size_t → int conversion (mirrors CMake /wd4267)
+            "/wd4715",  # not all control paths return (mirrors CMake /wd4715)
+            "/wd4018",  # signed/unsigned comparison (mirrors CMake /wd4018)
+            "/WX",  # warnings as errors (mirrors CMake /WX)
         ],
         "//conditions:default": [
             "-std=" + VECTORIZATION_CXX_STD,
@@ -31,8 +33,11 @@ def vectorization_defines():
     Mirrors this repo's CMakeLists.txt VECTORIZATION_HAS_* flags.
     Optional math providers belong to Scalars. LibTorch comparisons are
     CMake-only and are compiled out here (=0).
+
+    Returns:
+        Configurable feature definitions for the library and its consumers.
     """
-    defines = select({
+    defines = ["VECTORIZATION_PACKET_SIZE=1"] + select({
         "@platforms//os:windows": [
             "_CRT_SECURE_NO_DEPRECATE",
             "_CRT_NONSTDC_NO_DEPRECATE",
@@ -117,7 +122,6 @@ def vectorization_defines():
 
     # Test builds define VECTORIZATION_HAS_GTEST=1 directly (see Testing/Cxx/BUILD.bazel);
     # the library itself does not depend on GoogleTest.
-    defines += ["VECTORIZATION_PACKET_SIZE=1"]
 
     return defines
 
@@ -134,16 +138,35 @@ def vectorization_linkopts():
         ],
     })
 
+def vectorization_gpu_copts():
+    """Returns extra compile options for GPU backend bridge sources.
+
+    For the CUDA backend the expression-template .cpp sources include
+    <cuda_runtime.h>, which on MSVC requires the conforming preprocessor.
+    For the HIP backend no extra compiler flags are needed — the ROCm headers
+    are found via the toolchain's default include paths.
+    Mirrors linear_algebra_gpu_copts() in LinearAlgebra.
+    """
+    return select({
+        Label("//bazel:enable_cuda_windows"): ["/Zc:preprocessor"],
+        "//conditions:default": [],
+    })
+
 def vectorization_arch_copts():
-    """Returns the -m.../-march=... ISA compiler flags for the selected CPU
-    backend. Mirrors Cmake/tools/utils.cmake's CMAKE_REQUIRED_FLAGS probes
+    """Return ISA compiler flags for the selected CPU backend.
+
+    Mirrors Cmake/tools/utils.cmake's CMAKE_REQUIRED_FLAGS probes
     (VECTORIZATION_COMPILER_FLAGS), which CMakeLists.txt applies as
     PUBLIC target_compile_options so every consumer inherits the correct ISA.
     Bazel copts are not transitive the same way — targets that include
     Vectorization headers using simd<T> directly (rather than only calling
     into pre-built .cpp/.o) must apply the same select() themselves, the way
     Testing/Cxx/BUILD.bazel does.
+
+    Returns:
+        Configurable ISA compiler options.
     """
+
     # A single flat select(): Bazel resolves "cpu_sse_windows" over "cpu_sse" on
     # Windows because the former is a strict specialization of the latter
     # (same define_values, plus a constraint_values match) -- see

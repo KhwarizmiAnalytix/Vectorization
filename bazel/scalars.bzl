@@ -1,11 +1,16 @@
 """Scalars backend settings follow Vectorization's CPU/GPU selection."""
 
-load("//bazel:vectorization.bzl", "vectorization_arch_copts", "vectorization_copts")
+load("//bazel:vectorization.bzl", "vectorization_arch_copts", "vectorization_copts", "vectorization_gpu_copts")
 
 def scalars_copts():
-    return vectorization_copts() + vectorization_arch_copts()
+    return vectorization_copts() + vectorization_arch_copts() + vectorization_gpu_copts()
 
 def scalars_defines():
+    """Return Scalars feature definitions matching the selected backends.
+
+    Returns:
+        Configurable CPU and GPU feature definitions.
+    """
     defines = [
         "SCALARS_HAS_SVML=0",
         "SCALARS_COMPILER_SUPPORTS_SVML_EXTENSIONS=0",

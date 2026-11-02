@@ -11,6 +11,7 @@ load(
     "vectorization_arch_copts",
     "vectorization_copts",
     "vectorization_defines",
+    "vectorization_gpu_copts",
     "vectorization_linkopts",
 )
 
@@ -47,9 +48,12 @@ cc_library(
     hdrs = [
         ":vectorization_hdrs",
     ],
-    copts = vectorization_copts() + vectorization_arch_copts(),
+    copts = vectorization_copts() + vectorization_arch_copts() + vectorization_gpu_copts(),
     defines = vectorization_defines() + select({
-        "//bazel:shared_libs": ["VECTORIZATION_SHARED_DEFINE", "VECTORIZATION_BUILDING_DLL"],
+        "//bazel:shared_libs": [
+            "VECTORIZATION_SHARED_DEFINE",
+            "VECTORIZATION_BUILDING_DLL",
+        ],
         "//conditions:default": ["VECTORIZATION_STATIC_DEFINE"],
     }),
     includes = ["include"],
@@ -58,6 +62,7 @@ cc_library(
         "//bazel:shared_libs": False,
         "//conditions:default": True,
     }),
+    visibility = ["//visibility:private"],
     deps = [
         "@logging//:Logging",
         "@memory//:Memory",
@@ -66,24 +71,17 @@ cc_library(
         "//bazel:disable_profiler": [],
         "//conditions:default": ["@profiler//:Profiler"],
     }) + select({
-        # Mirrors Memory's own bazel/BUILD.bazel (@local_config_cuda -- not yet
-        # defined by this workspace or Memory's; see Scripts/setup_bazel.py's
-        # module docstring). CUDA kernels also need TestTensorGpu.cpp-style
-        # LANGUAGE CUDA tagging, which this cc_library does not attempt.
-        "//bazel:enable_cuda": ["@local_config_cuda//:cuda"],
-        "//conditions:default": [],
-    }) + select({
+        "//bazel:enable_cuda": ["@rules_cuda//cuda:runtime"],
         "//bazel:enable_hip": ["@local_config_hip//:hip"],
         "//conditions:default": [],
     }),
     alwayslink = False,
-    visibility = ["//visibility:private"],
 )
 
 cc_library(
     name = "Vectorization",
-    deps = [":vectorization_lib"],
     visibility = ["//visibility:public"],
+    deps = [":vectorization_lib"],
 )
 
 # =============================================================================

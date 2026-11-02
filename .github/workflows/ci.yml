@@ -314,6 +314,10 @@ jobs:
         if: matrix.name == 'sleef-neon'
         run: python3 -m unittest discover -s Testing/CMake -p test_dependencies.py -v
 
+      - name: GPU configuration regression checks
+        if: matrix.name == 'sleef-neon'
+        run: python3 -m unittest discover -s Testing/CMake -p test_gpu_build.py -v
+
       - name: Build
         run: python3 Scripts/setup.py build --build-dir build
 

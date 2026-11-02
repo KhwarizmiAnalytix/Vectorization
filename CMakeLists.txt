@@ -222,6 +222,11 @@ if(VECTORIZATION_LTO_MODE STREQUAL "auto" AND
 endif()
 
 # Set dependency options only after every public flag has been declared.
+# Resolve HIP before Memory and Scalars enable the language themselves, so
+# SDK compiler discovery and headless architecture defaults reach them too.
+if(VECTORIZATION_GPU_BACKEND STREQUAL "hip")
+  include("${CMAKE_CURRENT_SOURCE_DIR}/Cmake/tools/hip.cmake")
+endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/Cmake/dependencies.cmake")
 
 # Logging is required — Vectorization log/check/throw macros go through the Logging
@@ -508,122 +513,14 @@ set_target_properties(
 
 # ---- HIP GPU backend -------------------------------------------------------
 if(VECTORIZATION_GPU_BACKEND STREQUAL "hip")
-  # HIP/ROCm is Unix-only in this project — see Library/Memory/Cmake/hip.cmake and
-  # Docs/CUDA_HIP_REMEDIATION_PLAN.md. Fail fast on Windows rather than attempting an
-  # untested find_package(hip)/enable_language(HIP) path.
-  if(WIN32)
-    message(
-      FATAL_ERROR
-        "VECTORIZATION_GPU_BACKEND=hip is not supported on Windows in this project (HIP/ROCm is "
-        "Unix-only here). Use VECTORIZATION_GPU_BACKEND=cuda on Windows, or build on Linux for HIP."
-    )
-  endif()
-
-  # Prefer ROCm HIP; fall back to CUDA when ROCM_PATH is absent.
-  if(NOT DEFINED CMAKE_HIP_COMPILER AND DEFINED ENV{ROCM_PATH})
-    set(CMAKE_HIP_COMPILER "$ENV{ROCM_PATH}/bin/hipcc" CACHE FILEPATH "HIP compiler")
-  endif()
-
-  # Locate the HIP package (hip::host / hip::device imported targets) so the
-  # Vectorization target links HIP even when Memory's HIP finder has not run
-  # (e.g. MEMORY_GPU_BACKEND=none). Memory::Memory is always linked, but that
-  # does not pull HIP unless Memory itself was configured with HIP.
-  include(rocm_prefix)
-  xsigma_setup_rocm_prefix()
-  find_package(hip QUIET)
-  if(NOT hip_FOUND)
-    message(
-      WARNING "Vectorization: VECTORIZATION_GPU_BACKEND=hip but the HIP package was not found "
-              "via find_package(hip). Set ROCM_PATH or CMAKE_PREFIX_PATH to your ROCm install. "
-              "Falling back to enable_language(HIP) alone; linking may fail unless the HIP "
-              "runtime is otherwise reachable (e.g. transitively via Memory::Memory)."
-    )
-  endif()
-
-  enable_language(HIP)
-
-  set(VECTORIZATION_GPU_ARCHITECTURES "gfx900;gfx906;gfx908;gfx90a;gfx1030;gfx1100"
-      CACHE STRING "HIP GPU architectures (gfxXXX for AMD, smXX for CUDA offload via hipcc)"
-  )
-  # CI passes explicit CMAKE_HIP_ARCHITECTURES (no device at configure time).
-  # Honor that instead of compiling every gfx* default.
-  if(CMAKE_HIP_ARCHITECTURES AND NOT CMAKE_HIP_ARCHITECTURES STREQUAL "native")
-    set(VECTORIZATION_GPU_ARCHITECTURES "${CMAKE_HIP_ARCHITECTURES}"
-        CACHE STRING "HIP GPU architectures (gfxXXX for AMD, smXX for CUDA offload via hipcc)"
-              FORCE
-    )
-  endif()
-  set_target_properties(
-    Vectorization PROPERTIES HIP_STANDARD ${VECTORIZATION_CXX_STANDARD}
-                             HIP_ARCHITECTURES "${VECTORIZATION_GPU_ARCHITECTURES}"
-  )
-  target_compile_options(Vectorization PRIVATE $<$<COMPILE_LANGUAGE:HIP>:-ffast-math>)
-  if(TARGET hip::host)
-    target_link_libraries(Vectorization PUBLIC hip::host)
-  endif()
-  # CMake's HIP language supplies device compilation and linking. hip::device
-  # would also pass Clang-only -x hip/--offload-arch flags to ordinary GCC TUs.
-  message(
-    STATUS "Vectorization: HIP GPU backend enabled (archs: ${VECTORIZATION_GPU_ARCHITECTURES})"
-  )
+  include(hip)
+  vectorization_apply_hip_flags(Vectorization)
 endif()
 
 # ---- CUDA GPU backend -------------------------------------------------------
 if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda")
-  enable_language(CUDA)
-  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    # enable_language reloads CMakeCUDACompiler.cmake here. With the forced
-    # Clang compiler its empty implicit include list shadows Memory's cached
-    # fallback. Restore it in this scope (and re-cache) so system TBB's
-    # /usr/include is not emitted ahead of libstdc++, breaking cmath's
-    # include_next <math.h>.
-    list(APPEND CMAKE_CUDA_IMPLICIT_INCLUDE_DIRECTORIES ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES})
-    list(REMOVE_DUPLICATES CMAKE_CUDA_IMPLICIT_INCLUDE_DIRECTORIES)
-    set(CMAKE_CUDA_IMPLICIT_INCLUDE_DIRECTORIES "${CMAKE_CUDA_IMPLICIT_INCLUDE_DIRECTORIES}"
-        CACHE INTERNAL "CUDA implicit host include directories" FORCE
-    )
-  endif()
-
-  # Prefer arches already chosen by Memory/cuda.cmake; otherwise the shared
-  # Turing+ default (sm_70 removed in CUDA 12.8; CUDA 13.x starts at sm_75).
-  # FORCE evicts any stale cache entry that still contains sm_70.
-  if(DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT CMAKE_CUDA_ARCHITECTURES STREQUAL ""
-     AND NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "native"
-  )
-    set(_vectorization_cuda_archs "${CMAKE_CUDA_ARCHITECTURES}")
-  else()
-    if(DEFINED XSIGMA_CUDA_ARCHITECTURES_DEFAULT)
-      set(_vectorization_cuda_archs "${XSIGMA_CUDA_ARCHITECTURES_DEFAULT}")
-    else()
-      set(_vectorization_cuda_archs "75;80;86;89;90")
-    endif()
-  endif()
-  set(VECTORIZATION_CUDA_ARCHITECTURES "${_vectorization_cuda_archs}"
-      CACHE STRING "CUDA compute capability list (e.g. 75;80;86 for Turing/Ampere/Ada)" FORCE
-  )
-  unset(_vectorization_cuda_archs)
-  set_target_properties(
-    Vectorization
-    PROPERTIES CUDA_STANDARD ${VECTORIZATION_CXX_STANDARD}
-               CUDA_STANDARD_REQUIRED ON
-               CUDA_ARCHITECTURES "${VECTORIZATION_CUDA_ARCHITECTURES}"
-               CUDA_SEPARABLE_COMPILATION OFF
-  )
-  if(CMAKE_CUDA_COMPILER_ID STREQUAL "Clang")
-    target_compile_options(Vectorization PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-ffast-math>)
-    # CMAKE_CUDA_COMPILER_FORCED skips CUDA_STANDARD → -std= emission.
-    target_compile_options(
-      Vectorization PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-std=c++${VECTORIZATION_CXX_STANDARD}>
-    )
-  else()
-    target_compile_options(
-      Vectorization PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math -Xcompiler=-fPIC>
-    )
-  endif()
-  message(
-    STATUS
-      "Vectorization: CUDA GPU backend enabled (archs: ${VECTORIZATION_CUDA_ARCHITECTURES}, compiler: ${CMAKE_CUDA_COMPILER_ID})"
-  )
+  include(cuda)
+  vectorization_apply_cuda_flags(Vectorization)
 endif()
 
 # ---- Metal GPU backend ------------------------------------------------------
@@ -806,6 +703,14 @@ message("")
 message("******** Vectorization module (CMake flags) ********")
 message("  CPU backend          : ${VECTORIZATION_CPU_BACKEND}")
 message("  GPU backend          : ${VECTORIZATION_GPU_BACKEND}")
+if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda")
+  message("  CUDA architectures   : ${VECTORIZATION_CUDA_ARCHITECTURES}")
+  message("  CUDA compiler        : ${CMAKE_CUDA_COMPILER_ID}")
+endif()
+if(VECTORIZATION_GPU_BACKEND STREQUAL "hip")
+  message("  GPU architectures    : ${VECTORIZATION_GPU_ARCHITECTURES}")
+  message("  HIP compiler         : ${CMAKE_HIP_COMPILER}")
+endif()
 message("  Packet size          : ${VECTORIZATION_PACKET_SIZE}")
 message("  SVML                 : ${VECTORIZATION_ENABLE_SVML}")
 message("  SLEEF                : ${VECTORIZATION_ENABLE_SLEEF}")

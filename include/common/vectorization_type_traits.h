@@ -26,6 +26,8 @@
 
 #include <backend/simd.h>
 
+using scalars::simd;
+
 namespace memory
 {
 template <typename value_t> struct data_view;

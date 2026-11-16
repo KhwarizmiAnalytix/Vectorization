@@ -37,6 +37,25 @@ static_assert(!can_matmul<decltype(std::declval<tensor<float>>() + 1.0f), tensor
 static_assert(!vectorization::is_writable_tensor_operand_v<tensor_view<const float>>);
 static_assert(!vectorization::is_writable_tensor_operand_v<tensor<float> const&>);
 
+// Structural epilogue matching (alpha * matmul +/- beta * leaf); everything else
+// keeps the product-temporary path.
+template <typename E> constexpr bool epilogue_v = vectorization::detail::is_gemm_epilogue_v<E>;
+using product_f = decltype(matmul(std::declval<tensor<float>&>(), std::declval<tensor<float>&>()));
+static_assert(epilogue_v<decltype(2.0f * std::declval<product_f>())>);
+static_assert(epilogue_v<decltype(std::declval<product_f>() * 2.0f)>);
+static_assert(epilogue_v<decltype(2.0f * (3.0f * std::declval<product_f>()))>);
+static_assert(epilogue_v<decltype(std::declval<product_f>() + std::declval<tensor<float>&>())>);
+static_assert(epilogue_v<decltype(std::declval<tensor<float>&>() - std::declval<product_f>())>);
+static_assert(
+    epilogue_v<decltype(std::declval<product_f>() - 2.0f * std::declval<tensor_view<float>>())>);
+static_assert(!epilogue_v<product_f>);
+static_assert(!epilogue_v<decltype(std::declval<product_f>() + 1.0f)>);
+static_assert(!epilogue_v<decltype(std::declval<product_f>() + std::declval<product_f>())>);
+static_assert(!epilogue_v<decltype(std::declval<product_f>() * std::declval<tensor<float>&>())>);
+static_assert(
+    !epilogue_v<decltype(std::declval<product_f>() +
+                         (std::declval<tensor<float>&>() + std::declval<tensor<float>&>()))>);
+
 template <typename T> class TensorProducts : public ::testing::Test
 {
 };
@@ -280,6 +299,104 @@ TYPED_TEST(TensorProducts, AliasingAlphaBetaAndNoalias)
     tensor<T>      invalid_storage(4);
     tensor_view<T> invalid(invalid_storage.memory_view(), {2, 2}, {1, 1});
     EXPECT_ANY_THROW(invalid.noalias() = matmul(a, b));
+}
+
+TYPED_TEST(TensorProducts, GemmEpiloguesMatchTwoPassReferences)
+{
+    using T = TypeParam;
+    tensor<T> a(3, 4), b(4, 2), d(3, 2);
+    for (size_t i = 0; i < a.size(); ++i)
+    {
+        a[i] = static_cast<T>(static_cast<int>(i % 5) - 2);
+    }
+    for (size_t i = 0; i < b.size(); ++i)
+    {
+        b[i] = static_cast<T>(static_cast<int>(i % 3) + 1);
+    }
+    for (size_t i = 0; i < d.size(); ++i)
+    {
+        d[i] = static_cast<T>(i + 1);
+    }
+    const auto p         = reference_matrix(a, b);
+    const auto d_values  = d.to_host_vector();
+    auto       expect_is = [&](tensor<T> const& actual, auto&& reference)
+    {
+        for (size_t i = 0; i < actual.size(); ++i)
+        {
+            EXPECT_EQ(actual[i], reference(i)) << "element " << i;
+        }
+    };
+
+    tensor<T> c(3, 2);
+    auto*     original = c.data();
+    c                  = std::numeric_limits<T>::quiet_NaN();
+    c                  = T(2) * matmul(a, b);  // beta = 0 never reads c
+    expect_is(c, [&](size_t i) { return T(2) * p[i]; });
+    c = T(2) * (T(3) * matmul(a, b));
+    expect_is(c, [&](size_t i) { return T(6) * p[i]; });
+    c = T(1);
+    c = matmul(a, b) + c;
+    expect_is(c, [&](size_t i) { return p[i] + T(1); });
+    c = T(1);
+    c = matmul(a, b) * T(2) - c;
+    expect_is(c, [&](size_t i) { return T(2) * p[i] - T(1); });
+    c = T(1);
+    c = T(4) * c - T(3) * matmul(a, b);
+    expect_is(c, [&](size_t i) { return T(4) - T(3) * p[i]; });
+    c = T(1);
+    c += matmul(a, b);
+    c -= T(2) * matmul(a, b);
+    expect_is(c, [&](size_t i) { return T(1) - p[i]; });
+    c.noalias() += T(2) * matmul(a, b);
+    expect_is(c, [&](size_t i) { return T(1) + p[i]; });
+    EXPECT_EQ(c.data(), original);
+
+    // A distinct d is copied into c, then GEMM accumulates with beta.
+    c = std::numeric_limits<T>::quiet_NaN();
+    c = matmul(a, b) + T(2) * d;
+    expect_is(c, [&](size_t i) { return p[i] + T(2) * d_values[i]; });
+    c = d - matmul(a, b);
+    expect_is(c, [&](size_t i) { return d_values[i] - p[i]; });
+    EXPECT_EQ(d.to_host_vector(), d_values);
+    tensor<T> constructed(matmul(a, b) + d);
+    expect_is(constructed, [&](size_t i) { return p[i] + d_values[i]; });
+    tensor<T> bias{10, 20};
+    c = matmul(a, b) + bias;  // broadcast leaf: copy then beta = 1
+    expect_is(c, [&](size_t i) { return p[i] + (i % 2 == 0 ? T(10) : T(20)); });
+
+    // Column-major destination takes the transposed GEMM with beta.
+    tensor<T> storage(2, 3);
+    auto      transposed = storage.t();
+    transposed           = d;
+    transposed           = matmul(a, b) + transposed;
+    tensor<T> transposed_copy(transposed);
+    expect_is(transposed_copy, [&](size_t i) { return p[i] + d_values[i]; });
+
+    // The product broadcasting against d is not a single GEMM: general path.
+    tensor<T> batched_d(std::vector<size_t>{2, 3, 2});
+    batched_d = T(1);
+    tensor<T> batched(matmul(a, b) + batched_d);
+    EXPECT_EQ(shape_of(batched), (std::vector<int64_t>{2, 3, 2}));
+    expect_is(batched, [&](size_t i) { return p[i % p.size()] + T(1); });
+
+    // Destination aliasing a GEMM input: staged, still exact.
+    tensor<T>  square{{1, 2}, {3, 4}}, identity{{0, 1}, {1, 0}};
+    const auto swapped = reference_matrix(square, identity);
+    square             = matmul(square, identity) + square;
+    EXPECT_EQ(square.to_host_vector(),
+        (std::vector<T>{swapped[0] + 1, swapped[1] + 2, swapped[2] + 3, swapped[3] + 4}));
+    tensor<T> other{{1, 1}, {1, 1}};
+    square = tensor<T>{{1, 2}, {3, 4}};
+    square = matmul(square, identity) + other;
+    EXPECT_EQ(square.to_host_vector(),
+        (std::vector<T>{swapped[0] + 1, swapped[1] + 1, swapped[2] + 1, swapped[3] + 1}));
+
+    // Partial overlap between d and c is still rejected before any write.
+    tensor<T> backing(4, 2);
+    backing      = T(0);
+    auto top     = backing.slice(0, 0, 3, 1);
+    auto shifted = backing.slice(0, 1, 4, 1);
+    EXPECT_ANY_THROW(top = matmul(a, b) + shifted);
 }
 
 TYPED_TEST(TensorProducts, DeferredCompositionAndProductReductions)

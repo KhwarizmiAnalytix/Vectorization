@@ -3,8 +3,9 @@
  *
  * SPDX-License-Identifier: GPL-3.0-or-later OR Commercial
  *
- * CPU baselines for design phases P0/P2/P3. All inputs and outputs are
- * preallocated except CPU_TensorAllocFree. Bytes are logical reads/writes,
+ * CPU baselines for design phases P0/P2/P3/P5. All inputs and outputs are
+ * preallocated except CPU_TensorAllocFree and the staged CPU_ProductEpilogue
+ * references, which allocate the product temporary they measure. Bytes are logical reads/writes,
  * not hardware traffic; broadcast inputs are counted once per output element.
  * Use wall time so parallel evaluator work is included. The raw triad is a
  * compiler-vectorized reference, not a result from the STREAM benchmark.
@@ -150,6 +151,50 @@ template <typename T> void CPU_TensorAllocFree(benchmark::State& state)
     }
 }
 
+enum class Epilogue : std::uint8_t
+{
+    staged_accumulate,  // product temporary, then c = tmp + c (the general path)
+    accumulate,         // c = matmul(a, b) + c: one GEMM with beta = 1
+    staged_bias,        // product temporary, then c = tmp + bias
+    bias                // c = matmul(a, b) + bias: broadcast copy, then beta = 1
+};
+
+// P5 epilogues: an n x n product combined with a leaf. The staged cases
+// reproduce the product-temporary lowering for comparison.
+template <typename T, Epilogue Mode> void CPU_ProductEpilogue(benchmark::State& state)
+{
+    const auto n = static_cast<std::size_t>(state.range(0));
+    tensor<T>  a(n, n), b(n, n), c(n, n), bias(n);
+    a    = T(1) / static_cast<T>(n);
+    b    = T(1);
+    c    = T(0);
+    bias = T(1);
+    for (auto _ : state)
+    {
+        if constexpr (Mode == Epilogue::staged_accumulate)
+        {
+            tensor<T> product(matmul(a, b));
+            c = product + c;
+        }
+        else if constexpr (Mode == Epilogue::accumulate)
+        {
+            c = matmul(a, b) + c;
+        }
+        else if constexpr (Mode == Epilogue::staged_bias)
+        {
+            tensor<T> product(matmul(a, b));
+            c = product + bias;
+        }
+        else
+        {
+            c = matmul(a, b) + bias;
+        }
+        benchmark::DoNotOptimize(c.data());
+        benchmark::ClobberMemory();
+    }
+    state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(2 * n * n * n));
+}
+
 enum class Layout : std::uint8_t
 {
     row_broadcast,
@@ -275,4 +320,34 @@ BENCHMARK_TEMPLATE(CPU_Layout, double, Layout::column_broadcast)
 BENCHMARK_TEMPLATE(CPU_Layout, double, Layout::stepped)->Arg(256)->Arg(1024)->UseRealTime();
 BENCHMARK_TEMPLATE(CPU_Layout, double, Layout::packed_copy)->Arg(256)->Arg(1024)->UseRealTime();
 BENCHMARK_TEMPLATE(CPU_Layout, double, Layout::transpose_copy)->Arg(256)->Arg(1024)->UseRealTime();
+BENCHMARK_TEMPLATE(CPU_ProductEpilogue, float, Epilogue::staged_accumulate)
+    ->Arg(16)
+    ->Arg(64)
+    ->Arg(256)
+    ->UseRealTime();
+BENCHMARK_TEMPLATE(CPU_ProductEpilogue, float, Epilogue::accumulate)
+    ->Arg(16)
+    ->Arg(64)
+    ->Arg(256)
+    ->UseRealTime();
+BENCHMARK_TEMPLATE(CPU_ProductEpilogue, float, Epilogue::staged_bias)
+    ->Arg(16)
+    ->Arg(64)
+    ->Arg(256)
+    ->UseRealTime();
+BENCHMARK_TEMPLATE(CPU_ProductEpilogue, float, Epilogue::bias)
+    ->Arg(16)
+    ->Arg(64)
+    ->Arg(256)
+    ->UseRealTime();
+BENCHMARK_TEMPLATE(CPU_ProductEpilogue, double, Epilogue::staged_accumulate)
+    ->Arg(16)
+    ->Arg(64)
+    ->Arg(256)
+    ->UseRealTime();
+BENCHMARK_TEMPLATE(CPU_ProductEpilogue, double, Epilogue::accumulate)
+    ->Arg(16)
+    ->Arg(64)
+    ->Arg(256)
+    ->UseRealTime();
 }  // namespace

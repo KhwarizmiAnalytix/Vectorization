@@ -800,6 +800,14 @@ public:
             }
             else
             {
+                if constexpr (detail::is_gemm_epilogue_v<E>)
+                {
+                    if (detail::lower_gemm_epilogue(*this, expr, unchecked_alias))
+                    {
+                        record_stream_if_redirected(stream);
+                        return *this;
+                    }
+                }
                 auto lowered = detail::lower_products(expr);
                 assign(lowered, unchecked_alias);
             }

@@ -747,7 +747,8 @@ the following table records the current capability boundary.
 | Unary/binary/ternary composition, broadcast bias and whole-expression reductions over products | Implemented, one product stage per occurrence before elementwise lowering | Not enabled |
 | Owner/view/const-view inputs; packed, padded, transposed, stepped and broadcast layouts | Implemented; unsupported matrix strides pack | Not enabled |
 | Ordinary assignment with aliased product inputs | Temporary before any destination write | Not enabled |
-| `noalias()` assertions; destination injectivity and shape checks | Implemented; compound assignments currently materialize the product | Not enabled |
+| `noalias()` assertions; destination injectivity and shape checks | Implemented | Not enabled |
+| Product epilogues: `α·matmul(a, b) ± β·d` (including `c += …` and `c -= …`) | Implemented: one GEMM with alpha/beta; `d` aliasing `c` needs no copy; a distinct or broadcast `d` is copied first; other trees and unsafe aliasing take the product temporary | Not enabled |
 | Square `lu`, `lu_factor`, `lu_factor_ex`, `cholesky`, `cholesky_ex` | Implemented; selected triangle honored; `_ex` defaults to unchecked numerical status | Explicitly rejected |
 | `solve`, `solve_ex`, `solve_triangular`, `lu_solve`, `cholesky_solve`; reusable LU/Cholesky factors | Implemented; broadcast matrix batches, strided inputs, left/right and LU adjoint solves; factor-reuse solves require matrix RHS | Explicitly rejected |
 | `inv`, `inv_ex`, `det`, `slogdet` | Implemented through square LU; scalar results are 0-d tensors; empty determinant is 1 | Explicitly rejected |
@@ -761,15 +762,17 @@ broadcasting, empty outputs and zero contraction sizes are checked in
 Release as well as Debug. A vector/vector product remains a 0-d tensor
 when composed; only the explicit `dot()` API extracts a host scalar.
 
-The current dependency supplies GEMM but not U2's GEMV/DOT, rectangular
-batched or alpha/beta API. The adapter selects compiled CPU MKL, BLAS or
-native GEMM, promotes vectors, and loops over broadcast batch matrices.
-It passes compatible leading dimensions directly, swaps operands for a
-column-major output, and retains grow-only aligned Memory scratch per host
-thread/dtype. Non-default alpha/beta uses an explicit product temporary
-and elementwise update, with no destination read when beta is zero.
-Product epilogues, specialized vector/batch dispatch, allocation-count and
-performance gates remain open. No dependency sources were changed.
+The current dependency (LinearAlgebra `c0d3a18`) supplies GEMM with
+alpha/beta, but not U2's GEMV/DOT or rectangular batched API. The adapter
+selects compiled CPU MKL, BLAS or native GEMM, promotes vectors, and loops
+over broadcast batch matrices. It passes compatible leading dimensions
+directly, swaps operands for a column-major output, and retains grow-only
+aligned Memory scratch per host thread/dtype. `matmul_out` and the
+[product epilogues](#product-epilogues) pass alpha/beta to GEMM; only an
+overlapping or non-BLAS-layout destination stages the product and applies
+the epilogue elementwise, with no destination read when beta is zero.
+Specialized vector/batch dispatch, allocation-count and performance gates
+remain open.
 
 CMake's installed package now restores LinearAlgebra as a public dependency;
 Bazel's public library also links its overlay, and the new test translation
@@ -1499,10 +1502,10 @@ phase changes.
 | P2 | Vectorization | `tensor` / `tensor_view` split; const views; `rebind()`; `noalias()` proxy for elementwise assignment | Semantics implemented and locally verified; performance gate open | Updated tests cover packed owner copies, shallow view copies, write-through copy/move assignment, const access, signed lattice intersections and adopted storage. Debug/Release CPU, Metal GPU and CPU LibTorch pass; CUDA/HIP remain unverified | Expression building with `tensor<T>` leaves adds no atomic operations: measured not met. `a + 3 * b` retains 2 handles (at least 4 atomic RMWs) in a 20 ns capture; resolve before closing the phase |
 | P3 | Vectorization | CPU planner tiers 0–2 with `run_range`; contiguous fast path; `loop2d`; threading policy (bytes and op cost, intra-row splits, BLAS coordination); tiled transpose; `flip`; tier-2 specialization; planner-owned prefetch; aligned-source variant removed; CPU reductions | Partly done: planner, `loop2d`, row-split threading. Performance gates measured November 16: tier 0 one-thread and n ≤ 64 latency met against the local references; tier 1 met for double, borderline for float; `t().contiguous()` not met; thread scaling not gate-grade | Strided, broadcast, `flip` and reduction tests pass; serial SIMD fallback taken with parallel support disabled | Tier 0 ≥ 90% of STREAM triad bandwidth on one thread and scales with threads; tier 1 ≥ 80% for rows ≥ 256 elements; latency at n ≤ 64 within 10% of today; `t().contiguous()` ≥ 50% of tier-0 copy bandwidth |
 | U1 | Memory | [Section 12](#memory-u1) | Partial: provenance query (`storage_provenance` on `retained_ptr`/`data_view`) landed upstream with tests, submodule bumped; one-allocation CPU storage, uninitialized allocation, offset-aware copy, `copy_async`, stream events remain | Landed upstream with tests; submodule bumped | Offset-aware copy at device-copy bandwidth |
-| U2 | LinearAlgebra | [Section 12](#linearalgebra-u2) | Not started | Landed upstream with tests; submodule bumped | GEMV, DOT and batched GEMM at backend-library speed |
+| U2 | LinearAlgebra | [Section 12](#linearalgebra-u2) | Partial: GEMM alpha/beta landed upstream and is consumed by `matmul_out` and product epilogues; GEMV, DOT, rectangular batched GEMM and the matrix-API contracts remain | Landed upstream with tests; submodule bumped | GEMV, DOT and batched GEMM at backend-library speed |
 | U3 | Scalars | [Section 12](#scalars-u3) | Not started | Landed upstream with tests; submodule bumped | Metal interior-slice dispatch with no per-call buffer wrapping |
 | P4 | Vectorization | CUDA/HIP offset calculator with span-checked 32-bit indexing and vector loads; strided GPU destinations; Metal pipeline cache, batched command buffers, per-allocation `MTLBuffer`; GPU reductions; offset-aware transfers; unified launch contract ([section 13](#13-backend-launch-unification)) | Not started | Device clone of an interior slice without host memory (Metal locally; CUDA/HIP in CI); large-stride small tensors take the wide-index path; same launch signature on every backend; macOS `neon` + `metal` clang-tidy job passes | Tier 0 and strided tiers in GB/s on each GPU backend; Metal per-call host overhead after the first call in µs and free of string building |
-| P5 | Vectorization | Lazy products, elementwise composition, epilogues and size routing; functional PyTorch-style matrix API, named results, `_ex` status and reusable factors, delivered in [four parts](#p5-delivery-order) | Partial: CPU products and square LU/Cholesky, solves, inverse and determinants implemented; integer metadata, rectangular LU, epilogues, U2 routing, GPU adapters, remaining matrix families and performance gates remain | Product shapes, layouts, aliasing and deferred lifetimes pass; matrix operations match pinned LibTorch shapes/defaults/result fields; reconstruction/residual and numerical-status tests pass for each enabled capability | Warmed-up `c = matmul(a, b)` with reusable output, compatible layouts and sufficient workspace performs no tensor-layer allocation; small-matrix GEMM within 2× of Eigen fixed-size products; composed math evaluates each product occurrence once, then uses one elementwise pass; factor-reuse solves never refactor; packing, workspace and status-read costs reported separately |
+| P5 | Vectorization | Lazy products, elementwise composition, epilogues and size routing; functional PyTorch-style matrix API, named results, `_ex` status and reusable factors, delivered in [four parts](#p5-delivery-order) | Partial: CPU products and square LU/Cholesky, solves, inverse and determinants implemented; product epilogues implemented; integer metadata, rectangular LU, U2 routing, GPU adapters, remaining matrix families and performance gates remain | Product shapes, layouts, aliasing and deferred lifetimes pass; matrix operations match pinned LibTorch shapes/defaults/result fields; reconstruction/residual and numerical-status tests pass for each enabled capability | Warmed-up `c = matmul(a, b)` with reusable output, compatible layouts and sufficient workspace performs no tensor-layer allocation; small-matrix GEMM within 2× of Eigen fixed-size products; composed math evaluates each product occurrence once, then uses one elementwise pass; factor-reuse solves never refactor; packing, workspace and status-read costs reported separately |
 | P6 | Vectorization | Optional, measured: streaming stores, true fused epilogues (cuBLASLt), tiny-matrix kernel tuning | Not started | Behind flags; no regression on existing tiers | Streaming stores 1.2–1.5× on write-heavy tier-0 work where they win; no regression on read-after-write chains |
 
 Dependencies: P0 fixes incorrect results and goes first. U1, U2 and U3 run
@@ -1800,6 +1803,34 @@ every evaluation case passed output validation, and clang-tidy (first-party
 header filter, warnings as errors) and clang-format passed for
 `BenchmarkTensorPlanner.cpp`. Local raw results are in
 `build_ninja/tensor_planner_2026-11-16.json` (ignored build artifact).
+
+### Product epilogues (November 16, 2026)
+
+`c = α·matmul(a, b) ± β·d`, its operand orders, nested scalar factors and
+`c += …` / `c -= …` now lower to one GEMM with alpha/beta (LinearAlgebra
+`c0d3a18`). Matching is structural over the stored expression nodes, as
+Eigen recognizes `scalar * product`; the overlap classifier then chooses the
+route before any write. `d` fully aliasing `c` becomes `β·c` with no copy. A
+distinct `d` is expanded to `c`'s shape (stride 0 for a broadcast bias) and
+copied first, only when `c` overlaps none of `a`, `b` and `d`. A product
+that broadcasts against `d`, partial or unprovable overlap, and every other
+tree keep the product temporary. `TestTensorProducts` checks each form
+against two-pass references, including NaN destinations with β = 0,
+column-major destinations, broadcast bias, inputs aliasing `c` and rejected
+partial overlap; compile-time checks pin which trees match.
+
+`benchmark_tensorplanner`'s `CPU_ProductEpilogue` compares each form with the
+staged lowering it replaces (product temporary, then one elementwise pass),
+for square n × n operands on the native backend, five repetitions (CV ≤ 0.5%):
+
+| Case | n = 16 | n = 64 | n = 256 |
+|---|---|---|---|
+| float `c = matmul(a, b) + c`, staged → epilogue | 520 → 354 ns (−32%) | 9.54 → 8.68 µs (−9%) | 546 → 528 µs (−3%) |
+| float `c = matmul(a, b) + bias`, staged → epilogue | 632 → 505 ns (−20%) | 9.82 → 9.35 µs (−5%) | 544 → 535 µs (−2%) |
+| double `c = matmul(a, b) + c`, staged → epilogue | 672 → 470 ns (−30%) | 19.2 → 16.9 µs (−12%) | 1,085 → 1,052 µs (−3%) |
+
+The saving is the temporary's allocation plus one memory pass, so it
+matters most for small products, where GEMM no longer dominates.
 
 ### Correctness tests
 

@@ -141,8 +141,9 @@ size_t product_batch_offset(
     return offset;
 }
 
-// The current upstream API has GEMM only. Vectors use promoted GEMM until U2
-// supplies GEMV/DOT; batches dispatch one GEMM per matrix without host staging.
+// The current upstream API has GEMM (with alpha/beta) only. Vectors use promoted
+// GEMM until U2 supplies GEMV/DOT; batches dispatch one GEMM per matrix without
+// host staging.
 #if LINALG_HAS_MKL
 inline constexpr auto product_cpu_backend = ::linalg::linalg_backend::MKL;
 #elif LINALG_HAS_BLAS
@@ -203,7 +204,9 @@ void dispatch_product(product_matrix<T> const& a,
     int64_t                                    n,
     int64_t                                    k,
     int64_t                                    ldc,
-    bool                                       transpose_output)
+    bool                                       transpose_output,
+    T                                          alpha,
+    T                                          beta)
 {
     using kernel = ::linalg::multiplication<T, product_cpu_backend>;
     const auto required =
@@ -222,10 +225,12 @@ void dispatch_product(product_matrix<T> const& a,
             n,
             m,
             k,
+            alpha,
             b.data,
             b.ld,
             a.data,
             a.ld,
+            beta,
             c,
             ldc,
             workspace.data(),
@@ -238,10 +243,12 @@ void dispatch_product(product_matrix<T> const& a,
             m,
             n,
             k,
+            alpha,
             a.data,
             a.ld,
             b.data,
             b.ld,
+            beta,
             c,
             ldc,
             workspace.data(),
@@ -343,21 +350,6 @@ public:
             }
             return;
         }
-        // Upstream U2 will supply alpha/beta. Preserve their semantics with an
-        // explicit product stage until then, without reading c when beta is zero.
-        if (alpha != value_type(1) || beta != value_type(0))
-        {
-            auto result = eval();
-            if (beta == value_type(0))
-            {
-                c.assign(result * alpha);
-            }
-            else
-            {
-                c.assign(result * alpha + c * beta);
-            }
-            return;
-        }
         const int     batch_rank = shape_.batch.rank;
         const int64_t row_stride = shape_.left_vector ? shape_.columns : out.strides[batch_rank];
         const int64_t column_stride =
@@ -368,8 +360,21 @@ public:
             row_stride == 1 && (shape_.columns == 1 || column_stride >= shape_.rows);
         if (overlap || (!row_major && !column_major))
         {
+            // GEMM cannot write c in place: stage the product, then apply the
+            // epilogue elementwise. c is not read when beta is zero.
             auto result = eval();
-            c.assign(result.to_strided_ref());
+            if (beta != value_type(0))
+            {
+                c.assign(result * alpha + c * beta);
+            }
+            else if (alpha != value_type(1))
+            {
+                c.assign(result * alpha);
+            }
+            else
+            {
+                c.assign(result.to_strided_ref());
+            }
             return;
         }
         const auto a_row             = shape_.left_vector ? shape_.depth : a_.strides[a_.rank - 2];
@@ -401,7 +406,9 @@ public:
                 shape_.depth,
                 row_major ? std::max(row_stride, shape_.columns)
                           : std::max(column_stride, shape_.rows),
-                !row_major);
+                !row_major,
+                alpha,
+                beta);
         }
     }
 
@@ -453,8 +460,257 @@ using vectorization::matmul;
 using vectorization::matmul_out;
 }  // namespace linalg
 
+struct add_evaluator;
+struct sub_evaluator;
+struct mul_evaluator;
+struct madd_evaluator;
+struct msub_evaluator;
+
 namespace detail
 {
+// Product epilogues (design plan section 11): assignments of the form
+// c = alpha * matmul(a, b) +/- beta * d, with d a tensor leaf, lower to one
+// GEMM with alpha/beta instead of a product temporary plus an elementwise pass.
+// Like Eigen's scalar * product recognition, matching is purely structural;
+// whether c can be written directly is decided by the overlap classifier at
+// run time. Terms match on the *stored* node types, so lvalue and rvalue
+// operands and nested scalar factors (2 * (3 * p)) are handled alike.
+enum class gemm_term_kind : uint8_t
+{
+    none,
+    product,
+    leaf
+};
+
+template <typename E> struct gemm_term
+{
+    static constexpr gemm_term_kind kind = gemm_term_kind::none;
+};
+
+template <typename A, typename B> struct gemm_term<product_expression<A, B>>
+{
+    static constexpr gemm_term_kind kind = gemm_term_kind::product;
+    template <typename V> static V  scale(product_expression<A, B> const&) { return V(1); }
+    static auto const&              node(product_expression<A, B> const& e) { return e; }
+};
+
+template <typename T> struct gemm_term<retained_ref<T>>
+{
+    static constexpr gemm_term_kind kind = gemm_term_kind::leaf;
+    template <typename V> static V  scale(retained_ref<T> const&) { return V(1); }
+    static auto const&              node(retained_ref<T> const& e) { return e; }
+};
+
+template <typename L, typename R> struct gemm_term<binary_expression<L, R, mul_evaluator>>
+{
+    using expression_type            = binary_expression<L, R, mul_evaluator>;
+    using stored_lhs                 = remove_cvref_t<stored_operand_t<remove_cvref_t<L>>>;
+    using stored_rhs                 = remove_cvref_t<stored_operand_t<remove_cvref_t<R>>>;
+    static constexpr bool scalar_lhs = std::is_arithmetic_v<stored_lhs>;
+    static constexpr bool scalar_rhs = std::is_arithmetic_v<stored_rhs>;
+    using inner = std::conditional_t<scalar_lhs, gemm_term<stored_rhs>, gemm_term<stored_lhs>>;
+    static constexpr gemm_term_kind kind =
+        scalar_lhs != scalar_rhs ? inner::kind : gemm_term_kind::none;
+
+    template <typename V> static V scale(expression_type const& e)
+    {
+        if constexpr (scalar_lhs)
+        {
+            return static_cast<V>(e.lhs()) * inner::template scale<V>(e.rhs());
+        }
+        else
+        {
+            return inner::template scale<V>(e.lhs()) * static_cast<V>(e.rhs());
+        }
+    }
+    static auto const& node(expression_type const& e)
+    {
+        if constexpr (scalar_lhs)
+        {
+            return inner::node(e.rhs());
+        }
+        else
+        {
+            return inner::node(e.lhs());
+        }
+    }
+};
+
+template <typename Ev> inline constexpr int gemm_sum_sign                 = 0;
+template <> inline constexpr int            gemm_sum_sign<add_evaluator>  = 1;
+template <> inline constexpr int            gemm_sum_sign<madd_evaluator> = 1;
+template <> inline constexpr int            gemm_sum_sign<sub_evaluator>  = -1;
+template <> inline constexpr int            gemm_sum_sign<msub_evaluator> = -1;
+
+// A matched epilogue: product(), alpha(), and for sums leaf() and beta().
+template <typename E> struct gemm_epilogue
+{
+    static constexpr bool value = false;
+};
+
+template <typename L, typename R, typename Ev> struct gemm_epilogue<binary_expression<L, R, Ev>>
+{
+    using expression_type = binary_expression<L, R, Ev>;
+    using stored_lhs      = remove_cvref_t<stored_operand_t<remove_cvref_t<L>>>;
+    using stored_rhs      = remove_cvref_t<stored_operand_t<remove_cvref_t<R>>>;
+    using scaled          = gemm_term<expression_type>;
+    using lhs_term        = gemm_term<stored_lhs>;
+    using rhs_term        = gemm_term<stored_rhs>;
+
+    static constexpr int  sign      = gemm_sum_sign<Ev>;
+    static constexpr bool is_scaled = scaled::kind == gemm_term_kind::product;
+    static constexpr bool product_on_left =
+        lhs_term::kind == gemm_term_kind::product && rhs_term::kind == gemm_term_kind::leaf;
+    static constexpr bool product_on_right =
+        lhs_term::kind == gemm_term_kind::leaf && rhs_term::kind == gemm_term_kind::product;
+    static constexpr bool is_sum   = sign != 0 && (product_on_left || product_on_right);
+    static constexpr bool value    = is_scaled || is_sum;
+    static constexpr bool has_leaf = is_sum;
+
+    using product_term = std::
+        conditional_t<is_scaled, scaled, std::conditional_t<product_on_left, lhs_term, rhs_term>>;
+    using leaf_term = std::conditional_t<product_on_left, rhs_term, lhs_term>;
+
+    static auto const& product(expression_type const& e)
+    {
+        if constexpr (is_scaled)
+        {
+            return scaled::node(e);
+        }
+        else if constexpr (product_on_left)
+        {
+            return lhs_term::node(e.lhs());
+        }
+        else
+        {
+            return rhs_term::node(e.rhs());
+        }
+    }
+    template <typename V> static V alpha(expression_type const& e)
+    {
+        if constexpr (is_scaled)
+        {
+            return scaled::template scale<V>(e);
+        }
+        else if constexpr (product_on_left)
+        {
+            return lhs_term::template scale<V>(e.lhs());
+        }
+        else
+        {
+            return static_cast<V>(sign) * rhs_term::template scale<V>(e.rhs());
+        }
+    }
+    static auto const& leaf(expression_type const& e)
+    {
+        if constexpr (product_on_left)
+        {
+            return rhs_term::node(e.rhs());
+        }
+        else
+        {
+            return lhs_term::node(e.lhs());
+        }
+    }
+    template <typename V> static V beta(expression_type const& e)
+    {
+        if constexpr (product_on_left)
+        {
+            return static_cast<V>(sign) * rhs_term::template scale<V>(e.rhs());
+        }
+        else
+        {
+            return lhs_term::template scale<V>(e.lhs());
+        }
+    }
+};
+
+template <typename E>
+inline constexpr bool is_gemm_epilogue_v = gemm_epilogue<remove_cvref_t<E>>::value;
+
+// Lowers a matched epilogue into c. Returns false, before any write, when the
+// shapes or aliasing need the general path (product temporary, then one
+// elementwise pass). d fully aliasing c becomes beta * c with no copy; a
+// distinct d is copied into c first, so c must not overlap a, b or d.
+template <typename C, typename E> bool lower_gemm_epilogue(C& c, E const& expr, bool noalias)
+{
+    using match         = gemm_epilogue<remove_cvref_t<E>>;
+    auto const& product = match::product(expr);
+    using value_type    = typename remove_cvref_t<decltype(product)>::value_type;
+    const auto& shape   = product.result_shape();
+    if (c.rank() != static_cast<size_t>(shape.rank))
+    {
+        return false;  // product broadcasts against d: not a single GEMM
+    }
+    for (int d = 0; d < shape.rank; ++d)
+    {
+        if (c.size(static_cast<size_t>(d)) != shape.sizes[d])
+        {
+            return false;
+        }
+    }
+    const auto alpha = match::template alpha<value_type>(expr);
+    if constexpr (!match::has_leaf)
+    {
+        product.evaluate_into(c, noalias, false, alpha, value_type(0));
+        return true;
+    }
+    else
+    {
+        auto const& leaf   = match::leaf(expr);
+        const auto  beta   = match::template beta<value_type>(expr);
+        const auto  out    = c.to_strided_ref();
+        const auto  status = classify_overlap(out, leaf);
+        if (status == overlap_status::full)
+        {
+            product.evaluate_into(c, noalias, false, alpha, beta);
+            return true;
+        }
+        if (status != overlap_status::none || (!noalias && product.overlaps(out)))
+        {
+            return false;
+        }
+        if (noalias)
+        {
+            product.check_noalias(out);
+        }
+        // Assignment does not broadcast; expand d (e.g. a bias row) to c's shape
+        // with stride-0 axes, as tensor_view::expand does.
+        auto source =
+            static_cast<strided_ref<std::remove_pointer_t<decltype(leaf.data())>> const&>(leaf);
+        const int offset = shape.rank - source.rank;
+        if (offset < 0)
+        {
+            return false;
+        }
+        bool reshaped = offset != 0;
+        for (int d = shape.rank - 1; d >= 0; --d)
+        {
+            const int     from   = d - offset;
+            const int64_t size   = from >= 0 ? source.sizes[from] : 1;
+            const int64_t stride = from >= 0 ? source.strides[from] : 0;
+            if (size != shape.sizes[d] && size != 1)
+            {
+                return false;
+            }
+            reshaped          = reshaped || size != shape.sizes[d];
+            source.sizes[d]   = shape.sizes[d];
+            source.strides[d] = size == shape.sizes[d] ? stride : 0;
+        }
+        if (reshaped)
+        {
+            source.rank        = shape.rank;
+            source.numel       = shape.numel();
+            source.contiguous  = false;
+            source.align_start = 0;
+            source.align_end   = 0;
+        }
+        c.assign(source, true);
+        product.evaluate_into(c, true, false, alpha, beta);
+        return true;
+    }
+}
+
 template <typename E> struct product_lowering;
 template <typename E> auto lower_products(E const& expression)
 {

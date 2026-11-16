@@ -199,6 +199,7 @@ hip_library(
 # Excluded (CMake-only dependencies, same rationale as the test glob above):
 #   - BenchmarkTensorLibTorch.cpp: VECTORIZATION_ENABLE_LIBTORCH
 #   - BenchmarkTensorMkl.cpp: VECTORIZATION_ENABLE_MKL
+# BenchmarkTensorBaselines.cpp builds without LibTorch rows here (CMake-only).
 [
     cc_binary(
         name = "benchmark_" + _src[len("Benchmark"):-len(".cpp")].lower(),
@@ -225,7 +226,9 @@ hip_library(
             "//bazel:enable_cuda": [":tensor_cuda_benchmark"],
             "//bazel:enable_hip": [":tensor_hip_benchmark"],
             "//conditions:default": [],
-        }) if _src == "BenchmarkTensorGpu.cpp" else []) + select({
+        }) if _src == "BenchmarkTensorGpu.cpp" else []) + ([
+            "@eigen",
+        ] if _src == "BenchmarkTensorBaselines.cpp" else []) + select({
             "//bazel:enable_metal": [":metal_device_probe"],
             "//conditions:default": [],
         }),

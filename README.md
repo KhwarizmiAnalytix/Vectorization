@@ -202,6 +202,68 @@ with backend and reduction order.
 operations from 257 to more than 16 million elements. Optional LibTorch tests
 compare their results directly with PyTorch.
 
+## Performance against baselines
+
+`benchmark_tensorbaselines` (`Testing/Cxx/BenchmarkTensorBaselines.cpp`) runs
+each operation on the same inputs through four implementations:
+
+| Row suffix | Implementation |
+|---|---|
+| `Vectorization` | `tensor<T>` expression templates |
+| `Loop` | Plain scalar loop, auto-vectorized by the compiler where it can |
+| `Eigen` | `Eigen::Array` expression (the copy bundled with LinearAlgebra) |
+| `LibTorch` | `torch::*_out` kernel on one thread (only with `VECTORIZATION_ENABLE_LIBTORCH=ON`) |
+
+Rows are named `<Op>/<f32|f64>/<n>/<implementation>` and run at 1,027, 32,771
+and 1,048,579 elements (L1-, L2- and DRAM-sized). Outputs are preallocated.
+Before timing, each result is checked against a double-precision reference,
+and a mismatch reports an error instead of a time.
+
+```sh
+benchmark_tensorbaselines --benchmark_filter='Exp/f32/'   # one case, all implementations
+benchmark_tensorbaselines --benchmark_min_time=0.5s       # full run
+```
+
+Wall time in µs at n = 32,771. Measured with clang-cl 22, AVX2 and SLEEF in a
+Release build, one thread, on a 16-core 3.2 GHz x86-64 machine (48 KiB L1D and
+2 MiB L2 per core). Treat differences under about 10% as noise.
+
+| Op | f32 Vec. | f32 Loop | f32 Eigen | f32 Torch | f64 Vec. | f64 Loop | f64 Eigen | f64 Torch |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Add `a + b` | 2.25 | 1.97 | 1.98 | 2.60 | 4.29 | 3.81 | 3.82 | 4.52 |
+| Mul `a * b` | 2.16 | 1.93 | 1.92 | 2.57 | 4.24 | 3.83 | 3.87 | 4.44 |
+| Saxpy `2.5a + b` | 2.33 | 1.96 | 1.95 | 2.75 | 4.54 | 3.79 | 3.86 | 4.53 |
+| Fma `a * b + c` | 3.08 | 2.28 | 2.40 | 3.17 | 6.33 | 4.58 | 4.74 | 5.49 |
+| Composite `sqrt(a²+b²) + c` | 4.51 | 4.36 | 4.27 | 16.5 | 17.5 | 17.2 | 16.9 | 40.1 |
+| Exp | 9.95 | 49.3 | 8.41 | 11.8 | 29.3 | 76.4 | 20.1 | 31.6 |
+| Log | 25.2 | 69.1 | 6.12 | 28.7 | 63.7 | 79.8 | 24.5 | 73.1 |
+| Sqrt | 4.30 | 16.8 | 4.24 | 4.75 | 17.2 | 34.0 | 17.1 | 17.6 |
+| Sin | 19.8 | 194 | 8.05 | 17.3 | 44.4 | 224 | 42.1 | 44.7 |
+| Cos | 23.0 | 198 | 8.12 | 16.6 | 45.2 | 218 | 42.5 | 49.1 |
+| Tanh | 49.9 | 200 | 5.28 | 50.1 | 101 | 256 | 19.4 | 106 |
+| Sum | 0.545 | 11.4 | 0.539 | 3.34 | 1.07 | 11.3 | 1.08 | 5.46 |
+| Dot `sum(a * b)` | 1.16 | 11.3 | 1.09 | 12.4 | 2.27 | 11.4 | 2.24 | 12.6 |
+
+What the numbers show:
+
+- **Reductions:** Vectorization matches Eigen and is 2–10× faster than LibTorch
+  and 2–20× faster than the scalar loop, which cannot reorder floating-point
+  additions.
+- **Fused expressions:** Vectorization, Eigen and the loop are level.
+  LibTorch is 2–5× slower because it materializes temporaries.
+- **Element-wise arithmetic:** Vectorization is 10–20% behind the
+  auto-vectorized loop and Eigen, and `a * b + c` is about 35% behind.
+- **Small arrays:** each call has about 60 ns of fixed overhead. At 1,027
+  elements, Add takes 0.085 µs against 0.021 µs for the loop.
+- **Transcendentals:** Eigen is 2–10× faster for log, tanh, sin and cos in
+  float, and for log and tanh in double. Vectorization roughly matches LibTorch.
+  The reference check accepts relative errors up to 2e-5 (float), so it does not
+  separate faster approximations from more accurate ones.
+
+Results depend on the CPU backend, the math provider (SLEEF, SVML or the
+built-in fallback), the compiler and `VECTORIZATION_PACKET_SIZE`. Rerun the
+benchmark after changing any of them.
+
 ## CMake options
 
 ### Primary selectors
@@ -304,7 +366,7 @@ vectorization::tensor<float> owned(std::move(storage), {3, 4});
 | `VECTORIZATION_LTO_MODE` / `VECTORIZATION_ENABLE_COVERAGE` | build-type dependent / OFF | LTO mode (`off`, `thin`, `full`, `ipo`, `auto`) / coverage |
 | `VECTORIZATION_ENABLE_TESTING` | ON | Test subtree |
 | `VECTORIZATION_ENABLE_BENCHMARK` | ON | `BenchmarkSimd*.cpp` → individual `benchmark_simd*` targets |
-| `VECTORIZATION_ENABLE_LIBTORCH` | OFF | Probe `find_package(Torch)` (via `CMAKE_PREFIX_PATH`) and build the LibTorch comparison tests/benchmarks (`torch` flag in `setup.py`) |
+| `VECTORIZATION_ENABLE_LIBTORCH` | OFF | Probe `find_package(Torch)` (via `CMAKE_PREFIX_PATH`) and build the LibTorch comparison tests/benchmarks, including the LibTorch rows of `benchmark_tensorbaselines` (`torch` flag in `setup.py`) |
 | `USE_NATIVE_ARCH` | OFF | `-march=native` (Clang/GCC) |
 | `VECTORIZATION_ENABLE_ICECC` / `VECTORIZATION_ENABLE_CACHE` / `VECTORIZATION_ENABLE_CLANGTIDY` / `VECTORIZATION_ENABLE_FIX` / `VECTORIZATION_ENABLE_IWYU` / `VECTORIZATION_ENABLE_SANITIZER` / `VECTORIZATION_ENABLE_SPELL` / `VECTORIZATION_ENABLE_VALGRIND` | see `CMakeLists.txt` | Tooling |
 

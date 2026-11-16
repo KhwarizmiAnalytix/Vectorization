@@ -769,6 +769,12 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
       target_compile_definitions(${target_name} PRIVATE VECTORIZATION_HAS_MKL=1)
       target_link_libraries(${target_name} PRIVATE MKL::MKL)
     endif()
+    # Eigen baseline: header-only, bundled by LinearAlgebra (always available,
+    # see linalg_setup_eigen); single-threaded like the other baselines.
+    if(bench_name STREQUAL "BenchmarkTensorBaselines")
+      target_link_libraries(${target_name} PRIVATE Eigen3::Eigen)
+      target_compile_definitions(${target_name} PRIVATE EIGEN_DONT_PARALLELIZE)
+    endif()
 
     # ThinLTO + lld-link OOM: same guard as VectorizationCxxTests above.
     if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
@@ -804,15 +810,19 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
   message(STATUS "✓ Individual benchmark executables configured (${bench_count} total)")
 
   # ---------------------------------------------------------------------------
-  # BenchmarkTensorLibTorch: link LibTorch when available, otherwise stub out.
+  # BenchmarkTensorLibTorch / BenchmarkTensorBaselines: link LibTorch when
+  # available, otherwise build without the LibTorch rows.
   # BenchmarkTensorGpu (Metal): also link LibTorch for LibTorch_MPS_TensorAllocFree.
   # ---------------------------------------------------------------------------
-  if(TARGET benchmark_tensorlibtorch)
+  foreach(_torch_bench IN ITEMS benchmark_tensorlibtorch benchmark_tensorbaselines)
+    if(NOT TARGET ${_torch_bench})
+      continue()
+    endif()
     if(Torch_FOUND)
-      target_link_libraries(benchmark_tensorlibtorch PRIVATE torch)
-      target_compile_definitions(benchmark_tensorlibtorch PRIVATE VECTORIZATION_HAS_LIBTORCH=1)
+      target_link_libraries(${_torch_bench} PRIVATE torch)
+      target_compile_definitions(${_torch_bench} PRIVATE VECTORIZATION_HAS_LIBTORCH=1)
       target_compile_options(
-        benchmark_tensorlibtorch
+        ${_torch_bench}
         PRIVATE $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-deprecated-declarations
                 -Wno-unused-parameter> $<$<CXX_COMPILER_ID:GNU>:-Wno-deprecated-declarations
                 -Wno-unused-parameter>
@@ -820,17 +830,18 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
       if(WIN32)
         file(GLOB _torch_dlls "${TORCH_INSTALL_PREFIX}/lib/*.dll")
         add_custom_command(
-          TARGET benchmark_tensorlibtorch POST_BUILD
+          TARGET ${_torch_bench} POST_BUILD
           COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_torch_dlls}
-                  $<TARGET_FILE_DIR:benchmark_tensorlibtorch>
+                  $<TARGET_FILE_DIR:${_torch_bench}>
         )
       endif()
-      message(STATUS "benchmark_tensorlibtorch: LibTorch comparison benchmarks ENABLED")
+      message(STATUS "${_torch_bench}: LibTorch comparison benchmarks ENABLED")
     else()
-      target_compile_definitions(benchmark_tensorlibtorch PRIVATE VECTORIZATION_HAS_LIBTORCH=0)
-      message(STATUS "benchmark_tensorlibtorch: LibTorch not found — benchmark stubs only")
+      target_compile_definitions(${_torch_bench} PRIVATE VECTORIZATION_HAS_LIBTORCH=0)
+      message(STATUS "${_torch_bench}: LibTorch not found — LibTorch rows omitted")
     endif()
-  endif()
+  endforeach()
+  unset(_torch_bench)
 
   if(TARGET benchmark_tensorgpu)
     if(Torch_FOUND AND VECTORIZATION_GPU_BACKEND STREQUAL "metal")

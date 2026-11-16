@@ -126,3 +126,11 @@ local_linear_algebra_repository(
     build_file = "//bazel:linearalgebra.BUILD",
     path = "ThirdParty/LinearAlgebra",
 )
+
+# --- Eigen — header-only benchmark baseline, bundled by LinearAlgebra ---
+# Mirrors CMake's Eigen3::Eigen from LinearAlgebra's linalg_setup_eigen().
+new_local_repository(
+    name = "eigen",
+    build_file = "//bazel:eigen.BUILD",
+    path = "ThirdParty/LinearAlgebra/ThirdParty/eigen",
+)

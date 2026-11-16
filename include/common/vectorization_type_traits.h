@@ -26,6 +26,12 @@
 
 #include <backend/simd.h>
 
+// Scalars declares simd<T> in namespace scalars.
+namespace vectorization
+{
+using scalars::simd;
+}  // namespace vectorization
+
 namespace memory
 {
 template <typename value_t> struct data_view;

@@ -26,6 +26,12 @@
 #include <type_traits>
 #include <utility>
 
+// Scalars declares simd<T> in namespace scalars.
+namespace vectorization
+{
+using scalars::simd;
+}  // namespace vectorization
+
 #include "common/data_ptr.h"
 #include "common/data_view.h"
 #include "common/device.h"

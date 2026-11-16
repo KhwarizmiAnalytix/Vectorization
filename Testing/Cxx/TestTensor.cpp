@@ -48,7 +48,7 @@ template <typename T> VECTORIZATION_NOINLINE void test_tensor_construction()
     // SIMD metadata
     // -----------------------------------------------------------------------
 #if VECTORIZATION_VECTORIZED
-    EXPECT_EQ(tensor_t::length(), static_cast<size_t>(simd<T>::size));
+    EXPECT_EQ(tensor_t::length(), static_cast<size_t>(scalars::simd<T>::size));
 #else
     EXPECT_EQ(tensor_t::length(), 1u);
 #endif

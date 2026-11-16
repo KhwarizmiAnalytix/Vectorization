@@ -32,6 +32,12 @@
 #include <backend/simd.h>
 #include <math/scalar_helper_functions.h>
 
+// Scalars declares simd<T> in namespace scalars.
+namespace vectorization
+{
+using scalars::simd;
+}  // namespace vectorization
+
 namespace vectorization
 {
 // std::conditional_t instantiates both branches, so a helper trait is required:

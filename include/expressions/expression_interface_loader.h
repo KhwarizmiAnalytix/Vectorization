@@ -27,6 +27,12 @@
 #include <backend/simd.h>
 #include <math/scalar_helper_functions.h>
 
+// Scalars declares simd<T> in namespace scalars.
+namespace vectorization
+{
+using scalars::simd;
+}  // namespace vectorization
+
 namespace vectorization
 {
 

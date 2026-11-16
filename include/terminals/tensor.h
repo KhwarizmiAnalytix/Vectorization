@@ -58,6 +58,12 @@
 #include "terminals/noalias.h"
 #include <backend/simd.h>
 
+// Scalars declares simd<T> in namespace scalars.
+namespace vectorization
+{
+using scalars::simd;
+}  // namespace vectorization
+
 namespace vectorization
 {
 #if VECTORIZATION_VECTORIZED

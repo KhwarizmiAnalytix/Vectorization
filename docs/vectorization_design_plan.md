@@ -2,7 +2,7 @@
 
 Scope: `include/terminals/tensor.h`, `include/expressions/`, the CPU, CUDA,
 HIP and Metal evaluators, and the parts of Memory, Scalars and LinearAlgebra
-they build on, updated November 1, 2026. This is the **single implementation
+they build on, updated November 4, 2026. This is the **single implementation
 plan** for the tensor and evaluator redesign. The status table and
 implementation notes record delivered work; remaining requirements describe
 targets, not the current contract.
@@ -76,7 +76,7 @@ expression must fuse.
 
 ### Implementation status
 
-Updated by source inspection on November 1, 2026. "Done" means implemented;
+Updated by source inspection on November 5, 2026. "Done" means implemented;
 it does not imply that every backend or performance gate has passed.
 Recorded verification and remaining gates are listed in
 [section 17](#recorded-verification).
@@ -97,7 +97,8 @@ Recorded verification and remaining gates are listed in
 | Expression leaves keep operands alive | Done: `retained_ref` snapshots descriptors and retains lvalue and rvalue storage; `lower_raw()` removes ownership before dispatch | `strided_ref.h`, `expression_interface.h` |
 | `tensor` / `tensor_view` split, const views, `rebind()`, elementwise `noalias()` | Done: distinct `tensor_impl<T, IsView>` instantiations; write-through view assignment; proxy offers `=`, `+=`, `-=` | `tensor.h`, `tensor_view.h`, `noalias.h` |
 | Destination/source overlap classifier and signed-coefficient lattice test | Done: address ranges, identical mappings, dense spans, stride GCD and nested-stride carry intervals | `overlap.h` |
-| Provenance-aware storage shortcut and explicit offset field | Not started: classifier compares addresses conservatively; offsets are derived from `data_view` | `tensor.h`, Memory U1 |
+| Provenance-aware storage shortcut | Done: `storage_provenance` landed in Memory U1 (`retained_ptr`, `data_view`); `classify_overlap()` proves `none` for distinct `allocated` allocations before the address test | `overlap.h`, `tensor.h`, Memory U1 |
+| Explicit offset field | Done: `tensor_impl::offset_` (elements from `base()`) cached by `recompute_cpu_simd_alignment_state()` and transplanted by `move_from()`; public `storage_offset()` (PyTorch's `Tensor.storage_offset()`) reads it instead of rederiving via pointer arithmetic | `tensor.h` |
 | `flip`, tiled transpose | Partial: CPU logical copies have an 8×8 transpose path; planner-wide transpose, GPU copy kernels and `flip` remain | `tensor.h`, `iteration_plan.h` |
 | Planner-owned prefetch; removal of the aligned-source variant | Not started: per-leaf prefetch and both alignment variants remain | `expressions_evaluator.h` |
 | Axis reductions; strided reductions | Partial: CPU whole-tensor strided/broadcast reductions exist; axis reductions and general strided GPU reductions remain | `expressions_evaluator.h`, `reduce_op.h` |
@@ -106,8 +107,8 @@ Recorded verification and remaining gates are listed in
 | GPU reduction without per-pass allocation | Not started | `reduce_gpu_partials()` |
 | Metal pipeline cache, batched command buffers, per-allocation `MTLBuffer` | Not started: MSL rebuilt per call, commit-and-wait, per-call buffer wrapping | `expressions_evaluator_metal.h`, Scalars `metal_dispatch.mm` |
 | Unified launch contract across backends | Not started | [section 13](#13-backend-launch-unification) |
-| Tensor-level `matmul`, `dot` and PyTorch-style matrix linear algebra | Not started: matrix block under `#if 0`; dependency algorithms still need tensor adapters | [section 11](#11-linearalgebra-adapter), `tensor.h` |
-| Memory U1 and LinearAlgebra U2 APIs | Not started | [section 12](#12-upstream-api-changes) |
+| Tensor-level `matmul`, `dot` and PyTorch-style matrix linear algebra | Partial: CPU float/double products, square LU/Cholesky, solves, inverse and determinants implemented; integer metadata, rectangular LU, GPU adapters and remaining matrix families are not enabled | [section 11](#11-linearalgebra-adapter), `product_expression.h`, `include/linalg/` |
+| Memory U1 and LinearAlgebra U2 APIs | Memory U1's provenance query is done (row above); its other items and all of LinearAlgebra U2 are not started | [section 12](#12-upstream-api-changes) |
 | clang-tidy coverage of `include/`, `src/` and `Testing/` | Library, test, Objective-C++ and enabled benchmark targets are wired; LLVM 19 CI jobs cover Linux AVX2 and macOS NEON + Metal. Local results and remaining toolchain limits are recorded below | [section 15](#15-clang-tidy-conformance) |
 
 ---
@@ -137,11 +138,14 @@ PyTorch handle copy. Code that only needs to borrow takes a view.
 
 The compact state below is the **target layout**. The current public aliases
 use `tensor_impl<T, false>` and `tensor_impl<T, true>` to share implementation.
-They retain storage and cache `contiguous_` and `non_overlapping_` as separate
-booleans, while a `data_view` carries the current window. The explicit offset,
-packed flags, provenance shortcut and CPU control-block coallocation remain
-targets. Read-only descriptors use `const_data_view` to preserve Memory's
-allocation identity without instantiating its unsupported `data_ptr<const T>`.
+They retain storage and cache `contiguous_`, `non_overlapping_` and an
+explicit `offset_` (elements from `base()`, PyTorch's `storage_offset()`) as
+separate fields, while a `data_view` carries the current window and its own
+provenance (Memory U1's `storage_provenance`, consumed by the overlap
+classifier's shortcut in [section 6](#6-aliasing-and-overlap)). Packed flags
+and CPU control-block coallocation remain targets. Read-only descriptors use
+`const_data_view` to preserve Memory's allocation identity without
+instantiating its unsupported `data_ptr<const T>`.
 
 ```cpp
 // Shared state of tensor<T> and tensor_view<T>.
@@ -182,8 +186,10 @@ struct strided_ref
   - PyTorch's `TensorImpl` holds `intrusive_ptr<StorageImpl>` the same way.
     Eigen `Block` / `Map` hold raw pointers, which only works because they
     are expression types not meant to be stored.
-- **Explicit offset — target:** store it as a field, not recomputed by pointer subtraction, so
-  copies, overlap checks and GPU transfers work from `(base, offset)`.
+- **Explicit offset — done:** stored as a field (`tensor_impl::offset_`), not
+  recomputed by pointer subtraction, so copies, overlap checks and GPU
+  transfers can work from `(base, offset)`. GPU transfers and offset-aware
+  copy still need Memory U1 and P4 to consume it.
 - **Kernels only see `strided_ref`.** Reference-counted handles never reach
   a device. Worker threads also use `strided_ref` and raw pointers, so they
   never contend on a shared control block.
@@ -305,12 +311,14 @@ O(leaves × rank) cost.
 
 #### Contiguous fast path
 
-The storage-provenance ordering and type-based shortcut below remain
-optimization targets. Current assignment checks overlap before calling the
-evaluator; the evaluator's runtime flat-path check avoids sort/merge planning
-for packed, compatible operands. The classifier uses addresses even when
-storage handles differ, so independent adoption cannot incorrectly prove
-disjointness.
+The storage-provenance shortcut (step 1 below) is implemented in
+`classify_overlap()`: it is checked before any address arithmetic, so two
+different `allocated` allocations never pay for the lattice test. A
+type-based shortcut remains an optimization target. Current assignment
+checks overlap before calling the evaluator; the evaluator's runtime
+flat-path check avoids sort/merge planning for packed, compatible operands.
+Adopted storage still falls back to addresses, so independent adoption
+cannot incorrectly prove disjointness.
 
 Planning costs more than the arithmetic for small tensors. An O(leaves)
 check runs first:
@@ -494,11 +502,15 @@ pair is classified like PyTorch's `get_overlap_status`:
 `check_assignment_overlap()` in `overlap.h`. Disjoint byte ranges are cleared
 first; identical injective mappings are `full`; intersecting dense spans are
 `partial`. A stride-GCD test can prove that interleaved slices are disjoint
-before the nested-stride lattice test. The provenance shortcut and all
-product-specific behavior in this section remain targets.
+before the nested-stride lattice test. The provenance shortcut (below) is
+implemented; product-specific behavior in this section remains a target.
 
-- **Storage provenance.** Different storage proves `none` only when both
-  storages are `allocated`. Adopted storage is compared by address: an
+- **Storage provenance.** Implemented: `classify_overlap()` checks
+  `storage_provenance` (Memory U1, landed upstream) before any address work.
+  A different allocation id on both sides with `allocated` provenance proves
+  `none` directly; the shortcut never fires on a slice of the same tensor
+  (slices share the parent's allocation id) and never fires for `adopted`
+  storage. Adopted storage is still compared by address: an
   adopted buffer may overlap another adopted buffer or an allocation under
   a different control block. Address ranges are compared in bytes on the
   same device, from `base + offset` over the span in
@@ -721,6 +733,75 @@ separate dependency's `::linalg` kernels. `linalg::matmul` also exposes the
 existing `vectorization::matmul` entry point with identical behavior.
 Backend enums, workspace pointers and destructive LAPACK-style buffers
 remain implementation details.
+
+### Delivered CPU product adapter (November 4, 2026)
+
+`product_expression.h`, included by `tensor.h`, implements the first CPU
+slice of P5 part 1. The rest of this section describes the target design;
+the following table records the current capability boundary.
+
+| Capability | CPU float/double | CUDA/HIP/Metal |
+|---|---|---|
+| Lazy `matmul`, strict rank-3 `bmm`; vector promotion and broadcast batches | Implemented | Explicitly rejected at evaluation |
+| Eager `matmul_out` with alpha/beta; vector-only host-scalar `dot` | Implemented | Explicitly rejected |
+| Unary/binary/ternary composition, broadcast bias and whole-expression reductions over products | Implemented, one product stage per occurrence before elementwise lowering | Not enabled |
+| Owner/view/const-view inputs; packed, padded, transposed, stepped and broadcast layouts | Implemented; unsupported matrix strides pack | Not enabled |
+| Ordinary assignment with aliased product inputs | Temporary before any destination write | Not enabled |
+| `noalias()` assertions; destination injectivity and shape checks | Implemented; compound assignments currently materialize the product | Not enabled |
+| Square `lu`, `lu_factor`, `lu_factor_ex`, `cholesky`, `cholesky_ex` | Implemented; selected triangle honored; `_ex` defaults to unchecked numerical status | Explicitly rejected |
+| `solve`, `solve_ex`, `solve_triangular`, `lu_solve`, `cholesky_solve`; reusable LU/Cholesky factors | Implemented; broadcast matrix batches, strided inputs, left/right and LU adjoint solves; factor-reuse solves require matrix RHS | Explicitly rejected |
+| `inv`, `inv_ex`, `det`, `slogdet` | Implemented through square LU; scalar results are 0-d tensors; empty determinant is 1 | Explicitly rejected |
+| Integer pivots/status, rectangular LU, remaining decompositions and matrix functions | Planned; pivots/status currently use the matrix's float/double dtype | Planned |
+
+Both input allocations are retained and their descriptors snapshotted, so
+saved products and nested expressions survive destruction of input owners
+and temporary views. Shape/device validation and remaining elementwise
+leaf overlap checks precede product dispatch. Matrix dimensions, batch
+broadcasting, empty outputs and zero contraction sizes are checked in
+Release as well as Debug. A vector/vector product remains a 0-d tensor
+when composed; only the explicit `dot()` API extracts a host scalar.
+
+The current dependency supplies GEMM but not U2's GEMV/DOT, rectangular
+batched or alpha/beta API. The adapter selects compiled CPU MKL, BLAS or
+native GEMM, promotes vectors, and loops over broadcast batch matrices.
+It passes compatible leading dimensions directly, swaps operands for a
+column-major output, and retains grow-only aligned Memory scratch per host
+thread/dtype. Non-default alpha/beta uses an explicit product temporary
+and elementwise update, with no destination read when beta is zero.
+Product epilogues, specialized vector/batch dispatch, allocation-count and
+performance gates remain open. No dependency sources were changed.
+
+CMake's installed package now restores LinearAlgebra as a public dependency;
+Bazel's public library also links its overlay, and the new test translation
+unit is registered in its device-compiler source list.
+
+The CPU continuation on November 5 adds square LU/Cholesky, solves, inverse
+and determinants in `include/linalg/`, exposed through `tensor.h`.
+`solve` recognizes a vector RHS only for rank 1 or an exact
+`B.shape == A.shape[:-1]`; other RHS inputs are matrices with broadcast
+batches. `solve_ex.info` describes A's original batches, before RHS
+broadcasting. Triangular and factor-reuse solves take matrix RHS inputs.
+LU adjoint and right-side solves reuse the original factors; they do not
+refactor a reconstructed matrix. Upper Cholesky normalizes the selected
+input triangle before dispatch, so values in the unused triangle are
+ignored even by the native backend's lower-based implementation.
+
+The `_ex` functions default to `check_errors=false`; checked variants
+report the operation and failing batch/pivot or leading minor. Singular
+`lu` still returns reconstructible factors. Pivots are validated as finite,
+whole 1-based row indices before use. Empty matrices, empty RHS columns and
+zero-size broadcast batches bypass positive-dimension backend kernels.
+`inv` solves against the identity through LU. `det` uses pivot parity and
+U's diagonal; `slogdet` sums logarithms to avoid forming an overflowing
+determinant. Matrix/batch outputs use independent packed CPU storage.
+
+Remaining P5 part 2 gaps: rectangular LU, integer metadata tensors, GPU
+adapters, and factor-reuse allocation/performance gates. Pivots and `info`
+currently use the input's float/double dtype because SIMD tensor storage
+does not yet support int32 metadata; float LU orders are limited to the
+exact integer range of that dtype. Repeated solves still clone factors and
+pack RHS inputs, and upstream single-RHS solves run once per RHS column.
+These are explicit capability limits, not full PyTorch parity.
 
 ```cpp
 // True for tensor<T>, tensor_view<T> and tensor_view<const T> (any cv/ref)
@@ -1133,8 +1214,9 @@ explicitly; their absence must not be represented as full PyTorch parity.
 
 ### Cleanup
 
-Remove the `#if 0` matrix block in `tensor.h` and the class comment claiming
-`tensor * tensor` is matrix multiplication.
+Done with the CPU product adapter: the `#if 0` matrix block and the class
+comment claiming `tensor * tensor` is matrix multiplication are removed from
+`tensor.h`; `*` remains elementwise.
 
 ---
 
@@ -1161,7 +1243,12 @@ Vectorization then bumps the submodule.
   ordering, separate from `record_stream`.
 - **Provenance query** on `retained_ptr` (`allocated` or `adopted`), so the
   overlap classifier knows when distinct storage proves disjointness
-  ([section 6](#6-aliasing-and-overlap)).
+  ([section 6](#6-aliasing-and-overlap)). Done: landed in Memory
+  (`storage_provenance`, `retained_ptr::provenance()`,
+  `data_view::provenance()` and a `data_view(retained_ptr const&)`
+  constructor carrying the allocation's real base/id/provenance instead of
+  `borrow()`'s always-invalid defaults), submodule bumped, and consumed by
+  `classify_overlap()`.
 - **`record_stream`** becomes a no-op for adopted memory with an invalid
   allocation id instead of failing the allocator lookup.
 
@@ -1408,14 +1495,14 @@ phase changes.
 | Phase | Repository | Scope | Status | Correctness gate | Performance gate |
 |---|---|---|---|---|---|
 | P0 | Vectorization | Result shape from broadcasting; every leaf's shape validated; Release checks on view operations; overlap classifier raising errors; copy semantics aligned with P2; clang-tidy baseline cleared and coverage gaps closed ([section 15](#15-clang-tidy-conformance)) | Shape, view checks and classifier implemented; static-analysis coverage and baseline fixes delivered locally. Hosted LLVM 19 verification and performance gate remain | Full test-target analysis enabled, including Objective-C++; see section 17 for executed configurations. CUDA/HIP analysis remains a documented limit | Release benchmarks at today's speed; shape checks outside the inner loop |
-| P1 | Vectorization | `retained_ptr` storage with provenance, explicit offset, views retain storage, safe expression capture, `non_overlapping` flag | Partly done: retaining views/leaves and cached injectivity implemented; provenance, explicit offset and allocation gate remain | Local AddressSanitizer lifetime/adopted-deleter tests and internal-overlap rejection pass; CUDA/HIP still need verification | CPU tensor construction and destruction: one heap allocation after U1; current promotion uses a separate control block |
+| P1 | Vectorization | `retained_ptr` storage with provenance, explicit offset, views retain storage, safe expression capture, `non_overlapping` flag | Partly done: retaining views/leaves, cached injectivity, the provenance-aware overlap shortcut and the explicit offset field implemented; the allocation gate remains | Local AddressSanitizer lifetime/adopted-deleter tests and internal-overlap rejection pass; CUDA/HIP still need verification | CPU tensor construction and destruction: one heap allocation after U1; current promotion uses a separate control block |
 | P2 | Vectorization | `tensor` / `tensor_view` split; const views; `rebind()`; `noalias()` proxy for elementwise assignment | Semantics implemented and locally verified; performance gate open | Updated tests cover packed owner copies, shallow view copies, write-through copy/move assignment, const access, signed lattice intersections and adopted storage. Debug/Release CPU, Metal GPU and CPU LibTorch pass; CUDA/HIP remain unverified | Expression building with `tensor<T>` leaves adds no atomic operations: not met by current retain-all capture; benchmark and resolve before closing the phase |
 | P3 | Vectorization | CPU planner tiers 0–2 with `run_range`; contiguous fast path; `loop2d`; threading policy (bytes and op cost, intra-row splits, BLAS coordination); tiled transpose; `flip`; tier-2 specialization; planner-owned prefetch; aligned-source variant removed; CPU reductions | Partly done: planner, `loop2d`, row-split threading | Strided, broadcast, `flip` and reduction tests pass; serial SIMD fallback taken with parallel support disabled | Tier 0 ≥ 90% of STREAM triad bandwidth on one thread and scales with threads; tier 1 ≥ 80% for rows ≥ 256 elements; latency at n ≤ 64 within 10% of today; `t().contiguous()` ≥ 50% of tier-0 copy bandwidth |
-| U1 | Memory | [Section 12](#memory-u1) | Not started | Landed upstream with tests; submodule bumped | Offset-aware copy at device-copy bandwidth |
+| U1 | Memory | [Section 12](#memory-u1) | Partial: provenance query (`storage_provenance` on `retained_ptr`/`data_view`) landed upstream with tests, submodule bumped; one-allocation CPU storage, uninitialized allocation, offset-aware copy, `copy_async`, stream events remain | Landed upstream with tests; submodule bumped | Offset-aware copy at device-copy bandwidth |
 | U2 | LinearAlgebra | [Section 12](#linearalgebra-u2) | Not started | Landed upstream with tests; submodule bumped | GEMV, DOT and batched GEMM at backend-library speed |
 | U3 | Scalars | [Section 12](#scalars-u3) | Not started | Landed upstream with tests; submodule bumped | Metal interior-slice dispatch with no per-call buffer wrapping |
 | P4 | Vectorization | CUDA/HIP offset calculator with span-checked 32-bit indexing and vector loads; strided GPU destinations; Metal pipeline cache, batched command buffers, per-allocation `MTLBuffer`; GPU reductions; offset-aware transfers; unified launch contract ([section 13](#13-backend-launch-unification)) | Not started | Device clone of an interior slice without host memory (Metal locally; CUDA/HIP in CI); large-stride small tensors take the wide-index path; same launch signature on every backend; macOS `neon` + `metal` clang-tidy job passes | Tier 0 and strided tiers in GB/s on each GPU backend; Metal per-call host overhead after the first call in µs and free of string building |
-| P5 | Vectorization | Lazy products, elementwise composition, epilogues and size routing; functional PyTorch-style matrix API, named results, `_ex` status and reusable factors, delivered in [four parts](#p5-delivery-order) | Not started | Product shapes, layouts, aliasing and deferred lifetimes pass; matrix operations match pinned LibTorch shapes/defaults/result fields; reconstruction/residual and numerical-status tests pass for each enabled capability | Warmed-up `c = matmul(a, b)` with reusable output, compatible layouts and sufficient workspace performs no tensor-layer allocation; small-matrix GEMM within 2× of Eigen fixed-size products; composed math evaluates each product occurrence once, then uses one elementwise pass; factor-reuse solves never refactor; packing, workspace and status-read costs reported separately |
+| P5 | Vectorization | Lazy products, elementwise composition, epilogues and size routing; functional PyTorch-style matrix API, named results, `_ex` status and reusable factors, delivered in [four parts](#p5-delivery-order) | Partial: CPU products and square LU/Cholesky, solves, inverse and determinants implemented; integer metadata, rectangular LU, epilogues, U2 routing, GPU adapters, remaining matrix families and performance gates remain | Product shapes, layouts, aliasing and deferred lifetimes pass; matrix operations match pinned LibTorch shapes/defaults/result fields; reconstruction/residual and numerical-status tests pass for each enabled capability | Warmed-up `c = matmul(a, b)` with reusable output, compatible layouts and sufficient workspace performs no tensor-layer allocation; small-matrix GEMM within 2× of Eigen fixed-size products; composed math evaluates each product occurrence once, then uses one elementwise pass; factor-reuse solves never refactor; packing, workspace and status-read costs reported separately |
 | P6 | Vectorization | Optional, measured: streaming stores, true fused epilogues (cuBLASLt), tiny-matrix kernel tuning | Not started | Behind flags; no regression on existing tiers | Streaming stores 1.2–1.5× on write-heavy tier-0 work where they win; no regression on read-after-write chains |
 
 Dependencies: P0 fixes incorrect results and goes first. U1, U2 and U3 run
@@ -1428,11 +1515,15 @@ Remaining work after the tensor/view and `noalias()` delivery:
 1. Run the new P0 LLVM 19 CI jobs and measure its Release performance gate.
    Local full-file analysis and coverage wiring are recorded in sections 15
    and 17; CUDA/HIP analysis remains outside the hosted tidy jobs.
-2. Complete P1's explicit-offset representation and provenance-aware
-   shortcut with Memory U1, then verify allocation counts.
-3. Measure expression construction and small-tensor latency. Resolve the
-   retain-all capture cost against P2's atomic-free target without weakening
-   the documented deferred-expression lifetime contract.
+2. P1's remaining item is the allocation gate (CPU tensor construction/
+   destruction in one heap allocation after U1's one-allocation storage).
+   The provenance-aware shortcut (Memory U1) and the explicit offset field
+   are delivered; see [section 6](#6-aliasing-and-overlap) and this
+   section's status table.
+3. Use the CPU expression-construction and small-tensor baseline recorded in
+   section 17 to resolve the retain-all capture cost against P2's atomic-free
+   target without weakening the documented deferred-expression lifetime
+   contract. Allocation and atomic counts still need instrumentation.
 4. Run CUDA/HIP and optional LibTorch coverage for the split, including
    stream bookkeeping and view/noalias assignment.
 5. Continue P3's CPU kernels/reductions and P4's GPU indexing, copies and
@@ -1490,6 +1581,169 @@ direct setter resets and exception unwinding without requiring a GPU.
 The hosted LLVM 19 jobs and CUDA/HIP toolchains were not executed locally.
 MKL-specific analysis and the P0 performance gate remain unverified; no
 performance or allocation-count improvement is claimed by this delivery.
+
+### CPU performance baseline continuation
+
+`Testing/Cxx/BenchmarkTensorPlanner.cpp` adds a standalone
+`benchmark_tensorplanner` target to both build systems through their existing
+benchmark globs. It measures:
+
+- Preallocated `out = a + 3 * b`, its `noalias()` form, and a raw compiler-vectorized
+  triad reference, at n = 1, 16, 64, 256, 32,767, 32,768, 32,769, 2²⁰ and 2²⁴.
+- Expression capture/destruction without evaluation, and tensor
+  allocation/destruction, as separate measurements at n = 1, 64 and 256.
+- Row/column broadcasts, stepped sources and destinations, packed copies and
+  transpose copies into reusable storage, on 256 × 256 and 256 × 1,024 tensors.
+
+Both float and double are covered. Fixtures are created outside the timed
+loop except in the allocation benchmark, and evaluation cases validate their
+output after timing. Every case uses wall time. Byte counters report logical
+traffic (three arrays for triads, two for copies); broadcast reads count once
+per output element and are not a measurement of physical memory traffic.
+The raw triad is a local comparison, not the STREAM benchmark. Transpose
+timing excludes allocation and view construction, so it does not yet measure
+the full `t().contiguous()` gate. Allocation latency does not establish the
+number of allocations, and capture latency does not establish atomic counts.
+
+To reproduce from the repository root with an existing Release build:
+
+```sh
+cmake --build build_ninja --target benchmark_tensorplanner
+build_ninja/bin/benchmark_tensorplanner \
+  --benchmark_min_time=0.1s --benchmark_min_warmup_time=0.1 \
+  --benchmark_repetitions=5 --benchmark_enable_random_interleaving=true \
+  --benchmark_out=build_ninja/tensor_planner_baseline.json \
+  --benchmark_out_format=json
+```
+
+Record the build configuration alongside the JSON. Build with parallel
+evaluation disabled for the serial baseline; enable it in a separate build
+to measure evaluator thread scaling. Google Benchmark's `threads` field
+counts benchmark workers, not evaluator threads. The same target is
+available as `//Testing/Cxx:benchmark_tensorplanner` under Bazel; use `-c opt`
+for measurements and set `--define=vectorization_cpu_backend` to the intended ISA.
+
+Measured on November 4, 2026, at `9b458eb` plus the benchmark addition, on an
+Apple M4 Pro (14 cores, 24 GB RAM), with Clang 22.1.2, C++20, Release `-O3`,
+NEON (`-march=armv8.2-a`), packet size 1 and parallel evaluation disabled.
+Library targets used ThinLTO; the benchmark translation unit did not use
+LTO. Google Benchmark 1.9.4 ran five repetitions per case after a 0.1-second
+warm-up, with a 0.1-second minimum measurement and random repetition
+interleaving. No CPU affinity was pinned. All 86 cases / 430 measured
+samples completed without errors; evaluation cases passed output validation.
+Local raw results are in
+`build_ninja/tensor_planner_baseline.json` and its `.txt` console companion
+(ignored build artifacts).
+
+| Measurement (median; bandwidth in decimal GB/s) | float | double |
+|---|---|---|
+| Ordinary triad, n = 1 / 16 / 64 / 256 | 73.6 / 75.5 / 80.4 / 104.0 ns | 66.1 / 69.6 / 82.4 / 131.1 ns |
+| `noalias()` triad, n = 64 | 73.6 ns | 75.9 ns |
+| Expression capture/destruction, n = 64 | 22.0 ns | 22.0 ns |
+| Tensor allocation/destruction, n = 64 | 39.6 ns | 35.8 ns |
+| Ordinary triad, n = 2²⁴ | 75.84 GB/s | 70.62 GB/s |
+| Raw triad, n = 2²⁴ | 78.70 GB/s | 72.94 GB/s |
+| Row / column broadcast, 256 × 1,024 | 87.19 / 80.44 GB/s | 87.64 / 82.91 GB/s |
+| Stepped source/destination, 256 × 1,024 | 32.65 GB/s | 46.73 GB/s |
+| Packed / transpose copy via `assign()`, 256 × 1,024 | 85.53 / 6.88 GB/s | 85.51 / 13.12 GB/s |
+
+For the large triads, wall-time coefficients of variation were 0.52% / 3.71%
+for tensor float/double and 6.44% / 2.29% for the raw reference. Copy CVs at
+256 × 1,024 were 0.17% / 0.20% packed and 1.22% / 3.86% transposed.
+The tensor triads reach about 96–97% of this local reference. Reusable-output
+transpose assignment reaches only 8–15% of packed-copy bandwidth and is a
+P3 optimization target: `assign()` takes the general planner, while the
+existing tiled logical-copy helper is used by `clone()` instead.
+
+Verification: the CMake Release CPU suite passed (33 tests passed, 23 GPU
+tests skipped, including the product adapter's 16 cases); all 24 Python/CMake
+regression tests passed; the Bazel NEON
+`-c opt` target built and all 86 cases passed a dry run. Clang-tidy 22.1.2
+with first-party headers and warnings as errors, clang-format and
+`git diff --check` passed for the addition. These are current baseline
+measurements, not evidence of a before/after speedup. The historical P0
+regression comparison, STREAM and threaded baselines, full
+`t().contiguous()` timing, allocation/atomic counts and GPU performance gates
+remain open.
+
+### Provenance shortcut and explicit offset field (November 4, 2026)
+
+Delivers two of P1's remaining items (status table and [section 6](#6-aliasing-and-overlap)):
+only the allocation gate (one heap allocation per CPU tensor after Memory U1)
+is still open.
+
+Memory gained `storage_provenance` (`allocated` vs `adopted`) on
+`storage_handle`, `shared_storage` and `retained_ptr`, fit into
+`storage_handle`'s existing alignment padding so its 48-byte layout is
+unchanged, plus the matching field on `data_view`'s `storage_ref` and a new
+`data_view(retained_ptr const&)` constructor that carries the allocation's
+real base/id/provenance instead of `borrow()`'s always-invalid/`adopted`
+defaults. Landed upstream at `KhwarizmiAnalytix/Memory@b8d3aba` with 10 new
+tests (369 total, 1 pre-existing GPU skip); Vectorization's `ThirdParty/Memory`
+submodule bumped to it in its own commit.
+
+In Vectorization: `strided_ref`/`const_data_view` expose `provenance()`;
+`tensor_impl::view_from_retained()` now delegates to the new constructor
+instead of a manual `borrow()` + offset/subview computation.
+`classify_overlap()` proves `none` directly when both sides are `allocated`
+with different allocation ids, before any address-range or lattice work; the
+shortcut never fires on a slice of the same tensor (slices share the parent's
+allocation id) and never fires for `adopted` storage, which still falls back
+to the address test. Separately, `tensor_impl` gained an explicit
+`int64_t offset_` field (elements from `base()`, PyTorch's
+`Tensor.storage_offset()`), cached by `recompute_cpu_simd_alignment_state()`
+and transplanted (not recomputed) by `move_from()`; the former private
+`storage_offset(view_t)` pointer-arithmetic helper is now the public
+no-argument `storage_offset()` reading the cached field — its two call sites
+are GPU-device-gated and otherwise unreachable on CPU-only hardware, so the
+public accessor is also what makes the field testable at all here.
+
+Verification: `TensorProvenanceOverlapShortcut` checks distinct `allocated`
+tensors get distinct ids and `none`, a slice keeps its parent's id, and
+`adopted`-storage tensors report `adopted` and still resolve via the address
+path. `TensorStorageOffset` checks the offset is `0` for a fresh owner,
+compounds across nested slices, survives a move, resets for a cloned/packed
+owner, and is correct for a `retained_ptr`-adopted sub-slice. CMake Release
+NEON CPU suite passed: 35 tests passed (up from 33; the two above), 23 GPU
+tests skipped; all 12 CTest entries (unit + 11 benchmarks) passed. Clang-tidy
+22.1.2 with first-party headers and warnings as errors, clang-format and
+`git diff --check` passed for the touched files in both repositories. CUDA/HIP
+and the allocation-count gate remain unverified.
+
+### CPU square-matrix continuation (November 5, 2026)
+
+Review of the initial solver adapters found rank-only vector detection,
+missing RHS/pivot/device validation, zero-size broadcasting through
+`max(0, 1)`, and native upper Cholesky reading the unselected triangle.
+The tensor adapters now handle those cases before backend dispatch.
+The continuation also adds `inv`, `inv_ex`, `det` and `slogdet` and tests
+factor reuse, left/right and adjoint solves, selected triangles, tiny
+nonsingular systems, invalid pivots, empty shapes and a pivot crossing the
+native 32-row LU panel boundary.
+
+Executed on macOS arm64, NEON, native LinearAlgebra with partial pivoting:
+
+| Check | Result |
+|---|---|
+| CMake Release (`build_ninja`), `VectorizationCxxTests` | 69 passed, 23 GPU tests skipped |
+| CMake Debug + AddressSanitizer (`build_algebra_asan`), same suite | 69 passed, 23 GPU tests skipped |
+| Bazel 9.3.0, `//Testing/Cxx:VectorizationCxxTests` with NEON selectors | Passed; run outside the macOS process/socket sandbox |
+| clang-tidy 22.1.2, product, view, planner benchmark and three linear algebra translation units, first-party include filter, warnings as errors | Passed |
+| Planner benchmark smoke check, packed/transpose copies in float/double at 256/1024 columns | Eight cases passed output validation; short smoke timings do not establish a performance gate |
+| Installed-package consumer using `find_package(Vectorization CONFIG REQUIRED)` | Configured, built and ran after separately installing Logging, Memory, Scalars and LinearAlgebra |
+| Ten installed-consumer outputs against local PyTorch 2.13.0 float64 | Solve, LU adjoint solve, right solve, inverse, determinant, sign/logabsdet, upper Cholesky, Cholesky solve and product matched at `rtol=atol=1e-12` |
+
+The numerical tests use independent scalar reconstruction/residuals and known
+solutions in float/double. CUDA/HIP/Metal, MKL/BLAS, integer metadata parity,
+rectangular LU, allocation counts and performance gates were not verified
+by this continuation. The nested Logging checkout inside LinearAlgebra was
+preserved; no dependency sources were edited.
+
+The continuation ran against LinearAlgebra `ffc037a`, a local commit that was
+never published. Upstream later squashed that history into `773d8fc`, whose
+tree is identical, and the submodule is pinned there. On November 16, 2026, at
+that pin, the CMake Release and Debug + AddressSanitizer suites again passed
+(69 passed, 23 GPU tests skipped, no sanitizer reports).
 
 ### Correctness tests
 
@@ -1641,7 +1895,11 @@ synchronization or the numerical kernel.
 
 - `include/terminals/tensor.h` — shared `tensor_impl<T, IsView>`, owning/view
   semantics, `clone()`, `contiguous()`, cached injectivity, checked assignment,
-  `init_from_expression()`, the `#if 0` matrix block.
+  `init_from_expression()`, product assignment dispatch.
+- `include/expressions/product_expression.h` — lazy `matmul`/`bmm`/`dot`
+  expressions and `lower_products()`.
+- `include/linalg/` — square-matrix factorizations, solves, inverse,
+  determinants and named results.
 - `include/terminals/tensor_view.h` — public view include.
 - `include/terminals/noalias.h` — non-copyable assignment/update proxy.
 - `include/terminals/sizes_and_strides.h` — inline sizes/strides storage.

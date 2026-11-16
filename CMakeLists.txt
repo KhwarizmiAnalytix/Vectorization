@@ -105,7 +105,9 @@ option(VECTORIZATION_ENABLE_BENCHMARK "Enable Google Benchmark for Vectorization
 option(USE_NATIVE_ARCH "Prefer host CPU instruction tuning (-march=native, Clang/GCC only)" OFF)
 
 # Public feature flags; Cmake/dependencies.cmake forwards each one to its owner.
-option(VECTORIZATION_ENABLE_SVML "Enable Intel SVML through Scalars" OFF)
+option(VECTORIZATION_ENABLE_SVML
+       "Require Intel SVML through Scalars (auto-enabled on x86 when supported and SLEEF is off)" OFF
+)
 option(VECTORIZATION_ENABLE_SLEEF "Enable SLEEF through Scalars" OFF)
 option(VECTORIZATION_ENABLE_ACCELERATE "Enable Apple Accelerate through Scalars" OFF)
 option(VECTORIZATION_ENABLE_MKL "Enable MKL tensor comparison tests and benchmarks" OFF)
@@ -716,7 +718,11 @@ if(VECTORIZATION_GPU_BACKEND STREQUAL "hip")
   message("  HIP compiler         : ${CMAKE_HIP_COMPILER}")
 endif()
 message("  Packet size          : ${VECTORIZATION_PACKET_SIZE}")
-message("  SVML                 : ${VECTORIZATION_ENABLE_SVML}")
+if(DEFINED VECTORIZATION_SVML_STATUS)
+  message("  SVML                 : ${VECTORIZATION_SVML_STATUS}")
+else()
+  message("  SVML                 : ${VECTORIZATION_ENABLE_SVML}")
+endif()
 message("  SLEEF                : ${VECTORIZATION_ENABLE_SLEEF}")
 message("  Accelerate           : ${VECTORIZATION_ENABLE_ACCELERATE}")
 message("  MKL comparisons      : ${VECTORIZATION_ENABLE_MKL}")

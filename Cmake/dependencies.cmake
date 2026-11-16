@@ -97,17 +97,15 @@ foreach(_backend IN ITEMS cuda hip metal)
   endif()
 endforeach()
 if(NOT TARGET Scalars::Scalars)
-  # The pinned Scalars probes force its SVML cache option ON for GCC/Clang.
-  # Preserve the Scalars option under CMP0126 until that probe is updated.
-  set(SCALARS_ENABLE_SVML "${VECTORIZATION_ENABLE_SVML}")
+  # SCALARS_ENABLE_SVML was seeded from VECTORIZATION_ENABLE_SVML above. Do not
+  # shadow it with a normal variable: on x86, when the compiler has no built-in
+  # SVML intrinsics and SLEEF is off, Scalars forces it ON so transcendentals
+  # use the vendored SVML runtime instead of a per-lane scalar fallback.
   set(SCALARS_CPU_BACKEND "${VECTORIZATION_CPU_BACKEND}" CACHE STRING "Scalars CPU backend" FORCE)
   set(SCALARS_GPU_BACKEND "${VECTORIZATION_GPU_BACKEND}" CACHE STRING "Scalars GPU backend" FORCE)
   add_subdirectory(
     "${VECTORIZATION_THIRDPARTY_DIR}/Scalars" "${CMAKE_CURRENT_BINARY_DIR}/ThirdParty/Scalars"
     EXCLUDE_FROM_ALL
-  )
-  set(SCALARS_ENABLE_SVML "${SCALARS_ENABLE_SVML}"
-      CACHE BOOL "Enable Intel SVML short vector math library" FORCE
   )
   if(TARGET sleef)
     # The pinned SLEEF generates sleef.h in the top-level binary directory.
@@ -123,11 +121,22 @@ if(NOT TARGET Scalars::Scalars)
       endforeach()
     endif()
   endif()
-  if(SCALARS_ENABLE_SVML AND NOT TARGET SVML::SVML)
+  # An explicit request must be satisfied; an automatic enable that finds no
+  # runtime leaves SCALARS_HAS_SVML=0 (Scalars warns) and keeps the fallback.
+  if(VECTORIZATION_ENABLE_SVML AND NOT TARGET SVML::SVML)
     message(
       FATAL_ERROR "VECTORIZATION_ENABLE_SVML=ON requires the SVML runtime in Scalars. "
                   "Provide ThirdParty/Scalars/ThirdParty/svml or disable VECTORIZATION_ENABLE_SVML."
     )
+  endif()
+  if(SCALARS_ENABLE_SVML AND TARGET SVML::SVML)
+    if(VECTORIZATION_ENABLE_SVML)
+      set(VECTORIZATION_SVML_STATUS "ON")
+    else()
+      set(VECTORIZATION_SVML_STATUS "ON (auto)")
+    endif()
+  else()
+    set(VECTORIZATION_SVML_STATUS "OFF")
   endif()
   # Propagate the resolved CPU backend before configuring other consumers.
   # For example, AVX2 on arm64 must also disable LinearAlgebra SIMD.

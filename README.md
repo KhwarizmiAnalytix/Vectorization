@@ -249,6 +249,10 @@ CMake forwards each feature only to the dependency that implements it:
 The `svml`, `sleef`, `mkl` and `accelerate` setup tokens emit public
 `VECTORIZATION_ENABLE_*` flags. Scalars owns SIMD math discovery and linkage;
 SVML requires its runtime under `ThirdParty/Scalars/ThirdParty/svml`.
+On x86, when the compiler has no built-in SVML intrinsics and SLEEF is off,
+Scalars enables SVML automatically if that runtime is present, so
+transcendentals stay vectorized; the summary then shows `ON (auto)`.
+`VECTORIZATION_ENABLE_SVML=ON` makes the runtime mandatory.
 MKL comparisons use the SDK's `MKLConfig.cmake` and link only the comparison
 targets. Dependency tests, examples and benchmarks remain disabled, and existing
 dependency targets are reused without reconfiguring them.

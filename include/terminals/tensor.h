@@ -60,6 +60,24 @@
 
 namespace vectorization
 {
+#if VECTORIZATION_VECTORIZED
+namespace detail
+{
+// Whether Scalars provides a square L × L register transpose for T on this
+// ISA (SSE, AVX, AVX-512, NEON); SVE does not yet (design plan U3).
+template <typename T, typename = void> struct has_square_ptranspose : std::false_type
+{
+};
+template <typename T>
+struct has_square_ptranspose<T,
+    std::void_t<decltype(simd<T>::template ptranspose<simd<T>::size>(
+        std::declval<typename simd<T>::simd_t*>()))>> : std::true_type
+{
+};
+template <typename T>
+inline constexpr bool has_square_ptranspose_v = has_square_ptranspose<T>::value;
+}  // namespace detail
+#endif
 
 template <typename T>
 inline constexpr bool is_almost_zero(T x, T epsilon = std::numeric_limits<T>::epsilon()) noexcept
@@ -2172,27 +2190,74 @@ private:
         gather_logical(window.data() + offset, dst);
     }
 
-    // Copy a 2-D transposed view (column-major → row-major) using cache-friendly
-    // 8×8 tiles. src has physical layout [nrows × ncols] row-major; the logical
-    // tensor is its transpose, so dst[i*ncols + j] = src[j*nrows + i].
-    // Called only from gather_logical when rank==2, stride[0]==1, stride[1]==nrows.
+    // Copy a 2-D transposed view (column-major → row-major). src has physical
+    // layout [ncols × nrows] row-major; the logical tensor is its transpose, so
+    // dst[i*ncols + j] = src[j*nrows + i]. Called only from gather_logical when
+    // rank==2, stride[0]==1, stride[1]==nrows.
+    //
+    // Cache blocks of kTransposeBlock × kTransposeBlock hold L × L register tiles
+    // transposed in registers by Scalars' simd<T>::ptranspose<L> (L = SIMD lanes),
+    // like Eigen's PacketBlock ptranspose in its GEMM packing; edges, and backends
+    // without a square ptranspose (SVE, the scalar build), use the scalar loop.
+    static constexpr int64_t kTransposeBlock = 32;
+
+    static void transpose_scalar_block(value_t const* src,
+        value_t*                                      dst,
+        int64_t                                       nrows,
+        int64_t                                       ncols,
+        int64_t                                       io,
+        int64_t                                       i_end,
+        int64_t                                       jo,
+        int64_t                                       j_end) noexcept
+    {
+        for (int64_t i = io; i < i_end; ++i)
+        {
+            for (int64_t j = jo; j < j_end; ++j)
+            {
+                dst[i * ncols + j] = src[j * nrows + i];
+            }
+        }
+    }
+
     static void tiled_transpose_2d(
         value_t const* src, value_t* dst, int64_t nrows, int64_t ncols) noexcept
     {
-        static constexpr int64_t T = 8;
-        for (int64_t io = 0; io < nrows; io += T)
+        constexpr int64_t B = kTransposeBlock;
+        for (int64_t io = 0; io < nrows; io += B)
         {
-            const int64_t i_end = std::min(io + T, nrows);
-            for (int64_t jo = 0; jo < ncols; jo += T)
+            const int64_t i_end = std::min(io + B, nrows);
+            for (int64_t jo = 0; jo < ncols; jo += B)
             {
-                const int64_t j_end = std::min(jo + T, ncols);
-                for (int64_t i = io; i < i_end; ++i)
+                const int64_t j_end = std::min(jo + B, ncols);
+#if VECTORIZATION_VECTORIZED
+                if constexpr (detail::has_square_ptranspose_v<value_t>)
                 {
-                    for (int64_t j = jo; j < j_end; ++j)
+                    using packet              = simd<value_t>;
+                    constexpr int64_t L       = packet::size;
+                    const int64_t     i_tiles = io + (i_end - io) / L * L;
+                    const int64_t     j_tiles = jo + (j_end - jo) / L * L;
+                    for (int64_t i = io; i < i_tiles; i += L)
                     {
-                        dst[i * ncols + j] = src[j * nrows + i];
+                        for (int64_t j = jo; j < j_tiles; j += L)
+                        {
+                            typename packet::simd_t rows[L];
+                            for (int64_t r = 0; r < L; ++r)
+                            {
+                                rows[r] = packet::loadu(src + (j + r) * nrows + i);
+                            }
+                            packet::template ptranspose<static_cast<int>(L)>(rows);
+                            for (int64_t r = 0; r < L; ++r)
+                            {
+                                packet::storeu(rows[r], dst + (i + r) * ncols + j);
+                            }
+                        }
                     }
+                    transpose_scalar_block(src, dst, nrows, ncols, io, i_tiles, j_tiles, j_end);
+                    transpose_scalar_block(src, dst, nrows, ncols, i_tiles, i_end, jo, j_end);
+                    continue;
                 }
+#endif
+                transpose_scalar_block(src, dst, nrows, ncols, io, i_end, jo, j_end);
             }
         }
     }

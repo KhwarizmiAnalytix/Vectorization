@@ -22,7 +22,9 @@
 // destinations through the iteration planner, strided reductions, and the
 // metadata-only view operations.
 
+#include <cmath>
 #include <cstddef>
+#include <limits>
 #include <vector>
 
 #include "VectorizationTest.h"
@@ -416,6 +418,46 @@ template <typename T> VECTORIZATION_NOINLINE void test_shapes_view_operations()
     }
 }
 
+/// @brief `t().contiguous()` through the register-tiled transpose: every shape
+/// class around the SIMD lane width and the 64-element cache block, including
+/// edges handled by the scalar remainder loop.
+template <typename T> VECTORIZATION_NOINLINE void test_shapes_tiled_transpose()
+{
+    using tensor           = vectorization::tensor<T>;
+    const size_t extents[] = {1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 33, 63, 64, 65, 130};
+    for (size_t rows : extents)
+    {
+        for (size_t cols : {size_t(1), size_t(3), size_t(16), size_t(17), size_t(64), size_t(129)})
+        {
+            tensor m(rows, cols);
+            iota(m);
+            auto packed = m.t().contiguous();
+            EXPECT_TRUE(packed.is_contiguous());
+            EXPECT_EQ(shape_of(packed),
+                (std::vector<int64_t>{static_cast<int64_t>(cols), static_cast<int64_t>(rows)}));
+            size_t mismatches = 0;
+            for (size_t i = 0; i < cols; ++i)
+            {
+                for (size_t j = 0; j < rows; ++j)
+                {
+                    mismatches += static_cast<T>(packed.at(i, j)) == m.at(j, i) ? 0 : 1;
+                }
+            }
+            EXPECT_EQ(mismatches, 0U) << rows << " x " << cols;
+        }
+    }
+    // Non-finite payloads move bit-for-bit through the register transpose.
+    tensor special(8, 8);
+    iota(special);
+    special.at(3, 5) = std::numeric_limits<T>::quiet_NaN();
+    special.at(6, 1) = -std::numeric_limits<T>::infinity();
+    special.at(0, 7) = T(-0.0);
+    auto moved       = special.t().contiguous();
+    EXPECT_TRUE(std::isnan(static_cast<T>(moved.at(5, 3))));
+    EXPECT_EQ(static_cast<T>(moved.at(1, 6)), -std::numeric_limits<T>::infinity());
+    EXPECT_TRUE(std::signbit(static_cast<T>(moved.at(7, 0))));
+}
+
 }  // namespace
 
 VECTORIZATIONTEST(Math, TensorShapes)
@@ -428,6 +470,8 @@ VECTORIZATIONTEST(Math, TensorShapes)
     test_shapes_reductions<double>();
     test_shapes_view_operations<float>();
     test_shapes_view_operations<double>();
+    test_shapes_tiled_transpose<float>();
+    test_shapes_tiled_transpose<double>();
 
     END_TEST();
 }

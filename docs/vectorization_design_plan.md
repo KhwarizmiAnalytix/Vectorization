@@ -1285,7 +1285,10 @@ Vectorization then bumps the submodule.
   ([section 13](#13-backend-launch-unification)).
 - `simd<T>` lane-reverse permute and register-tile transpose operations for
   `flip` and the tiled transpose on every CPU ISA, so Vectorization needs no
-  raw intrinsics ([section 15](#rules-for-new-code)).
+  raw intrinsics ([section 15](#rules-for-new-code)). The square L × L
+  `ptranspose<L>` already exists for SSE, AVX, AVX-512 and NEON float/double
+  and is used by `t().contiguous()`; SVE still lacks it, and the lane-reverse
+  permute is not started.
 
 ---
 
@@ -1504,7 +1507,7 @@ phase changes.
 | P3 | Vectorization | CPU planner tiers 0–2 with `run_range`; contiguous fast path; `loop2d`; threading policy (bytes and op cost, intra-row splits, BLAS coordination); tiled transpose; `flip`; tier-2 specialization; planner-owned prefetch; aligned-source variant removed; CPU reductions | Partly done: planner, `loop2d`, row-split threading. Performance gates measured November 16: tier 0 one-thread and n ≤ 64 latency met against the local references; tier 1 met for double, borderline for float; `t().contiguous()` not met; thread scaling not gate-grade | Strided, broadcast, `flip` and reduction tests pass; serial SIMD fallback taken with parallel support disabled | Tier 0 ≥ 90% of STREAM triad bandwidth on one thread and scales with threads; tier 1 ≥ 80% for rows ≥ 256 elements; latency at n ≤ 64 within 10% of today; `t().contiguous()` ≥ 50% of tier-0 copy bandwidth |
 | U1 | Memory | [Section 12](#memory-u1) | Partial: provenance query landed upstream, submodule bumped. One-allocation CPU storage implemented with tests on the local Memory branch `one-allocation-cpu-storage` (`9277540`, based on upstream `435c5c8`), not yet pushed. Uninitialized allocation, offset-aware copy, `copy_async` and stream events remain | Landed upstream with tests; submodule bumped | Offset-aware copy at device-copy bandwidth |
 | U2 | LinearAlgebra | [Section 12](#linearalgebra-u2) | Partial: GEMM alpha/beta landed upstream and is consumed by `matmul_out` and product epilogues; GEMV, DOT, rectangular batched GEMM and the matrix-API contracts remain | Landed upstream with tests; submodule bumped | GEMV, DOT and batched GEMM at backend-library speed |
-| U3 | Scalars | [Section 12](#scalars-u3) | Not started | Landed upstream with tests; submodule bumped | Metal interior-slice dispatch with no per-call buffer wrapping |
+| U3 | Scalars | [Section 12](#scalars-u3) | Partial: square `ptranspose` exists upstream for SSE/AVX/AVX-512/NEON and is consumed; SVE transpose, lane-reverse permute and the Metal items are not started | Landed upstream with tests; submodule bumped | Metal interior-slice dispatch with no per-call buffer wrapping |
 | P4 | Vectorization | CUDA/HIP offset calculator with span-checked 32-bit indexing and vector loads; strided GPU destinations; Metal pipeline cache, batched command buffers, per-allocation `MTLBuffer`; GPU reductions; offset-aware transfers; unified launch contract ([section 13](#13-backend-launch-unification)) | Not started | Device clone of an interior slice without host memory (Metal locally; CUDA/HIP in CI); large-stride small tensors take the wide-index path; same launch signature on every backend; macOS `neon` + `metal` clang-tidy job passes | Tier 0 and strided tiers in GB/s on each GPU backend; Metal per-call host overhead after the first call in µs and free of string building |
 | P5 | Vectorization | Lazy products, elementwise composition, epilogues and size routing; functional PyTorch-style matrix API, named results, `_ex` status and reusable factors, delivered in [four parts](#p5-delivery-order) | Partial: CPU products and square LU/Cholesky, solves, inverse and determinants implemented; product epilogues implemented; integer metadata, rectangular LU, U2 routing, GPU adapters, remaining matrix families and performance gates remain | Product shapes, layouts, aliasing and deferred lifetimes pass; matrix operations match pinned LibTorch shapes/defaults/result fields; reconstruction/residual and numerical-status tests pass for each enabled capability | Warmed-up `c = matmul(a, b)` with reusable output, compatible layouts and sufficient workspace performs no tensor-layer allocation; small-matrix GEMM within 2× of Eigen fixed-size products; composed math evaluates each product occurrence once, then uses one elementwise pass; factor-reuse solves never refactor; packing, workspace and status-read costs reported separately |
 | P6 | Vectorization | Optional, measured: streaming stores, true fused epilogues (cuBLASLt), tiny-matrix kernel tuning | Not started | Behind flags; no regression on existing tiers | Streaming stores 1.2–1.5× on write-heavy tier-0 work where they win; no regression on read-after-write chains |
@@ -1870,6 +1873,35 @@ slices keeping the block alive). Vectorization Release, Debug +
 AddressSanitizer and Bazel pass 71 tests (23 GPU tests skipped). Bazel's
 `@memory` is an rsync copy like `@linear_algebra` and needs the same marker
 re-stage after a checkout change.
+
+### Register-tiled transpose (November 16, 2026)
+
+`t().contiguous()` on a 2-D transposed view now transposes L × L register
+tiles with Scalars' `simd<T>::ptranspose<L>` (L = SIMD lanes: 4 × 4 float
+and 2 × 2 double on NEON, 8 × 8 float on AVX), inside 32 × 32-element cache
+blocks, as Eigen's `PacketBlock` transpose does in its GEMM packing. Edges,
+and backends without a square `ptranspose` (SVE, the scalar build), use the
+previous scalar loop, selected by a compile-time trait. A sweep at 16, 32 and
+64 elements chose 32: 64 thrashes L1 at power-of-two strides (1,024 was
+slower than the old kernel for double), and 16 lost at 4,096 for double.
+`TestTensorShapes` checks every shape class around the lane width and the
+block (1 × 1 to 130 × 129) plus NaN, infinity and −0.0 payloads. The x86
+paths were compile-checked (SSE4.2, AVX2, AVX-512) with a cross-target
+translation unit that requires the square transpose; they did not run.
+
+`CPU_Materialize`, ratio of `clone()` time to `t().contiguous()` time (same
+run, five repetitions; `contactsd` used about one core, CV ≤ 2.2% except
+double 4,096 at 5–8%):
+
+| Element type | 256 | 1,024 | 4,096 | November 16 baseline (8 × 8 scalar tiles) |
+|---|---|---|---|---|
+| float | 46.3% | 35.8% | 37.6% | 16.1 / 14.8 / 20.7% |
+| double | 46.3% | 30.3% | 44.7% | 30.5 / 27.9 / 32.3% |
+
+Float is 2.2–2.9× faster and double 1.1–1.5×, but the ≥ 50% gate is still
+not met. Next candidates: compose 2 × 2 tiles into a 4 × 4 block for double on
+NEON so a tile covers a full cache-line segment, and non-temporal stores for
+the 4,096 case; re-measure on a quiet machine first.
 
 ### Correctness tests
 

@@ -85,7 +85,7 @@ Recorded verification and remaining gates are listed in
 |---|---|---|
 | Expression result takes the broadcast shape; leaf shapes validated in every build | Done | `expression_shape.h`, `tensor::init_from_expression()` |
 | CPU planner: sort, merge, tiers, `loop2d` | Done | `iteration_plan.h` |
-| CPU `parallel_for` above a 32,768-element grain | Done; serial SIMD fallback fixed in `c4fde41`, not yet benchmarked | `iteration_plan.h`, `expressions_evaluator.h` |
+| CPU `parallel_for` above a 32,768-element grain | Done; serial SIMD fallback fixed in `c4fde41`. Scales qualitatively; gate-grade scaling and a one-thread slowdown of the parallel build remain open ([gate measurements](#p2p3-gate-measurements-november-16-2026)) | `iteration_plan.h`, `expressions_evaluator.h` |
 | Strided expression leaves (`strided_ref`) — transposes need no materialization | Done | `strided_ref.h`, `store_operand()` |
 | Stride-0 destination rejected | Done | `make_iteration_plan()` |
 | General destination injectivity proof (`non_overlapping_` flag) | Done: cached stride-sorted proof; unproven destinations rejected even with `noalias()` | `tensor.h`, `overlap.h` |
@@ -1496,8 +1496,8 @@ phase changes.
 |---|---|---|---|---|---|
 | P0 | Vectorization | Result shape from broadcasting; every leaf's shape validated; Release checks on view operations; overlap classifier raising errors; copy semantics aligned with P2; clang-tidy baseline cleared and coverage gaps closed ([section 15](#15-clang-tidy-conformance)) | Shape, view checks and classifier implemented; static-analysis coverage and baseline fixes delivered locally. Hosted LLVM 19 verification and performance gate remain | Full test-target analysis enabled, including Objective-C++; see section 17 for executed configurations. CUDA/HIP analysis remains a documented limit | Release benchmarks at today's speed; shape checks outside the inner loop |
 | P1 | Vectorization | `retained_ptr` storage with provenance, explicit offset, views retain storage, safe expression capture, `non_overlapping` flag | Partly done: retaining views/leaves, cached injectivity, the provenance-aware overlap shortcut and the explicit offset field implemented; the allocation gate remains | Local AddressSanitizer lifetime/adopted-deleter tests and internal-overlap rejection pass; CUDA/HIP still need verification | CPU tensor construction and destruction: one heap allocation after U1; current promotion uses a separate control block |
-| P2 | Vectorization | `tensor` / `tensor_view` split; const views; `rebind()`; `noalias()` proxy for elementwise assignment | Semantics implemented and locally verified; performance gate open | Updated tests cover packed owner copies, shallow view copies, write-through copy/move assignment, const access, signed lattice intersections and adopted storage. Debug/Release CPU, Metal GPU and CPU LibTorch pass; CUDA/HIP remain unverified | Expression building with `tensor<T>` leaves adds no atomic operations: not met by current retain-all capture; benchmark and resolve before closing the phase |
-| P3 | Vectorization | CPU planner tiers 0–2 with `run_range`; contiguous fast path; `loop2d`; threading policy (bytes and op cost, intra-row splits, BLAS coordination); tiled transpose; `flip`; tier-2 specialization; planner-owned prefetch; aligned-source variant removed; CPU reductions | Partly done: planner, `loop2d`, row-split threading | Strided, broadcast, `flip` and reduction tests pass; serial SIMD fallback taken with parallel support disabled | Tier 0 ≥ 90% of STREAM triad bandwidth on one thread and scales with threads; tier 1 ≥ 80% for rows ≥ 256 elements; latency at n ≤ 64 within 10% of today; `t().contiguous()` ≥ 50% of tier-0 copy bandwidth |
+| P2 | Vectorization | `tensor` / `tensor_view` split; const views; `rebind()`; `noalias()` proxy for elementwise assignment | Semantics implemented and locally verified; performance gate open | Updated tests cover packed owner copies, shallow view copies, write-through copy/move assignment, const access, signed lattice intersections and adopted storage. Debug/Release CPU, Metal GPU and CPU LibTorch pass; CUDA/HIP remain unverified | Expression building with `tensor<T>` leaves adds no atomic operations: measured not met. `a + 3 * b` retains 2 handles (at least 4 atomic RMWs) in a 20 ns capture; resolve before closing the phase |
+| P3 | Vectorization | CPU planner tiers 0–2 with `run_range`; contiguous fast path; `loop2d`; threading policy (bytes and op cost, intra-row splits, BLAS coordination); tiled transpose; `flip`; tier-2 specialization; planner-owned prefetch; aligned-source variant removed; CPU reductions | Partly done: planner, `loop2d`, row-split threading. Performance gates measured November 16: tier 0 one-thread and n ≤ 64 latency met against the local references; tier 1 met for double, borderline for float; `t().contiguous()` not met; thread scaling not gate-grade | Strided, broadcast, `flip` and reduction tests pass; serial SIMD fallback taken with parallel support disabled | Tier 0 ≥ 90% of STREAM triad bandwidth on one thread and scales with threads; tier 1 ≥ 80% for rows ≥ 256 elements; latency at n ≤ 64 within 10% of today; `t().contiguous()` ≥ 50% of tier-0 copy bandwidth |
 | U1 | Memory | [Section 12](#memory-u1) | Partial: provenance query (`storage_provenance` on `retained_ptr`/`data_view`) landed upstream with tests, submodule bumped; one-allocation CPU storage, uninitialized allocation, offset-aware copy, `copy_async`, stream events remain | Landed upstream with tests; submodule bumped | Offset-aware copy at device-copy bandwidth |
 | U2 | LinearAlgebra | [Section 12](#linearalgebra-u2) | Not started | Landed upstream with tests; submodule bumped | GEMV, DOT and batched GEMM at backend-library speed |
 | U3 | Scalars | [Section 12](#scalars-u3) | Not started | Landed upstream with tests; submodule bumped | Metal interior-slice dispatch with no per-call buffer wrapping |
@@ -1520,10 +1520,10 @@ Remaining work after the tensor/view and `noalias()` delivery:
    The provenance-aware shortcut (Memory U1) and the explicit offset field
    are delivered; see [section 6](#6-aliasing-and-overlap) and this
    section's status table.
-3. Use the CPU expression-construction and small-tensor baseline recorded in
-   section 17 to resolve the retain-all capture cost against P2's atomic-free
-   target without weakening the documented deferred-expression lifetime
-   contract. Allocation and atomic counts still need instrumentation.
+3. Resolve the retain-all capture cost against P2's atomic-free target
+   without weakening the documented deferred-expression lifetime contract.
+   Section 17's gate measurements count 2 retained handles per `a + 3 * b`
+   capture; allocation counts still need instrumentation.
 4. Run CUDA/HIP and optional LibTorch coverage for the split, including
    stream bookkeeping and view/noalias assignment.
 5. Continue P3's CPU kernels/reductions and P4's GPU indexing, copies and
@@ -1744,6 +1744,62 @@ never published. Upstream later squashed that history into `773d8fc`, whose
 tree is identical, and the submodule is pinned there. On November 16, 2026, at
 that pin, the CMake Release and Debug + AddressSanitizer suites again passed
 (69 passed, 23 GPU tests skipped, no sanitizer reports).
+
+### P2/P3 gate measurements (November 16, 2026)
+
+`benchmark_tensorplanner` gains two measurements:
+
+- `CPU_ExpressionCapture` reports `retains`, the storage handles a live
+  `a + 3 * b` keeps beyond the owners' own references (read from the leaves'
+  `retained_ptr::use_count()`), and `atomic_rmw_min` = 2 × `retains`
+  (one increment at capture, one decrement at destruction).
+- `CPU_Materialize` times `a.t().contiguous()` against `a.clone()` on square
+  256, 1,024 and 4,096 tensors. Both cases include allocation and view
+  construction, as the gate specifies. 4,096 is memory-bound; both cases
+  include first-touch page faults on the fresh output.
+
+Setup: same machine, compiler and flags as the November 4 baseline, at
+`af99dfb` plus this benchmark change (LinearAlgebra `773d8fc`). The serial run
+used `build_ninja` (parallel evaluation off) with the protocol above.
+Thread scaling used a separate `-DVECTORIZATION_ENABLE_PARALLEL=ON` build
+(`std` backend), with the evaluator thread count set through
+`PARALLEL_MAX_THREADS`.
+
+| Gate | Measurement (median) | Result |
+|---|---|---|
+| P2: capture with `tensor<T>` leaves adds no atomic operations | 2 retained handles (≥ 4 atomic RMWs) per `a + 3 * b`; 20.0 ns per capture/destruction in float and double at n = 1, 64, 256 | Not met |
+| P3: tier 0 ≥ 90% of triad bandwidth, one thread | n = 2²⁴: 75.2 / 70.2 GB/s (float/double) = 95.3% / 97.3% of the raw triad; n = 2²⁰: 94.0% / 93.1% | Met against the local raw triad; the STREAM binary itself was not run |
+| P3: latency at n ≤ 64 within 10% of today | Triad n = 1 / 16 / 64: 71.0 / 72.3 / 76.5 ns float, 61.9 / 65.7 / 78.3 ns double, 3–6% faster than November 4 | Met. A fixed ~70 ns per evaluation remains (raw loop: 0.8 ns at n = 1) |
+| P3: tier 1 ≥ 80% for rows ≥ 256 elements | Row/column broadcast at 256 × 1,024 against the one-thread triad at n = 2²⁰: float 63.8 / 64.0 GB/s (80%); double 88.7 / 82.8 GB/s (> 100%) | Met for double; borderline for float (see the code-placement note below) |
+| P3: `t().contiguous()` ≥ 50% of tier-0 copy bandwidth | Ratio to `clone()` at 256 / 1,024 / 4,096: float 16.1 / 14.8 / 20.7%; double 30.5 / 27.9 / 32.3% | Not met: the 8 × 8 scalar tiled transpose is the bottleneck |
+| P3: scales with threads | Tensor triads reach about 2–3× the one-thread result at 4–8 threads (up to about 215 GB/s at n = 2²⁰), but control CVs exceeded 5% | Not gate-grade (see below) |
+
+**Code-placement sensitivity.** Between `b0703a9` and this revision, float
+row/column broadcast at 256 × 1,024 moved from 34.6 / 39.1 µs to 49.2 /
+49.1 µs. Bisection pointed at the P1 commit `623fc10`, but only all three of
+its headers together reproduced the slowdown. The hot `run_lowered`
+instantiation compiles to identical instructions in both builds: it is
+7,656 bytes in each, and the only differences are line-number immediates in
+check messages. Rebuilding both with `-falign-loops=64` gives 34.6 / 39.1 µs
+for each. The difference is therefore hot-loop placement, not a code
+regression; even `b0703a9` varies between 34.6 and 37.5 µs across builds.
+Float broadcast comparisons should use pinned loop alignment, or tolerate
+about ±30%, before a planner change is credited or blamed.
+
+**Thread scaling.** `airportd` used about 87% of one core during the runs
+(load average ≈ 3.5). Even the single-threaded raw triad, which ignores the
+thread setting, had a CV above 5% and fell to 27 GB/s in one run, so the
+scaling numbers are not used for the gate. One effect repeated across both
+sweeps: with one evaluator thread, the parallel build's float triad at
+n = 2²⁰ ran at about 55 GB/s, against 72–80 GB/s in the serial build. Repeat
+on a quiet machine before investigating the one-thread overhead of the
+`parallel_for` path.
+
+Verification: the benchmark target builds in both CMake configurations,
+every evaluation case passed output validation, and clang-tidy (first-party
+header filter, warnings as errors) and clang-format passed for
+`BenchmarkTensorPlanner.cpp`. Local raw results are in
+`build_ninja/tensor_planner_2026-11-16.json` (ignored build artifact).
 
 ### Correctness tests
 

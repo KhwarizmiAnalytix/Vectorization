@@ -78,12 +78,66 @@ template <typename T> void CPU_ExpressionCapture(benchmark::State& state)
 {
     const auto n = static_cast<std::size_t>(state.range(0));
     tensor<T>  a(n), b(n);
+    // P2 gate: capture with tensor<T> leaves should add no atomic operations.
+    // Each storage handle a live expression keeps on top of the owners' own
+    // reference was one atomic increment at capture and is one atomic
+    // decrement at destruction, so 2 * retains is a lower bound on atomic RMWs.
+    int64_t retains = 0;
+    {
+        const auto base_a     = a.as_view();
+        auto       expression = a + T(3) * b;
+        retains = expression.lhs().storage.use_count() + expression.rhs().rhs().storage.use_count();
+        // Subtract the owners' references and the probe view held above.
+        retains -= 3;
+        benchmark::DoNotOptimize(base_a);
+    }
     // Includes descriptor capture and retained-handle release, without evaluation.
     for (auto _ : state)
     {
         auto expression = a + T(3) * b;
         benchmark::DoNotOptimize(expression);
     }
+    state.counters["retains"]        = static_cast<double>(retains);
+    state.counters["atomic_rmw_min"] = static_cast<double>(2 * retains);
+}
+
+// P3 gate: `t().contiguous()` >= 50% of tier-0 copy bandwidth. Both cases
+// include allocation and view construction; the packed reference is clone(),
+// the tier-0 copy with the same allocation cost.
+template <typename T, bool Transposed> void CPU_Materialize(benchmark::State& state)
+{
+    const auto n = static_cast<std::size_t>(state.range(0));
+    tensor<T>  a(n, n);
+    for (std::size_t i = 0; i < a.size(); ++i)
+    {
+        a[i] = static_cast<T>(i % 251);
+    }
+    for (auto _ : state)
+    {
+        if constexpr (Transposed)
+        {
+            auto packed = a.t().contiguous();
+            benchmark::DoNotOptimize(packed.data());
+        }
+        else
+        {
+            auto packed = a.clone();
+            benchmark::DoNotOptimize(packed.data());
+        }
+        benchmark::ClobberMemory();
+    }
+    auto       check = Transposed ? tensor<T>(a.t().contiguous()) : a.clone();
+    const auto data  = check.data();
+    for (std::size_t i = 0; i < a.size(); ++i)
+    {
+        const auto source_index = Transposed ? (i % n) * n + i / n : i;
+        if (data[i] != a[source_index])
+        {
+            state.SkipWithError("incorrect materialization output");
+            break;
+        }
+    }
+    report_traffic<T>(state, a.size(), 2);
 }
 
 template <typename T> void CPU_TensorAllocFree(benchmark::State& state)
@@ -200,6 +254,13 @@ BENCHMARK_TEMPLATE(CPU_ExpressionCapture, float)->Arg(1)->Arg(64)->Arg(256)->Use
 BENCHMARK_TEMPLATE(CPU_ExpressionCapture, double)->Arg(1)->Arg(64)->Arg(256)->UseRealTime();
 BENCHMARK_TEMPLATE(CPU_TensorAllocFree, float)->Arg(1)->Arg(64)->Arg(256)->UseRealTime();
 BENCHMARK_TEMPLATE(CPU_TensorAllocFree, double)->Arg(1)->Arg(64)->Arg(256)->UseRealTime();
+
+// 256 and 1,024 are cache-resident; 4,096 (64/128 MiB per float/double array)
+// is memory-bound.
+BENCHMARK_TEMPLATE(CPU_Materialize, float, false)->Arg(256)->Arg(1024)->Arg(4096)->UseRealTime();
+BENCHMARK_TEMPLATE(CPU_Materialize, float, true)->Arg(256)->Arg(1024)->Arg(4096)->UseRealTime();
+BENCHMARK_TEMPLATE(CPU_Materialize, double, false)->Arg(256)->Arg(1024)->Arg(4096)->UseRealTime();
+BENCHMARK_TEMPLATE(CPU_Materialize, double, true)->Arg(256)->Arg(1024)->Arg(4096)->UseRealTime();
 
 BENCHMARK_TEMPLATE(CPU_Layout, float, Layout::row_broadcast)->Arg(256)->Arg(1024)->UseRealTime();
 BENCHMARK_TEMPLATE(CPU_Layout, float, Layout::column_broadcast)->Arg(256)->Arg(1024)->UseRealTime();

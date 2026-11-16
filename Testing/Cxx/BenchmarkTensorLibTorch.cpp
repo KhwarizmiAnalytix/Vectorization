@@ -208,14 +208,14 @@ template <typename T> static void Vectorization_LogSimd(benchmark::State& state)
 {
     vectorization::tensor<T> a(kN), out(kN);
     fill_uniform(a.data(), kN, T(0.1), T(4), 42u);
-    constexpr std::size_t width = ::simd<T>::size;
+    constexpr std::size_t width = scalars::simd<T>::size;
     for (auto _ : state)
     {
         std::size_t i = 0;
         for (; i + width <= kN; i += width)
         {
-            const auto x = ::simd<T>::loadu(a.data() + i);
-            ::simd<T>::storeu(::simd<T>::log(x), out.data() + i);
+            const auto x = scalars::simd<T>::loadu(a.data() + i);
+            scalars::simd<T>::storeu(scalars::simd<T>::log(x), out.data() + i);
         }
         for (; i < kN; ++i)
         {

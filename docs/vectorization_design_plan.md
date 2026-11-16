@@ -193,7 +193,8 @@ struct strided_ref
 - **Kernels only see `strided_ref`.** Reference-counted handles never reach
   a device. Worker threads also use `strided_ref` and raw pointers, so they
   never contend on a shared control block.
-- **One allocation per CPU tensor — target** (Memory U1): for sized CPU allocations
+- **One allocation per CPU tensor — implemented locally** (Memory U1, see
+  [section 17](#one-allocation-cpu-storage-november-16-2026)): for sized CPU allocations
   the control block sits in the same allocation as the data, as
   `std::make_shared` does. GPU and adopted storage keep a separate control
   block ([section 14](#14-allocation-and-workspace)).
@@ -1498,10 +1499,10 @@ phase changes.
 | Phase | Repository | Scope | Status | Correctness gate | Performance gate |
 |---|---|---|---|---|---|
 | P0 | Vectorization | Result shape from broadcasting; every leaf's shape validated; Release checks on view operations; overlap classifier raising errors; copy semantics aligned with P2; clang-tidy baseline cleared and coverage gaps closed ([section 15](#15-clang-tidy-conformance)) | Shape, view checks and classifier implemented; static-analysis coverage and baseline fixes delivered locally. Hosted LLVM 19 verification and performance gate remain | Full test-target analysis enabled, including Objective-C++; see section 17 for executed configurations. CUDA/HIP analysis remains a documented limit | Release benchmarks at today's speed; shape checks outside the inner loop |
-| P1 | Vectorization | `retained_ptr` storage with provenance, explicit offset, views retain storage, safe expression capture, `non_overlapping` flag | Partly done: retaining views/leaves, cached injectivity, the provenance-aware overlap shortcut and the explicit offset field implemented; the allocation gate remains | Local AddressSanitizer lifetime/adopted-deleter tests and internal-overlap rejection pass; CUDA/HIP still need verification | CPU tensor construction and destruction: one heap allocation after U1; current promotion uses a separate control block |
+| P1 | Vectorization | `retained_ptr` storage with provenance, explicit offset, views retain storage, safe expression capture, `non_overlapping` flag | Done locally: retaining views/leaves, cached injectivity, the provenance-aware overlap shortcut, the explicit offset field, and one heap allocation per sized CPU tensor (measured November 16 against Memory `9277540`, which is not yet upstream) | Local AddressSanitizer lifetime/adopted-deleter tests and internal-overlap rejection pass; CUDA/HIP still need verification | CPU tensor construction and destruction: one heap allocation after U1; current promotion uses a separate control block |
 | P2 | Vectorization | `tensor` / `tensor_view` split; const views; `rebind()`; `noalias()` proxy for elementwise assignment | Semantics implemented and locally verified; performance gate open | Updated tests cover packed owner copies, shallow view copies, write-through copy/move assignment, const access, signed lattice intersections and adopted storage. Debug/Release CPU, Metal GPU and CPU LibTorch pass; CUDA/HIP remain unverified | Expression building with `tensor<T>` leaves adds no atomic operations: measured not met. `a + 3 * b` retains 2 handles (at least 4 atomic RMWs) in a 20 ns capture; resolve before closing the phase |
 | P3 | Vectorization | CPU planner tiers 0–2 with `run_range`; contiguous fast path; `loop2d`; threading policy (bytes and op cost, intra-row splits, BLAS coordination); tiled transpose; `flip`; tier-2 specialization; planner-owned prefetch; aligned-source variant removed; CPU reductions | Partly done: planner, `loop2d`, row-split threading. Performance gates measured November 16: tier 0 one-thread and n ≤ 64 latency met against the local references; tier 1 met for double, borderline for float; `t().contiguous()` not met; thread scaling not gate-grade | Strided, broadcast, `flip` and reduction tests pass; serial SIMD fallback taken with parallel support disabled | Tier 0 ≥ 90% of STREAM triad bandwidth on one thread and scales with threads; tier 1 ≥ 80% for rows ≥ 256 elements; latency at n ≤ 64 within 10% of today; `t().contiguous()` ≥ 50% of tier-0 copy bandwidth |
-| U1 | Memory | [Section 12](#memory-u1) | Partial: provenance query (`storage_provenance` on `retained_ptr`/`data_view`) landed upstream with tests, submodule bumped; one-allocation CPU storage, uninitialized allocation, offset-aware copy, `copy_async`, stream events remain | Landed upstream with tests; submodule bumped | Offset-aware copy at device-copy bandwidth |
+| U1 | Memory | [Section 12](#memory-u1) | Partial: provenance query landed upstream, submodule bumped. One-allocation CPU storage implemented with tests on the local Memory branch `one-allocation-cpu-storage` (`9277540`, based on upstream `435c5c8`), not yet pushed. Uninitialized allocation, offset-aware copy, `copy_async` and stream events remain | Landed upstream with tests; submodule bumped | Offset-aware copy at device-copy bandwidth |
 | U2 | LinearAlgebra | [Section 12](#linearalgebra-u2) | Partial: GEMM alpha/beta landed upstream and is consumed by `matmul_out` and product epilogues; GEMV, DOT, rectangular batched GEMM and the matrix-API contracts remain | Landed upstream with tests; submodule bumped | GEMV, DOT and batched GEMM at backend-library speed |
 | U3 | Scalars | [Section 12](#scalars-u3) | Not started | Landed upstream with tests; submodule bumped | Metal interior-slice dispatch with no per-call buffer wrapping |
 | P4 | Vectorization | CUDA/HIP offset calculator with span-checked 32-bit indexing and vector loads; strided GPU destinations; Metal pipeline cache, batched command buffers, per-allocation `MTLBuffer`; GPU reductions; offset-aware transfers; unified launch contract ([section 13](#13-backend-launch-unification)) | Not started | Device clone of an interior slice without host memory (Metal locally; CUDA/HIP in CI); large-stride small tensors take the wide-index path; same launch signature on every backend; macOS `neon` + `metal` clang-tidy job passes | Tier 0 and strided tiers in GB/s on each GPU backend; Metal per-call host overhead after the first call in µs and free of string building |
@@ -1831,6 +1832,44 @@ for square n × n operands on the native backend, five repetitions (CV ≤ 0.5%)
 
 The saving is the temporary's allocation plus one memory pass, so it
 matters most for small products, where GEMM no longer dominates.
+
+### One-allocation CPU storage (November 16, 2026)
+
+Memory's `make_retained()` now places the `shared_storage` control block
+and the payload in one aligned CPU block (`[control block | padding |
+payload]`), as `std::make_shared` and `c10::make_intrusive` do. The
+embedded handle has no deleter; the control block stores the block's free
+function, so the header-only release path needs no new exported symbol.
+GPU, adopted and `from_storage()` storage keep a separate control block.
+Tensor allocation calls `make_retained()` directly instead of promoting a
+`data_ptr`; zero-size tensors keep the `data_ptr` path so they record their
+device. The sized constructors and expression construction now pass the
+shape as a stack span instead of a temporary `std::vector`.
+
+Heap calls per CPU tensor construction and destruction, counted by
+replacing global `operator new` in a scratch program (the payload goes
+through Memory's CPU allocator, so it is the one allocation not counted):
+
+| Case | Before (Memory `b8d3aba`) | After (Memory `9277540`) |
+|---|---|---|
+| `tensor<float>(n)`, `tensor<double>(n, 3)` | payload + control block + shape vector = 3 | payload = 1 |
+| `tensor<float>(a + 3 * b)` | payload + control block + profiler scope name = 3 | payload + profiler scope name = 2 |
+
+The remaining expression-path allocation is the
+`PROFILER_RECORD_USER_SCOPE` name built as a `std::string` (longer than
+libc++'s 22-character short-string buffer); `assign()` makes the same
+allocation. It exists only in profiler-enabled builds
+(`VECTORIZATION_HAS_PROFILER=1`), and the fix belongs in the profiler macro
+(take a static name). `CPU_TensorAllocFree` is unchanged within noise, about
+35–47 ns before and after, so the gate is met as an allocation count, not a
+measured speedup.
+
+Verification: Memory Release (9 CTest targets) and Debug + AddressSanitizer
+pass, including two new `RetainedPtr` tests (block layout and alignment,
+slices keeping the block alive). Vectorization Release, Debug +
+AddressSanitizer and Bazel pass 71 tests (23 GPU tests skipped). Bazel's
+`@memory` is an rsync copy like `@linear_algebra` and needs the same marker
+re-stage after a checkout change.
 
 ### Correctness tests
 

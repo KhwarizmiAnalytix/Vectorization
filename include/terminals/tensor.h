@@ -25,6 +25,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
@@ -35,6 +36,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -43,6 +45,7 @@
 #include <profiler.h>
 #endif
 
+#include "common/span.h"
 #include "expressions/expressions.h"
 #include "expressions/overlap.h"
 #include "expressions/strided_ref.h"
@@ -291,6 +294,26 @@ public:
         }
     }
 
+    // Fresh owning storage (allocate_owned): Memory's make_retained() keeps a CPU
+    // payload and its control block in one allocation (std::make_shared layout);
+    // GPU storage keeps a host control block. Zero-size storage keeps the
+    // data_ptr path so the empty tensor still records its device.
+    struct allocate_tag
+    {
+    };
+    // Takes the shape as a span so the sized constructors can pass a stack
+    // array: common shapes allocate no metadata (design plan section 14).
+    tensor_impl(allocate_tag,
+        span<const size_type> dims,
+        device_enum           type,
+        int                   device_index,
+        gpu_stream_t          stream)
+    {
+        allocate_owned(compute_total(dims), type, device_index, stream);
+        set_shape(dims);
+        recompute_cpu_simd_alignment_state();
+    }
+
     // Transfer an existing Memory allocation into a tensor.
     tensor_impl(owner_t&& owner, const dimensions_type& dims)
         : view_(owner.view()), storage_(std::move(owner))
@@ -344,9 +367,7 @@ public:
         device_enum                                                      type = device_enum::CPU,
         int                                                              device_index = 0,
         gpu_stream_t                                                     stream       = nullptr)
-        : tensor_impl(
-              owner_t(n, type, device_index, static_cast<typename owner_t::stream_t>(stream)),
-              dimensions_type{n})
+        : tensor_impl(allocate_tag{}, span<const size_type>(&n, 1), type, device_index, stream)
     {
     }
 
@@ -454,11 +475,11 @@ public:
         device_enum                                             type         = device_enum::CPU,
         int                                                     device_index = 0,
         gpu_stream_t                                            stream       = nullptr)
-        : tensor_impl(owner_t(compute_total(dimensions_type{rows, cols}),
-                          type,
-                          device_index,
-                          static_cast<typename owner_t::stream_t>(stream)),
-              dimensions_type{rows, cols})
+        : tensor_impl(allocate_tag{},
+              shape_span(std::array<size_type, 2>{rows, cols}),
+              type,
+              device_index,
+              stream)
     {
         sizes_and_strides_.resize(2);
         sizes_and_strides_.size_at_unchecked(0)   = checked_dimension_to_storage(rows);
@@ -523,11 +544,7 @@ public:
         device_enum  type         = device_enum::CPU,
         int          device_index = 0,
         gpu_stream_t stream       = nullptr)
-        : tensor_impl(owner_t(compute_total(dims),
-                          type,
-                          device_index,
-                          static_cast<typename owner_t::stream_t>(stream)),
-              dims)
+        : tensor_impl(allocate_tag{}, shape_span(dims), type, device_index, stream)
     {
     }
 
@@ -536,11 +553,7 @@ public:
         device_enum                                                     type = device_enum::CPU,
         int                                                             device_index = 0,
         gpu_stream_t                                                    stream       = nullptr)
-        : tensor_impl(owner_t(compute_total(dims),
-                          type,
-                          device_index,
-                          static_cast<typename owner_t::stream_t>(stream)),
-              dims)
+        : tensor_impl(allocate_tag{}, shape_span(dims), type, device_index, stream)
     {
     }
 
@@ -1779,6 +1792,22 @@ private:
         return view_t(storage);
     }
 
+    template <typename Stream>
+    void allocate_owned(size_type n, device_enum type, int device_index, Stream stream)
+    {
+        const auto owner_stream = static_cast<typename owner_t::stream_t>(stream);
+        if (n == 0)
+        {
+            owner_t empty(0, type, device_index, owner_stream);
+            view_    = empty.view();
+            storage_ = memory::retained_ptr<value_t>(std::move(empty));
+            return;
+        }
+        storage_ = memory::make_retained<value_t>(
+            n, memory::execution_context(type, device_index, owner_stream));
+        view_ = view_from_retained(storage_);
+    }
+
     void retain_borrowed()
     {
         if (view_.data() && view_.size())
@@ -1911,13 +1940,23 @@ private:
     // -----------------------------------------------------------------------
 
     // Populate sizes_and_strides_ with the given shape and derived C-order strides.
-    void set_shape(const dimensions_type& dims)
+    void set_shape(const dimensions_type& dims) { set_shape(shape_span(dims)); }
+    void set_shape(span<const size_type> dims)
     {
         (void)compute_total(dims);
         make_contiguous_sas(sizes_and_strides_, dims);
     }
 
+    template <typename Dims> static span<const size_type> shape_span(Dims const& dims) noexcept
+    {
+        return span<const size_type>(dims.data(), dims.size());
+    }
+
     static size_type compute_total(const dimensions_type& dims)
+    {
+        return compute_total(shape_span(dims));
+    }
+    static size_type compute_total(span<const size_type> dims)
     {
         size_type total = 1;
         for (auto d : dims)
@@ -1939,6 +1978,10 @@ private:
 
     // Build a sizes_and_strides with the given shape and C-order strides.
     static void make_contiguous_sas(sizes_and_strides& sas, const dimensions_type& dims)
+    {
+        make_contiguous_sas(sas, shape_span(dims));
+    }
+    static void make_contiguous_sas(sizes_and_strides& sas, span<const size_type> dims)
     {
         const size_t n = dims.size();
         sas.resize(n);
@@ -2017,15 +2060,13 @@ private:
         auto const stream = resolve_ambient_stream(expr, p.index);
         // The result takes the operands' broadcast shape (design §5, planner step 2).
         const expression_shape shape = expression_result_shape(expr);
-        dimensions_type        dims(static_cast<size_t>(shape.rank));
+        std::array<size_type, std::tuple_size_v<decltype(shape.sizes)>> extents{};
         for (int d = 0; d < shape.rank; ++d)
         {
-            dims[static_cast<size_t>(d)] = static_cast<size_type>(shape.sizes[d]);
+            extents[static_cast<size_t>(d)] = static_cast<size_type>(shape.sizes[d]);
         }
-        owner_t owner(
-            compute_total(dims), p.kind, p.index, static_cast<typename owner_t::stream_t>(stream));
-        view_    = owner.view();
-        storage_ = memory::retained_ptr<value_t>(std::move(owner));
+        const span<const size_type> dims(extents.data(), static_cast<size_t>(shape.rank));
+        allocate_owned(compute_total(dims), p.kind, p.index, stream);
         set_shape(dims);
         recompute_cpu_simd_alignment_state();
         if constexpr (contains_product<remove_cvref_t<E>>::value)

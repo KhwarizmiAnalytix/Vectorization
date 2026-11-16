@@ -112,6 +112,17 @@ overlap_status classify_overlap(strided_ref<A, N> const& a, strided_ref<B, M> co
     {
         return overlap_status::none;
     }
+    // Provenance shortcut (design plan §6): two distinct allocations from this
+    // library's own allocator can never overlap, so a different allocation id
+    // on both sides proves `none` without the address-range/lattice test below.
+    // Adopted storage skips this: a caller may have adopted overlapping or
+    // aliased external memory under separate control blocks.
+    if (a.id().valid() && b.id().valid() && a.id() != b.id() &&
+        a.provenance() == memory::storage_provenance::allocated &&
+        b.provenance() == memory::storage_provenance::allocated)
+    {
+        return overlap_status::none;
+    }
     const auto ap = reinterpret_cast<uintptr_t>(a.data());
     const auto bp = reinterpret_cast<uintptr_t>(b.data());
     const auto ae = ap + (detail::overlap_extent(a) + 1) * sizeof(A);

@@ -51,6 +51,37 @@ tensor_view<float> retained_slice()
 }
 }  // namespace
 
+// P1 explicit offset field: storage_offset() (PyTorch's Tensor.storage_offset())
+// is cached in tensor_impl::offset_ by recompute_cpu_simd_alignment_state(),
+// not rederived from view_ pointer arithmetic on each call.
+VECTORIZATIONTEST(Math, TensorStorageOffset)
+{
+    tensor<float> owner{1, 2, 3, 4, 5, 6};
+    EXPECT_EQ(owner.storage_offset(), 0U);
+
+    auto view = owner.slice(0, 2, 6);
+    EXPECT_EQ(view.storage_offset(), 2U);
+    EXPECT_EQ(view.data(), owner.data() + 2);
+
+    auto nested = view.slice(0, 1, 4);
+    EXPECT_EQ(nested.storage_offset(), 3U);  // compounds: 2 + 1
+
+    tensor_view<float> moved(std::move(nested));
+    EXPECT_EQ(moved.storage_offset(), 3U);  // transplanted by move_from, not recomputed
+
+    tensor<float> cloned(view);
+    EXPECT_EQ(cloned.storage_offset(), 0U);  // a fresh packed owner starts at its own base
+
+    auto               adopted = memory::retained_ptr<float>::adopt(new float[6]{1, 2, 3, 4, 5, 6},
+        6,
+        memory::execution_context::cpu(),
+        [](float* ptr, size_t, memory::execution_context const&) { delete[] ptr; });
+    auto               sub     = adopted.slice(2, 4);
+    tensor_view<float> adopted_view(std::move(sub), {4});
+    EXPECT_EQ(adopted_view.storage_offset(), 2U);
+    END_TEST();
+}
+
 VECTORIZATIONTEST(Math, TensorViewOwnership)
 {
     auto view = retained_slice();
@@ -221,6 +252,42 @@ VECTORIZATIONTEST(Math, TensorOverlapLattice)
     END_TEST();
 }
 
+// Design plan §6 provenance shortcut: a different allocation id proves `none`
+// without the address test only when both sides are `allocated`; a slice of
+// the same tensor keeps the same id so the shortcut never engages on actual
+// aliasing, and adopted storage always falls back to the address test.
+VECTORIZATIONTEST(Math, TensorProvenanceOverlapShortcut)
+{
+    tensor<float> a{1, 2, 3};
+    tensor<float> b{4, 5, 6};
+    EXPECT_EQ(a.to_strided_ref().provenance(), memory::storage_provenance::allocated);
+    EXPECT_TRUE(a.to_strided_ref().id().valid());
+    EXPECT_NE(a.to_strided_ref().id(), b.to_strided_ref().id());
+    EXPECT_EQ(vectorization::classify_overlap(a.to_strided_ref(), b.to_strided_ref()),
+        overlap_status::none);
+
+    auto first  = a.slice(0, 0, 1);
+    auto second = a.slice(0, 1, 2);
+    EXPECT_EQ(first.to_strided_ref().id(), a.to_strided_ref().id());
+    EXPECT_EQ(first.to_strided_ref().id(), second.to_strided_ref().id());
+
+    auto               adopted_a = memory::retained_ptr<float>::adopt(new float[2]{1, 2},
+        2,
+        memory::execution_context::cpu(),
+        [](float* ptr, size_t, memory::execution_context const&) { delete[] ptr; });
+    auto               adopted_b = memory::retained_ptr<float>::adopt(new float[2]{3, 4},
+        2,
+        memory::execution_context::cpu(),
+        [](float* ptr, size_t, memory::execution_context const&) { delete[] ptr; });
+    tensor_view<float> view_a(std::move(adopted_a), {2});
+    tensor_view<float> view_b(std::move(adopted_b), {2});
+    EXPECT_EQ(view_a.to_strided_ref().provenance(), memory::storage_provenance::adopted);
+    EXPECT_NE(view_a.to_strided_ref().id(), view_b.to_strided_ref().id());
+    EXPECT_EQ(vectorization::classify_overlap(view_a.to_strided_ref(), view_b.to_strided_ref()),
+        overlap_status::none);
+    END_TEST();
+}
+
 VECTORIZATIONTEST(Math, TensorAdoptedStorageLifetime)
 {
     int released = 0;
@@ -236,6 +303,7 @@ VECTORIZATIONTEST(Math, TensorAdoptedStorageLifetime)
                     delete[] ptr;
                 });
             tensor_view<float> input(std::move(adopted), {2, 2});
+            EXPECT_EQ(input.to_strided_ref().provenance(), memory::storage_provenance::adopted);
             return input.t() + 1.0f;
         }();
         EXPECT_EQ(released, 0);

@@ -710,7 +710,7 @@ public:
         tensor<value_t> result(total, device(), device_index(), stream());
         if (total != 0)
         {
-            if (is_contiguous() && storage_offset(view_) == 0)
+            if (is_contiguous() && storage_offset() == 0)
             {
                 allocator_t::copy_sync(data(),
                     total,
@@ -1076,6 +1076,14 @@ public:
     }
 
     bool is_non_overlapping() const noexcept { return non_overlapping_; }
+
+    // Elements from the allocation's base() to this view's data() (PyTorch's
+    // Tensor.storage_offset()). Cached by recompute_cpu_simd_alignment_state();
+    // Memory's offset-aware copy API and GPU interior-slice cloning read it.
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE size_t storage_offset() const noexcept
+    {
+        return static_cast<size_t>(offset_);
+    }
 
     // Build a strided_ref describing the current view's shape and strides.
     // Used by store_operand() to capture the tensor as an expression leaf.
@@ -1738,10 +1746,12 @@ private:
         numel_               = rhs.numel_;
         contiguous_          = rhs.contiguous_;
         non_overlapping_     = rhs.non_overlapping_;
+        offset_              = rhs.offset_;
         rhs.non_overlapping_ = true;
         rhs.view_            = view_t{};
         rhs.numel_ = rhs.align_start_ = rhs.align_end_ = 0;
         rhs.contiguous_                                = true;
+        rhs.offset_                                    = 0;
     }
 
     template <typename E> void validate_placement(E const& expr) const
@@ -1774,17 +1784,12 @@ private:
         return total;
     }
 
+    // view_t's constructor from retained_ptr carries the allocation's own
+    // base/id/provenance (Memory's data_view(retained_ptr const&)), unlike
+    // borrow(), which always reports an invalid id and `adopted` provenance.
     static view_t view_from_retained(memory::retained_ptr<value_t> const& storage)
     {
-        const auto offset = storage.data() == nullptr
-                                ? size_t{0}
-                                : static_cast<size_t>(storage.data() - storage.base());
-        auto       full   = view_t::borrow(storage.base(),
-            offset + storage.size(),
-            storage.ctx().device_type(),
-            storage.ctx().device_index(),
-            storage.ctx().stream);
-        return offset == 0 ? full : full.subview(offset, storage.size());
+        return view_t(storage);
     }
 
     void retain_borrowed()
@@ -1798,15 +1803,6 @@ private:
                 [](void*, void*, size_t) noexcept {},
                 nullptr);
         }
-    }
-
-    // Memory's GPU copy API tracks allocation bases.
-    static size_t storage_offset(view_t view) noexcept
-    {
-        return view.data() == nullptr ? 0
-                                      : (reinterpret_cast<std::uintptr_t>(view.data()) -
-                                            reinterpret_cast<std::uintptr_t>(view.base())) /
-                                            sizeof(value_t);
     }
 
     // Retaining view constructors with explicit, validated shape/strides.
@@ -2113,7 +2109,7 @@ private:
             }
             return;
         }
-        const size_t offset = storage_offset(view_);
+        const size_t offset = storage_offset();
         if (is_contiguous() && offset == 0)
         {
             allocator_t::copy_sync(view_.base(),
@@ -2251,6 +2247,13 @@ private:
 
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void recompute_cpu_simd_alignment_state()
     {
+        // Independent of shape, so computed first and unconditionally: every
+        // early return below (rank 0, non-CPU, empty, non-contiguous) must
+        // still leave offset_ in sync with view_.
+        offset_ = view_.data() == nullptr ? int64_t{0}
+                                          : (reinterpret_cast<std::uintptr_t>(view_.data()) -
+                                                reinterpret_cast<std::uintptr_t>(view_.base())) /
+                                                sizeof(value_t);
         const size_t n = rank();
         if (n == 0)
         {
@@ -2357,6 +2360,10 @@ private:
     std::size_t numel_{0};
     bool        contiguous_{true};
     bool        non_overlapping_{true};
+    // Elements from view_.base() to view_.data(); cached by
+    // recompute_cpu_simd_alignment_state() instead of rederived with pointer
+    // arithmetic on every storage_offset() call.
+    int64_t offset_{0};
 };
 
 // ---------------------------------------------------------------------------

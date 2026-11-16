@@ -25,6 +25,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "common/data_ptr.h"
 #include "common/data_view.h"
 #include "common/device.h"
 #include "common/retained_ptr.h"
@@ -42,6 +43,7 @@ public:
     using stream_t    = typename memory::data_view<T>::stream_t;
     const_data_view() = default;
     const_data_view(memory::data_view<T> view) : view_(view) {}
+    const_data_view(memory::retained_ptr<T> const& owner) : view_(owner) {}
     static const_data_view borrow(
         T const* ptr, size_t n, device_enum dev, int index = 0, stream_t stream = nullptr)
     {
@@ -52,6 +54,7 @@ public:
     VECTORIZATION_FUNCTION_ATTRIBUTE T const* base() const { return view_.base(); }
     VECTORIZATION_FUNCTION_ATTRIBUTE size_t   size() const { return view_.size(); }
     auto                                      id() const { return view_.id(); }
+    auto                                      provenance() const { return view_.provenance(); }
     VECTORIZATION_FUNCTION_ATTRIBUTE bool     is_aligned() const { return view_.is_aligned(); }
     device_enum                               device() const { return view_.device(); }
     int                                       device_index() const { return view_.device_index(); }
@@ -97,6 +100,7 @@ template <typename T, int MaxRank = kMaxRank> struct strided_ref
     // Delegation to data_view for allocation-identity checks used by tests.
     VECTORIZATION_FUNCTION_ATTRIBUTE auto base() const noexcept { return view_.base(); }
     VECTORIZATION_FUNCTION_ATTRIBUTE auto id() const noexcept { return view_.id(); }
+    VECTORIZATION_FUNCTION_ATTRIBUTE auto provenance() const noexcept { return view_.provenance(); }
 
     template <typename Stream>
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void record_stream(Stream s) const

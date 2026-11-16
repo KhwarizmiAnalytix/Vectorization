@@ -115,6 +115,10 @@ option(VECTORIZATION_ENABLE_BLAS
 option(VECTORIZATION_ENABLE_BLIS "Enable BLIS as the CBLAS/LAPACKE provider through LinearAlgebra"
        OFF
 )
+option(VECTORIZATION_ENABLE_LU_PIVOTING
+       "Partial pivoting in LinearAlgebra's NATIVE LU (BLAS/MKL always pivot); OFF is numerically unstable"
+       ON
+)
 option(VECTORIZATION_ENABLE_MIMALLOC "Enable Memory's mimalloc allocator" ON)
 option(VECTORIZATION_ENABLE_MIMALLOC_STATS "Enable mimalloc allocation statistics" OFF)
 option(VECTORIZATION_ENABLE_NUMA "Enable Memory's NUMA allocation support" OFF)
@@ -718,6 +722,7 @@ message("  Accelerate           : ${VECTORIZATION_ENABLE_ACCELERATE}")
 message("  MKL comparisons      : ${VECTORIZATION_ENABLE_MKL}")
 message("  BLAS                 : ${VECTORIZATION_ENABLE_BLAS}")
 message("  BLIS                 : ${VECTORIZATION_ENABLE_BLIS}")
+message("  LU pivoting          : ${VECTORIZATION_ENABLE_LU_PIVOTING}")
 message("  Mimalloc             : ${VECTORIZATION_ENABLE_MIMALLOC}")
 message("  Magic enum           : ${VECTORIZATION_ENABLE_MAGICENUM}")
 message("  LibTorch             : ${VECTORIZATION_ENABLE_LIBTORCH}")

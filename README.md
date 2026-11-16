@@ -121,6 +121,37 @@ intermediates; epilogue optimization and allocation-count gates remain open.
 GPU products fail explicitly. Remaining capabilities are tracked in the
 [LinearAlgebra integration plan](docs/vectorization_design_plan.md#11-linearalgebra-adapter).
 
+## Square matrix linear algebra
+
+CPU float/double tensors and views support square LU and Cholesky, solves,
+inverses and determinants through `vectorization::linalg` (also available in
+`vectorization`):
+
+```cpp
+auto x = vectorization::linalg::solve(a, b);
+vectorization::linalg::lu_factorization<float> factors(a);
+auto another_x = factors.solve(b); // reuse LU; matrix RHS
+auto inverse = vectorization::linalg::inv(a);
+auto [sign, logabsdet] = vectorization::linalg::slogdet(a);
+auto status = vectorization::linalg::solve_ex(a, b); // status.result, status.info
+```
+
+`solve` accepts vector or matrix RHS inputs, supports `left=false` for matrix
+RHS inputs, and broadcasts matrix batches. `lu_solve` supports `left` and
+`adjoint`; `solve_triangular` supports `upper`, `left` and `unitriangular`.
+`cholesky`, `cholesky_solve` and reusable Cholesky factors support either
+triangle. Factor-reuse and triangular solves require matrix RHS inputs.
+Inputs may be strided; outputs are packed independent tensors. Empty matrices,
+empty RHS columns and zero-size batches are supported.
+
+`lu_factor_ex`, `cholesky_ex`, `solve_ex` and `inv_ex` return per-matrix status
+and default to `check_errors=false`. Their checked counterparts throw on
+numerical failure; `lu`, `det` and `slogdet` accept singular inputs. `solve_ex`
+status has the coefficient matrix's batch shape before RHS broadcasting.
+Pivots are 1-based. Pivots and status currently use the input's float/double
+dtype; integer metadata tensors and rectangular LU remain planned. GPU
+adapters are unavailable, and repeated solves still copy factors/RHS buffers.
+
 ## Whole-expression reductions
 
 ```cpp

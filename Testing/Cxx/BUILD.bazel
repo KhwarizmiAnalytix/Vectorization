@@ -49,6 +49,9 @@ cc_library(
 # Compile every tensor expression TU with the same device compiler to avoid
 # mixing CPU-only and GPU template definitions in one executable (ODR).
 _GPU_TEST_SRCS = [
+    "TestLinalgFactorizations.cpp",
+    "TestLinalgSolves.cpp",
+    "TestLinalgSquareMatrix.cpp",
     "TestTensor.cpp",
     "TestTensorF1.cpp",
     "TestTensorF2.cpp",

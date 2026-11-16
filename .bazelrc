@@ -16,6 +16,11 @@ build:linux --cxxopt=-std=c++20 --host_cxxopt=-std=c++20
 build:macos --cxxopt=-std=c++20 --host_cxxopt=-std=c++20
 build:windows --cxxopt=/std:c++20 --host_cxxopt=/std:c++20
 
+# Partial pivoting in @linear_algebra's NATIVE LU, mirroring CMake's
+# VECTORIZATION_ENABLE_LU_PIVOTING=ON (LinearAlgebra itself defaults to OFF).
+# Opt out with --define=linalg_lu_pivoting=false (numerically unstable).
+build --define=linalg_lu_pivoting=true
+
 # Backend selection examples:
 #   bazel build //:Vectorization --define=vectorization_cpu_backend=avx2
 #   bazel build //:Vectorization --define=vectorization_gpu_backend=metal

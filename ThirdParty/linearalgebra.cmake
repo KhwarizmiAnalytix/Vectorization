@@ -34,5 +34,14 @@ function(xsigma_add_linearalgebra_product)
         endif()
     endforeach()
 
+    # Only LinearAlgebra's NATIVE LU honors this (BLAS/MKL getrf always
+    # pivots). Without partial pivoting, LU is numerically unstable for a
+    # general matrix and fails outright on a zero diagonal that a row swap
+    # would avoid, so forward Vectorization's default (ON) rather than
+    # inheriting the dependency's default (OFF). Bazel mirrors this with
+    # --define=linalg_lu_pivoting=true in .bazelrc.
+    set(LINALG_LU_PIVOTING "${VECTORIZATION_ENABLE_LU_PIVOTING}"
+        CACHE BOOL "Configured by Vectorization" FORCE)
+
     add_subdirectory("${_linalg_src}" "${CMAKE_BINARY_DIR}/ThirdParty/LinearAlgebra_build" EXCLUDE_FROM_ALL)
 endfunction()

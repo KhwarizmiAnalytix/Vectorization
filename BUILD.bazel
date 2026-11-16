@@ -23,6 +23,7 @@ filegroup(
         [
             "include/common/*.h",
             "include/expressions/*.h",
+            "include/linalg/*.h",
             "include/terminals/*.h",
         ],
         allow_empty = True,

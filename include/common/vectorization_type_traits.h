@@ -189,6 +189,8 @@ template <typename LHS, typename RHS, typename EVALUATOR> class binary_expressio
 
 template <typename LHS, typename MHS, typename RHS, typename EVALUATOR> class trinary_expression;
 
+template <typename A, typename B> class product_expression;
+
 template <typename T, int MaxRank> struct strided_ref;
 
 template <typename T> struct retained_ref;
@@ -249,6 +251,44 @@ template <typename T> struct is_pure_expression
     static constexpr bool value = false;
 };
 
+template <typename T> struct is_product_expression : std::false_type
+{
+};
+
+template <typename A, typename B>
+struct is_product_expression<product_expression<A, B>> : std::true_type
+{
+};
+
+template <typename A, typename B>
+struct is_pure_expression<product_expression<A, B>> : std::true_type
+{
+};
+
+template <typename T> struct contains_product : is_product_expression<remove_cvref_t<T>>
+{
+};
+
+template <typename L, typename Ev>
+struct contains_product<unary_expression<L, Ev>> : contains_product<remove_cvref_t<L>>
+{
+};
+
+template <typename L, typename R, typename Ev>
+struct contains_product<binary_expression<L, R, Ev>>
+    : std::bool_constant<contains_product<remove_cvref_t<L>>::value ||
+                         contains_product<remove_cvref_t<R>>::value>
+{
+};
+
+template <typename L, typename M, typename R, typename Ev>
+struct contains_product<trinary_expression<L, M, R, Ev>>
+    : std::bool_constant<contains_product<remove_cvref_t<L>>::value ||
+                         contains_product<remove_cvref_t<M>>::value ||
+                         contains_product<remove_cvref_t<R>>::value>
+{
+};
+
 template <typename T, typename E> struct is_pure_expression<unary_expression<T, E>>
 {
     static constexpr bool value = true;
@@ -291,6 +331,19 @@ template <> struct scalar_type<float, float>
 template <> struct scalar_type<double, double>
 {
     using value = double;
+};
+
+template <typename A, typename B, typename T> struct scalar_type<product_expression<A, B>, T>
+{
+    using value = typename A::value_type;
+};
+
+template <typename T, typename A, typename B>
+struct scalar_type<T,
+    product_expression<A, B>,
+    std::enable_if_t<is_fundamental<T>::value && !is_packet<T>::value>>
+{
+    using value = typename A::value_type;
 };
 
 #if VECTORIZATION_VECTORIZED
@@ -348,6 +401,22 @@ struct scalar_type<strided_ref<value_t, MaxRank>, T>
 };
 
 template <typename U, typename T> struct scalar_type<retained_ref<U>, T>
+{
+    using value = std::remove_const_t<U>;
+};
+
+template <typename T, typename U, int N>
+struct scalar_type<T,
+    strided_ref<U, N>,
+    std::enable_if_t<is_fundamental<T>::value && !is_packet<T>::value>>
+{
+    using value = std::remove_const_t<U>;
+};
+
+template <typename T, typename U>
+struct scalar_type<T,
+    retained_ref<U>,
+    std::enable_if_t<is_fundamental<T>::value && !is_packet<T>::value>>
 {
     using value = std::remove_const_t<U>;
 };

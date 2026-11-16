@@ -95,7 +95,11 @@ VECTORIZATION_FUNCTION_ATTRIBUTE bool accumulate_shape(
     E const& expr, expression_shape& acc) noexcept
 {
     using expr_t = vectorization::remove_cvref_t<E>;
-    if constexpr (is_pure_expression<expr_t>::value)
+    if constexpr (is_product_expression<expr_t>::value)
+    {
+        return broadcast_into(acc, expr.result_shape().rank, expr.result_shape().sizes.data());
+    }
+    else if constexpr (is_pure_expression<expr_t>::value)
     {
         if constexpr (VECTORIZATION_EXPR_HAS_MHS(expr))
         {
@@ -172,7 +176,20 @@ template <typename E>
 VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void describe_leaf_shapes(E const& expr, std::string& out)
 {
     using expr_t = vectorization::remove_cvref_t<E>;
-    if constexpr (is_pure_expression<expr_t>::value)
+    if constexpr (is_product_expression<expr_t>::value)
+    {
+        if (!out.empty())
+        {
+            out += ", ";
+        }
+        out += "[";
+        for (int d = 0; d < expr.result_shape().rank; ++d)
+        {
+            out += (d ? ", " : "") + std::to_string(expr.result_shape().sizes[d]);
+        }
+        out += "]";
+    }
+    else if constexpr (is_pure_expression<expr_t>::value)
     {
         if constexpr (VECTORIZATION_EXPR_HAS_MHS(expr))
         {

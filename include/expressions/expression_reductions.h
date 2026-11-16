@@ -80,7 +80,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE typename simd<T>::simd_t reduce_packet_com
 #endif
 
 template <reduce_op Op, typename E>
-VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto reduce_expression(E const& expression)
+VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto reduce_expression_impl(E const& expression)
 {
     using T     = typename scalar_type<E, E>::value;
     using acc_t = reduce_accumulator_t<T, Op>;
@@ -188,6 +188,24 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto reduce_expression(E const& expression
         result    = reduce_combine<acc_t, Op>(result, reduce_transform<T, Op>(x));
     }
     return result;
+}
+
+template <reduce_op Op, typename E>
+VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto reduce_expression(E const& expression)
+{
+    if constexpr (is_product_expression<remove_cvref_t<E>>::value)
+    {
+        return reduce_expression<Op>(expression.eval());
+    }
+    else if constexpr (contains_product<remove_cvref_t<E>>::value)
+    {
+        (void)expression_result_shape(expression);
+        return reduce_expression<Op>(lower_products(expression));
+    }
+    else
+    {
+        return reduce_expression_impl<Op>(expression);
+    }
 }
 }  // namespace detail
 

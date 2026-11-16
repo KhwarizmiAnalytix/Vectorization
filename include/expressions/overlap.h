@@ -234,7 +234,16 @@ void check_assignment_overlap(E const& expr, strided_ref<T, N> const& dst, bool 
     }
 #endif
     using raw = remove_cvref_t<E>;
-    if constexpr (is_pure_expression<raw>::value)
+    if constexpr (is_product_expression<raw>::value)
+    {
+        // Product inputs may alias the output: materialize before any output
+        // write. A caller's noalias assertion is still checked in Debug.
+        if (noalias)
+        {
+            expr.check_noalias(dst);
+        }
+    }
+    else if constexpr (is_pure_expression<raw>::value)
     {
         if constexpr (VECTORIZATION_EXPR_HAS_LHS(expr))
         {

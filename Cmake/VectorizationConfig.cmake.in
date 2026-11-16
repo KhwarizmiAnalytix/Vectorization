@@ -3,7 +3,7 @@
 # Vectorization CMake configuration file
 # Enables: find_package(Vectorization REQUIRED)
 #
-# Logging, Memory and Scalars own their installed packages and runtime
+# Logging, Memory, Scalars and LinearAlgebra own their installed packages and runtime
 # dependencies. Restore the public targets omitted by BUILD_INTERFACE
 # in the source build, including Scalars' math providers and SIMD flags.
 
@@ -12,6 +12,7 @@ include(CMakeFindDependencyMacro)
 find_dependency(Logging)
 find_dependency(Memory)
 find_dependency(Scalars)
+find_dependency(LinearAlgebra)
 
 # Backend selection baked in at Vectorization's own configure time (independent
 # CPU SIMD backend + GPU backend, see CMakeLists.txt SECTION 1).
@@ -41,6 +42,7 @@ if(TARGET Vectorization::Vectorization)
   set_property(
     TARGET Vectorization::Vectorization APPEND PROPERTY INTERFACE_LINK_LIBRARIES Logging::Logging
                                                         Memory::Memory Scalars::Scalars
+                                                        LinearAlgebra::LinearAlgebra
   )
   if(Vectorization_HAS_PROFILER AND TARGET Profiler::Profiler)
     set_property(

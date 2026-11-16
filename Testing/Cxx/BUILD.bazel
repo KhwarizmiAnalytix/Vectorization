@@ -55,6 +55,7 @@ _GPU_TEST_SRCS = [
     "TestTensorF3.cpp",
     "TestTensorGpu.cpp",
     "TestTensorGpuProfiler.cpp",
+    "TestTensorProducts.cpp",
     "TestTensorReductions.cpp",
     "TestTensorShapes.cpp",
     "TestTensorView.cpp",

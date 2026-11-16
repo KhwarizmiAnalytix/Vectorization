@@ -33,6 +33,7 @@
 #define VECTORIZATION_EXPRESSIONS_INCLUDES_INSIDE
 #include "expressions/expression_interface.h"
 #include "expressions/expressions_functors.h"
+#include "expressions/product_expression.h"
 #undef VECTORIZATION_EXPRESSIONS_INCLUDES_INSIDE
 
 #define VECTORIZATION_EXPRESSIONS_INCLUDES_INSIDE

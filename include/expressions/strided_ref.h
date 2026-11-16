@@ -20,6 +20,7 @@
 #pragma once
 
 #include <array>
+#include <backend/simd.h>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -101,6 +102,15 @@ template <typename T, int MaxRank = kMaxRank> struct strided_ref
     VECTORIZATION_FUNCTION_ATTRIBUTE auto base() const noexcept { return view_.base(); }
     VECTORIZATION_FUNCTION_ATTRIBUTE auto id() const noexcept { return view_.id(); }
     VECTORIZATION_FUNCTION_ATTRIBUTE auto provenance() const noexcept { return view_.provenance(); }
+
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE static constexpr size_t length() noexcept
+    {
+#if VECTORIZATION_VECTORIZED
+        return simd<std::remove_const_t<T>>::size;
+#else
+        return 1;
+#endif
+    }
 
     template <typename Stream>
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void record_stream(Stream s) const

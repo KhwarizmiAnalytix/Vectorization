@@ -659,6 +659,8 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool reduce_strided(E const& expr, value_t
 // accumulate: returns value_t (not hardcoded double) to avoid implicit widening
 // for float expressions. Not noexcept: the GPU path can VECTORIZATION_CHECK /
 // allocate.
+namespace detail
+{
 template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto accumulate(EXPR&& expression)
 {
     using E       = vectorization::remove_cvref_t<EXPR>;
@@ -1209,5 +1211,63 @@ template <typename EXPR> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmax(EXPR&& 
     }
 
     return ret;
+}
+}  // namespace detail
+
+template <typename E> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto accumulate(E&& expression)
+{
+    if constexpr (is_product_expression<remove_cvref_t<E>>::value)
+    {
+        auto result = expression.eval();
+        return detail::accumulate(result);
+    }
+    else if constexpr (contains_product<remove_cvref_t<E>>::value)
+    {
+        (void)expression_result_shape(expression);
+        auto lowered = detail::lower_products(expression);
+        return detail::accumulate(lowered);
+    }
+    else
+    {
+        return detail::accumulate(std::forward<E>(expression));
+    }
+}
+
+template <typename E> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmin(E&& expression)
+{
+    if constexpr (is_product_expression<remove_cvref_t<E>>::value)
+    {
+        auto result = expression.eval();
+        return detail::hmin(result);
+    }
+    else if constexpr (contains_product<remove_cvref_t<E>>::value)
+    {
+        (void)expression_result_shape(expression);
+        auto lowered = detail::lower_products(expression);
+        return detail::hmin(lowered);
+    }
+    else
+    {
+        return detail::hmin(std::forward<E>(expression));
+    }
+}
+
+template <typename E> VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto hmax(E&& expression)
+{
+    if constexpr (is_product_expression<remove_cvref_t<E>>::value)
+    {
+        auto result = expression.eval();
+        return detail::hmax(result);
+    }
+    else if constexpr (contains_product<remove_cvref_t<E>>::value)
+    {
+        (void)expression_result_shape(expression);
+        auto lowered = detail::lower_products(expression);
+        return detail::hmax(lowered);
+    }
+    else
+    {
+        return detail::hmax(std::forward<E>(expression));
+    }
 }
 }  // namespace vectorization

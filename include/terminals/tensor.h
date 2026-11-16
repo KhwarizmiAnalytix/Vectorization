@@ -786,7 +786,21 @@ public:
         validate_destination();
         validate_placement(expr);
         auto const stream = resolve_ambient_stream(expr, device_index());
-        if constexpr (is_tensor<remove_cvref_t<E>>::value)
+        if constexpr (contains_product<remove_cvref_t<E>>::value)
+        {
+            detail::check_product_output(*this, expression_result_shape(expr));
+            check_assignment_overlap(expr, to_strided_ref(), unchecked_alias);
+            if constexpr (is_product_expression<remove_cvref_t<E>>::value)
+            {
+                expr.evaluate_into(*this, unchecked_alias);
+            }
+            else
+            {
+                auto lowered = detail::lower_products(expr);
+                assign(lowered, unchecked_alias);
+            }
+        }
+        else if constexpr (is_tensor<remove_cvref_t<E>>::value)
         {
             const auto leaf = expr.to_strided_ref();
             check_assignment_overlap(leaf, to_strided_ref(), unchecked_alias);
@@ -835,13 +849,22 @@ public:
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE tensor_impl& assign_async(
         E const& expr, gpu_stream_t stream)
     {
-        validate_destination();
-        validate_placement(expr);
-        check_assignment_overlap(expr, to_strided_ref(), false);
-        record_expression_streams(expr, stream);
-        evaluator::template run<E, tensor_impl>(expr, *this, stream);
-        record_stream(stream);
-        return *this;
+        if constexpr (contains_product<remove_cvref_t<E>>::value)
+        {
+            VECTORIZATION_CHECK(device() == device_enum::CPU,
+                "matrix product GPU adapters are not available in this build");
+            return assign(expr);
+        }
+        else
+        {
+            validate_destination();
+            validate_placement(expr);
+            check_assignment_overlap(expr, to_strided_ref(), false);
+            record_expression_streams(expr, stream);
+            evaluator::template run<E, tensor_impl>(expr, *this, stream);
+            record_stream(stream);
+            return *this;
+        }
     }
 
     // Same as operator=(scalar), but on the given CUDA/HIP stream. See assign_async().
@@ -1447,54 +1470,6 @@ public:
             storage_);
     }
 
-#if 0
-    // -----------------------------------------------------------------------
-    // Matrix operations (2-D)
-    // -----------------------------------------------------------------------
-
-    // Called by matrix_multiplication_expression::evaluate() with *this as output
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void matrix_multiplication(
-        bool          trA,
-        bool          trB,
-        tensor_impl const& A,
-        tensor_impl const& B) noexcept
-    {
-        const size_t colsA = A.rank() >= 2 ? A.dimension(1) : 1;
-        const size_t colsB = B.rank() >= 2 ? B.dimension(1) : 1;
-        const size_t ldA   = trA ? 1 : colsA;
-        const size_t ldB   = trB ? 1 : colsB;
-
-        vectorization::matrix_multiplication(
-            trA, trB,
-            dimension(0), dimension(1),
-            trA ? A.dimension(0) : colsA,
-            A.data(), ldA,
-            B.data(), ldB,
-            data(), dimension(1));
-    }
-
-    // Called by matrix_transpose_expression::evaluate()
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void matrix_transpose(tensor_impl const& A)
-    {
-        clone(A);
-        vectorization::matrix_transpose(A.dimension(0), A.dimension(1), data());
-        if (sizes_and_strides_.size() >= 2)
-        {
-            // Swap shape dims 0 and 1, then recompute strides.
-            const int64_t tmp = sizes_and_strides_.size_at_unchecked(0);
-            sizes_and_strides_.size_at_unchecked(0) = sizes_and_strides_.size_at_unchecked(1);
-            sizes_and_strides_.size_at_unchecked(1) = tmp;
-            dimensions_type dims(sizes_and_strides_.sizes_begin(), sizes_and_strides_.sizes_end());
-            set_shape(dims);
-        }
-    }
-
-    friend auto transpose(tensor_impl const& rhs)
-    {
-        return matrix_transpose_expression<tensor_impl>(rhs);
-    }
-#endif
-
     // -----------------------------------------------------------------------
     // Comparison / predicates
     // -----------------------------------------------------------------------
@@ -2041,7 +2016,14 @@ private:
         storage_ = memory::retained_ptr<value_t>(std::move(owner));
         set_shape(dims);
         recompute_cpu_simd_alignment_state();
-        evaluator::template run<E, tensor_impl>(expr, *this, stream);
+        if constexpr (contains_product<remove_cvref_t<E>>::value)
+        {
+            assign(expr);
+        }
+        else
+        {
+            evaluator::template run<E, tensor_impl>(expr, *this, stream);
+        }
     }
 
     template <typename U, bool V> void stamp_contiguous_shape(tensor_impl<U, V> const& src)

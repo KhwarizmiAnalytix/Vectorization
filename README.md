@@ -13,7 +13,7 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-Dependencies are pinned Git submodules in `ThirdParty`: Memory, Logging, Scalars,
+Dependencies are pinned Git submodules in `ThirdParty`: Memory, Logging, Scalars, LinearAlgebra,
 googletest, and benchmark. Logging owns fmt, Memory owns mimalloc, and Scalars
 owns SVML, SLEEF and Accelerate; initialize nested submodules with `--recursive`.
 Profiler is optional and resolved through `find_package(Profiler)`.
@@ -82,6 +82,44 @@ CI pins clang-tidy to LLVM 19 on Linux AVX2 and macOS NEON + Metal, with
 versions; select the intended binary with `CLANG_TIDY_PATH` in CMake.
 CUDA/HIP device translation units are built in their GPU jobs; they are not
 analyzed by the clang-tidy jobs. Optional LibTorch/MKL paths require their SDKs.
+
+## Matrix product expressions
+
+```cpp
+#include "terminals/tensor.h"
+
+vectorization::tensor<float> a{{1, 2}, {3, 4}};
+vectorization::tensor<float> b{{1, 0}, {0, 1}};
+vectorization::tensor<float> bias{1, 2};
+vectorization::tensor<float> out(2, 2);
+out = ::exp(vectorization::linalg::matmul(a, b) + bias);
+out.noalias() += vectorization::matmul(a, b);
+vectorization::matmul_out(out, a, b, 2.0f, 1.0f); // out = 2 * (a @ b) + out
+```
+
+`matmul` and `bmm` build lazy expressions; each product occurrence is evaluated
+once before the surrounding elementwise pass. `exp`, `sqr`, `sqrt`, `log`,
+arithmetic, broadcasting and whole-expression reductions accept products.
+Saved expressions retain their input storage, including temporary owners and views.
+`*` remains elementwise.
+
+The initial adapter supports CPU float/double. `matmul` promotes vectors and
+broadcasts leading batch dimensions; `bmm` requires two rank-3 inputs with equal
+batch counts. `dot` requires two vectors and returns a host scalar. Owners,
+mutable views and const views are accepted with matching element types.
+
+Assignment preserves the destination's shape and storage. Product/input overlap
+uses a temporary; `matmul_out` rejects overlap. `noalias()` asserts disjoint
+inputs (checked in Debug) and always validates destination injectivity. Compatible
+row-major and transposed layouts pass their leading dimensions to LinearAlgebra;
+other layouts are packed or copied through an intermediate.
+
+The selected CPU LinearAlgebra backend performs GEMM. Vectors and batches use
+promoted or repeated GEMM until the planned upstream GEMV/DOT and batched APIs
+arrive. Non-default alpha/beta and compound product expressions currently use
+intermediates; epilogue optimization and allocation-count gates remain open.
+GPU products fail explicitly. Remaining capabilities are tracked in the
+[LinearAlgebra integration plan](docs/vectorization_design_plan.md#11-linearalgebra-adapter).
 
 ## Whole-expression reductions
 

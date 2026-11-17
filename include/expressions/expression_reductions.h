@@ -98,94 +98,128 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto reduce_expression_impl(E const& expre
         return result;
     }
 
-    size_t       i = 0;
-    const size_t n = expression.size();
-#if VECTORIZATION_VECTORIZED
-    using S                     = simd<T>;
-    constexpr size_t length     = E::length();
-    constexpr size_t packet     = VECTORIZATION_PACKET_SIZE < 4 ? 4 : VECTORIZATION_PACKET_SIZE;
-    constexpr size_t block      = length * packet;
-    const size_t     vector_end = n - n % length;
-    while (i < vector_end)
+    // Packed operands (reduce_strided handled the rest): reduce over pointer-only
+    // leaves, as the elementwise evaluator does.
+    const auto flat          = lower_flat(expression);
+    using F                  = remove_cvref_t<decltype(flat)>;
+    const size_t n           = expression.size();
+    size_t       i           = 0;
+    auto         scalar_step = [&](size_t k)
     {
-        // Bounded count batches keep each float lane exact. Convert each lane
-        // to uint64_t before merging; never sum a large count in float.
-        const size_t remaining = vector_end - i;
-        const size_t batch =
-            reduce_is_count<Op> && remaining > 4096 * length ? 4096 * length : remaining;
-        const size_t       end = i + batch;
-        std::array<typename S::simd_t, packet> accumulators;
-        unroll<packet>(
-            [&](auto k)
-            {
-                accumulators[decltype(k)::value] =
-                    S::set(static_cast<T>(reduce_identity<acc_t, Op>()));
-            });
-        auto update = [&](size_t k, size_t offset)
+        const T x = expression_loader<F, false, false>::evaluate(flat, k);
+        result    = reduce_combine<acc_t, Op>(result, reduce_transform<T, Op>(x));
+    };
+#if VECTORIZATION_VECTORIZED
+    using S                         = simd<T>;
+    constexpr size_t         length = S::size;
+    constexpr size_t         packet = VECTORIZATION_PACKET_SIZE < 4 ? 4 : VECTORIZATION_PACKET_SIZE;
+    constexpr size_t         block  = length * packet;
+    constexpr std::uintptr_t simd_align = alignof(typename S::simd_t);
+
+    // Alignment start and end: a scalar head up to the first SIMD-aligned element of
+    // the first operand, then a SIMD body of whole registers, then the scalar tail.
+    // When every operand shares that alignment the body uses aligned loads.
+    void const* const anchor  = first_flat_leaf(flat);
+    const bool        aligned = anchor != nullptr && leaves_co_aligned(flat, anchor, simd_align);
+    const size_t      head =
+        aligned ? align_head(static_cast<T const*>(anchor), n, simd_align) : size_t{0};
+    for (; i < head; ++i)
+    {
+        scalar_step(i);
+    }
+    const size_t vector_end = i + ((n - i) / length) * length;
+
+    auto vector_body = [&](auto aligned_tag)
+    {
+        constexpr bool A = decltype(aligned_tag)::value;
+        while (i < vector_end)
         {
-            auto x = expression_loader<E, true, false>::evaluate(expression, offset);
-            // Comparison expressions produce predicates, including on ISAs
-            // whose predicate and numeric register types happen to coincide.
-            using scalar_result =
-                decltype(expression_loader<E, false, false>::evaluate(expression, 0));
-            if constexpr (std::is_same_v<scalar_result, bool>)
+            // Bounded count batches keep each float lane exact. Convert each lane
+            // to uint64_t before merging; never sum a large count in float.
+            const size_t remaining = vector_end - i;
+            const size_t batch =
+                reduce_is_count<Op> && remaining > 4096 * length ? 4096 * length : remaining;
+            const size_t                           end = i + batch;
+            std::array<typename S::simd_t, packet> accumulators;
+            unroll<packet>(
+                [&](auto k)
+                {
+                    accumulators[decltype(k)::value] =
+                        S::set(static_cast<T>(reduce_identity<acc_t, Op>()));
+                });
+            auto update = [&](size_t k, size_t offset)
             {
-                accumulators[k] = reduce_packet_combine<T, Op>(accumulators[k],
-                    reduce_packet_transform<T, Op>(S::if_else(x, S::set(T(1)), S::set(T(0)))));
+                auto x = expression_loader<F, true, A>::evaluate(flat, offset);
+                // Comparison expressions produce predicates, including on ISAs
+                // whose predicate and numeric register types happen to coincide.
+                using scalar_result =
+                    decltype(expression_loader<F, false, false>::evaluate(flat, 0));
+                if constexpr (std::is_same_v<scalar_result, bool>)
+                {
+                    accumulators[k] = reduce_packet_combine<T, Op>(accumulators[k],
+                        reduce_packet_transform<T, Op>(S::if_else(x, S::set(T(1)), S::set(T(0)))));
+                }
+                else
+                {
+                    accumulators[k] = reduce_packet_combine<T, Op>(
+                        accumulators[k], reduce_packet_transform<T, Op>(x));
+                }
+            };
+            for (; end - i >= block; i += block)
+            {
+                unroll<packet>(
+                    [&](auto k) { update(decltype(k)::value, i + decltype(k)::value * length); });
+            }
+            for (; i < end; i += length)
+            {
+                update(0, i);
+            }
+            if constexpr (reduce_is_count<Op> || Op == reduce_op::product)
+            {
+                std::array<T, length> lanes;
+                for (size_t k = 0; k < packet; ++k)
+                {
+                    S::storeu(accumulators[k], lanes.data());
+                    for (size_t lane = 0; lane < length; ++lane)
+                    {
+                        result = reduce_combine<acc_t, Op>(result, static_cast<acc_t>(lanes[lane]));
+                    }
+                }
             }
             else
             {
-                accumulators[k] = reduce_packet_combine<T, Op>(
-                    accumulators[k], reduce_packet_transform<T, Op>(x));
-            }
-        };
-        for (; end - i >= block; i += block)
-        {
-            unroll<packet>(
-                [&](auto k) { update(decltype(k)::value, i + decltype(k)::value * length); });
-        }
-        for (; i < end; i += length)
-        {
-            update(0, i);
-        }
-        if constexpr (reduce_is_count<Op> || Op == reduce_op::product)
-        {
-            std::array<T, length> lanes;
-            for (size_t k = 0; k < packet; ++k)
-            {
-                S::storeu(accumulators[k], lanes.data());
-                for (size_t lane = 0; lane < length; ++lane)
+                auto combined = accumulators[0];
+                for (size_t k = 1; k < packet; ++k)
                 {
-                    result = reduce_combine<acc_t, Op>(result, static_cast<acc_t>(lanes[lane]));
+                    combined = reduce_packet_combine<T, Op>(combined, accumulators[k]);
+                }
+                if constexpr (Op == reduce_op::all)
+                {
+                    result = reduce_combine<acc_t, Op>(result, S::hmin(combined));
+                }
+                else if constexpr (Op == reduce_op::any)
+                {
+                    result = reduce_combine<acc_t, Op>(result, S::hmax(combined));
+                }
+                else
+                {
+                    result += static_cast<T>(S::accumulate(combined));
                 }
             }
         }
-        else
-        {
-            auto combined = accumulators[0];
-            for (size_t k = 1; k < packet; ++k)
-            {
-                combined = reduce_packet_combine<T, Op>(combined, accumulators[k]);
-            }
-            if constexpr (Op == reduce_op::all)
-            {
-                result = reduce_combine<acc_t, Op>(result, S::hmin(combined));
-            }
-            else if constexpr (Op == reduce_op::any)
-            {
-                result = reduce_combine<acc_t, Op>(result, S::hmax(combined));
-            }
-            else
-            {
-                result += static_cast<T>(S::accumulate(combined));
-            }
-        }
+    };
+    if (aligned)
+    {
+        vector_body(std::true_type{});
+    }
+    else
+    {
+        vector_body(std::false_type{});
     }
 #endif
     for (; i < n; ++i)
     {
-        const T x = expression_loader<E, false, false>::evaluate(expression, i);
-        result    = reduce_combine<acc_t, Op>(result, reduce_transform<T, Op>(x));
+        scalar_step(i);
     }
     return result;
 }

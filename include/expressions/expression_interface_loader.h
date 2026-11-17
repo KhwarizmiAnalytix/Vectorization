@@ -70,6 +70,28 @@ public:
                 return expr.ptr[static_cast<int64_t>(index) * expr.stride];
             }
         }
+        else if constexpr (vectorization::is_flat_ref<rmv_lhs>::value)
+        {
+            // Packed leaf of the CPU flat fast path: element `index` is ptr[index].
+#if VECTORIZATION_VECTORIZED
+            if constexpr (vectorize)
+            {
+                using value_t = typename rmv_lhs::value_type;
+                if constexpr (aligned)
+                {
+                    return simd<value_t>::load(expr.ptr + index);
+                }
+                else
+                {
+                    return simd<value_t>::loadu(expr.ptr + index);
+                }
+            }
+            else
+#endif
+            {
+                return expr.ptr[index];
+            }
+        }
         else if constexpr (vectorization::is_base_expression<rmv_lhs>::value)
         {
             if constexpr (vectorize)
@@ -113,9 +135,10 @@ public:
     VECTORIZATION_FUNCTION_ATTRIBUTE static void prefetch(
         rmv_lhs const& expr, size_t index) noexcept
     {
-        if constexpr (vectorization::is_row_ref<rmv_lhs>::value)
+        if constexpr (vectorization::is_row_ref<rmv_lhs>::value ||
+                      vectorization::is_flat_ref<rmv_lhs>::value)
         {
-            // The planner owns prefetch for row kernels.
+            // The planner and the flat kernel own prefetch for their leaves.
         }
         else if constexpr (vectorization::is_base_expression<rmv_lhs>::value)
         {

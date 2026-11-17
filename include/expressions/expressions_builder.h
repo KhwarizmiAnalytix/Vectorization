@@ -208,6 +208,72 @@ MACRO_EXPRESSION_FUNCTION_3_ARG(if_else);
 //------------------------------------------------------------------------------------------------
 namespace vectorization
 {
+namespace detail
+{
+template <typename E> struct is_mul_node : std::false_type
+{
+};
+
+template <typename L, typename R>
+struct is_mul_node<binary_expression<L, R, mul_evaluator>> : std::true_type
+{
+};
+
+// True when `E` is a floating-point `x * y` node that `E + z` contracts into
+// fma(x, y, z); see VECTORIZATION_FUSE_MUL_ADD.
+template <typename E, typename = void> struct fusable_mul : std::false_type
+{
+};
+
+template <typename E>
+struct fusable_mul<E, std::enable_if_t<is_mul_node<remove_cvref_t<E>>::value>>
+    : std::bool_constant<VECTORIZATION_FUSE_MUL_ADD &&
+                         std::is_floating_point_v<
+                             typename scalar_type<remove_cvref_t<E>, remove_cvref_t<E>>::value>>
+{
+};
+
+// fma(x, y, z) from the `x * y` node `m` and addend `z`. An rvalue `m` gives up its
+// stored (already retained) leaves instead of copying them.
+template <typename M, typename Z> VECTORIZATION_FUNCTION_ATTRIBUTE auto fuse_mul_add(M&& m, Z&& z)
+{
+    using x_t    = remove_cvref_t<decltype(m.lhs())>;
+    using y_t    = remove_cvref_t<decltype(m.rhs())>;
+    using result = trinary_expression<x_t, y_t, remove_cvref_t<Z>, fma_evaluator>;
+    if constexpr (std::is_lvalue_reference_v<M> || std::is_const_v<std::remove_reference_t<M>>)
+    {
+        return result(forward_operands_t{}, m.lhs(), m.rhs(), std::forward<Z>(z));
+    }
+    else
+    {
+        return result(forward_operands_t{},
+            std::move(m.mutable_lhs()),
+            std::move(m.mutable_rhs()),
+            std::forward<Z>(z));
+    }
+}
+
+// `lhs + rhs`. LHS/RHS are the operator's deduced template arguments, so the unfused
+// node has the same type as every other binary operator builds.
+template <typename LHS, typename RHS, typename A, typename B>
+VECTORIZATION_FUNCTION_ATTRIBUTE auto make_add(A&& lhs, B&& rhs)
+{
+    if constexpr (fusable_mul<A>::value)
+    {
+        return fuse_mul_add(std::forward<A>(lhs), std::forward<B>(rhs));
+    }
+    else if constexpr (fusable_mul<B>::value)
+    {
+        return fuse_mul_add(std::forward<B>(rhs), std::forward<A>(lhs));
+    }
+    else
+    {
+        return binary_expression<LHS, RHS, add_evaluator>(
+            std::forward<A>(lhs), std::forward<B>(rhs));
+    }
+}
+}  // namespace detail
+
 // land/lor/lxor evaluators (and thus these operators) are only compiled when
 // VECTORIZATION_VECTORIZED=1; see expressions_functors.h for the full rationale.
 #if VECTORIZATION_VECTORIZED
@@ -221,7 +287,28 @@ MACRO_EXPRESSION_OPERATOR_2_ARG(cmpge, >=);
 MACRO_EXPRESSION_OPERATOR_2_ARG(cmple, <=);
 MACRO_EXPRESSION_OPERATOR_2_ARG(cmpeq, ==);
 MACRO_EXPRESSION_OPERATOR_2_ARG(cmpne, !=);
-MACRO_EXPRESSION_OPERATOR_2_ARG(add, +);
+
+// `+` contracts a floating-point `x * y` operand into fma (see detail::make_add).
+template <typename LHS,
+    typename RHS,
+    std::enable_if_t<vectorization::is_expression<LHS>::value ||
+                         vectorization::is_expression<RHS>::value,
+        bool> = true>
+VECTORIZATION_FUNCTION_ATTRIBUTE auto operator+(LHS const& lhs, RHS const& rhs)
+{
+    return detail::make_add<LHS, RHS>(lhs, rhs);
+}
+
+template <typename LHS,
+    typename RHS,
+    std::enable_if_t<vectorization::is_expression<LHS>::value ||
+                         vectorization::is_expression<RHS>::value,
+        bool> = true>
+VECTORIZATION_FUNCTION_ATTRIBUTE auto operator+(LHS&& lhs, RHS&& rhs)
+{
+    return detail::make_add<LHS, RHS>(std::forward<LHS>(lhs), std::forward<RHS>(rhs));
+}
+
 MACRO_EXPRESSION_OPERATOR_2_ARG(sub, -);
 MACRO_EXPRESSION_OPERATOR_2_ARG(mul, *);
 MACRO_EXPRESSION_OPERATOR_2_ARG(div, /);
@@ -235,9 +322,20 @@ MACRO_EXPRESSION_OPERATOR_2_ARG(div, /);
         std::enable_if_t<vectorization::is_base_expression<LHS>::value, int> = 0>                  \
     VECTORIZATION_FUNCTION_ATTRIBUTE void OPERATOR(symbol)(LHS ref lhs, RHS const ref rhs)         \
     {                                                                                              \
-        lhs =                                                                                      \
-            vectorization::binary_expression<LHS, RHS, vectorization::MACRO_EVALUATOR_SUFIX(op)>(  \
-                static_cast<LHS const&>(lhs), static_cast<RHS const&>(rhs));                       \
+        /* `z += x * y` contracts like `z = z + x * y` (see VECTORIZATION_FUSE_MUL_ADD). */        \
+        if constexpr (std::is_same_v<vectorization::MACRO_EVALUATOR_SUFIX(op),                     \
+                          vectorization::madd_evaluator> &&                                        \
+                      vectorization::detail::fusable_mul<RHS>::value)                              \
+        {                                                                                          \
+            lhs = vectorization::detail::fuse_mul_add(                                             \
+                static_cast<RHS const&>(rhs), static_cast<LHS const&>(lhs));                       \
+        }                                                                                          \
+        else                                                                                       \
+        {                                                                                          \
+            lhs = vectorization::                                                                  \
+                binary_expression<LHS, RHS, vectorization::MACRO_EVALUATOR_SUFIX(op)>(             \
+                    static_cast<LHS const&>(lhs), static_cast<RHS const&>(rhs));                   \
+        }                                                                                          \
     }
 
 #define MACRO_EXPRESSION_MOPERATOR_2_ARG(op, symbol)                                               \

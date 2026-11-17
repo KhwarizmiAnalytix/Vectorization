@@ -158,6 +158,20 @@ inline constexpr std::size_t VECTORIZATION_ALIGNMENT = 64;
 #endif
 static_assert(VECTORIZATION_PACKET_SIZE >= 1, "VECTORIZATION_PACKET_SIZE must be >= 1");
 
+// Contract floating-point `x * y + z` (and `z + x * y`, `z += x * y`) into fma(x, y, z) when
+// building the expression, as compilers do for scalar code by default
+// (-ffp-contract=on). The fused result is rounded once, so it can differ from separate
+// multiply-then-add in the last bit. Enabled only where the CPU has a hardware FMA: there
+// simd<T>::fma is a single instruction and the scalar tail's std::fma is not a library
+// emulation. Define VECTORIZATION_FUSE_MUL_ADD=0 to keep separate rounding.
+#ifndef VECTORIZATION_FUSE_MUL_ADD
+#if defined(__FMA__) || defined(__aarch64__) || defined(_M_ARM64)
+#define VECTORIZATION_FUSE_MUL_ADD 1
+#else
+#define VECTORIZATION_FUSE_MUL_ADD 0
+#endif
+#endif
+
 // Logging uses fmt-style placeholders ({}) in format strings. Include logger.h first
 // (unique to Logging) so LOGGING_LOG is always defined. Include Logging's exception
 // header explicitly. VECTORIZATION_LOGF / VECTORIZATION_CHECK / VECTORIZATION_THROW

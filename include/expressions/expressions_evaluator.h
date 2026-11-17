@@ -129,10 +129,11 @@ private:
     // over the flat range [begin, end) of `data[]` using unaligned stores.
     // Called from run() directly (single-threaded) and via parallel_for (threaded).
     // VectorLength is simd<value_t>::size — passed as a template arg because this
-    // helper doesn't have access to the destination tensor type.
+    // helper doesn't have access to the destination tensor type. `expr` is a flat_ref
+    // tree taken by value, for the same reason as in run_flat().
     template <typename E, typename value_t, size_t VectorLength>
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE static void run_chunk_contiguous(
-        E const& expr, value_t* data, size_t begin, size_t end) noexcept
+        E const expr, value_t* data, size_t begin, size_t end) noexcept
     {
         size_t i = begin;
 #if VECTORIZATION_VECTORIZED
@@ -257,64 +258,85 @@ public:
             return;
         }
 
-        auto*  data = rhs.data();
-        size_t n    = rhs.size();
-        size_t i    = 0;
-
-#if VECTORIZATION_VECTORIZED
-        using value_t  = typename vectorization::scalar_type<T, T>::value;
         using raw_dest = vectorization::remove_cvref_t<T>;
         static_assert(vectorization::is_base_expression<raw_dest>::value,
-            "expressions_evaluator::run (vectorized) requires a tensor destination");
+            "expressions_evaluator::run requires a tensor destination");
+        // Pointer-only leaves, passed by value so the hot loop keeps them in registers.
+        const auto lowered = detail::lower_flat(expr);
+        auto*      data    = rhs.data();
+#if VECTORIZATION_VECTORIZED
+        // Sources at the same offset within a SIMD block as the destination are aligned
+        // wherever the destination is, so the aligned body can use aligned loads too.
+        using value_t                       = typename vectorization::scalar_type<T, T>::value;
+        constexpr std::uintptr_t simd_align = alignof(typename simd<value_t>::simd_t);
+        if (detail::leaves_co_aligned(lowered, data, simd_align))
+        {
+            run_flat<T::length(), true>(
+                lowered, data, rhs.size(), rhs.align_start(), rhs.align_end());
+            return;
+        }
+#endif
+        run_flat<T::length(), false>(lowered, data, rhs.size(), rhs.align_start(), rhs.align_end());
+    }
 
+private:
+    // Contiguous CPU kernel for `data[0, n) = expr`, where every leaf of `expr` is a
+    // flat_ref. `cap` is the first SIMD-aligned destination element and `aligned_end`
+    // the end of the aligned body (tensor::align_start / align_end): [0, cap) is a
+    // scalar peel, [cap, aligned_end) uses aligned stores, and the rest is a scalar
+    // tail. SourcesAligned selects aligned loads in that body; the caller sets it
+    // only when every leaf is co-aligned with `data` (detail::leaves_co_aligned).
+    // `expr` is taken by value: its leaf pointers must not be reachable through
+    // memory a store to `data` could alias, or the compiler reloads them on every
+    // iteration.
+    template <size_t VectorLength, bool SourcesAligned, typename E, typename value_t>
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE static void run_flat(
+        E const expr, value_t* data, size_t n, size_t cap, size_t aligned_end) noexcept
+    {
+        size_t i = 0;
+
+#if VECTORIZATION_VECTORIZED
         // length == simd<value_t>::size: one SIMD register per loop step.
         // block == length * VECTORIZATION_PACKET_SIZE: the unrolled step below processes
         // this many elements per iteration when VECTORIZATION_PACKET_SIZE > 1.
-        constexpr auto        length = T::length();
+        constexpr size_t      length = VectorLength;
         constexpr std::size_t packet = VECTORIZATION_PACKET_SIZE;
         constexpr std::size_t block  = length * packet;
 
         // Scalar peel to the first SIMD-aligned destination element.
-        const size_t cap = rhs.align_start();
         for (; i < cap; ++i)
         {
             data[i] = vectorization::expression_loader<E, false, false>::evaluate(expr, i);
         }
 
-        if (i >= n)
-        {
-            return;
-        }
-
         // Aligned destination body: for large tensors split across threads; each
         // chunk uses unaligned stores (loadu/storeu on aligned data is free on
         // current x86 and Arm — C6). For small tensors stay single-threaded.
-        static constexpr int64_t kGrainSize = 32768;  // elements, as in PyTorch
-
 #if VECTORIZATION_ENABLE_PARALLEL
-        if (static_cast<int64_t>(n - i) >= kGrainSize)
+        static constexpr int64_t kGrainSize = 32768;  // elements, as in PyTorch
+        if (i < n && static_cast<int64_t>(n - i) >= kGrainSize)
         {
             // Parallel path: every chunk is run_chunk_contiguous over [begin, end).
             // The scalar peel [0, cap) was already handled above, so chunks start at i.
             const size_t aligned_begin = i;
             const size_t n_remain      = n - aligned_begin;
-            auto         _chunk_fn     = [&](size_t begin, size_t end)
+            auto         _chunk_fn     = [expr, data, aligned_begin](size_t begin, size_t end)
             {
                 run_chunk_contiguous<E, value_t, length>(
                     expr, data, aligned_begin + begin, aligned_begin + end);
             };
             parallel_tools::parallel_for(
                 size_t{0}, n_remain, static_cast<size_t>(kGrainSize), _chunk_fn);
-            i = n;  // scalar tail below will be a no-op
+            return;
         }
-        else
 #endif
+        if (i < n)
         {
-            // Single-threaded path with aligned stores in the destination-aligned body.
-            const size_t loop_peel = rhs.align_end();
+            // Single-threaded path: aligned stores (and, when SourcesAligned, aligned loads)
+            // in the destination-aligned body.
             if constexpr (packet > 1)
             {
-                const size_t block_end = i + ((loop_peel - i) / block) * block;
+                const size_t block_end = i + ((aligned_end - i) / block) * block;
                 for (; i < block_end; i += block)
                 {
                     detail::unroll<packet>(
@@ -322,16 +344,16 @@ public:
                         {
                             constexpr size_t off = decltype(k)::value * length;
                             const auto       temp =
-                                vectorization::expression_loader<E, true, false>::evaluate(
+                                vectorization::expression_loader<E, true, SourcesAligned>::evaluate(
                                     expr, i + off);
                             simd<value_t>::store(temp, &data[i + off]);
                         });
                 }
             }
-            for (; i < loop_peel; i += length)
+            for (; i < aligned_end; i += length)
             {
                 const auto temp0 =
-                    vectorization::expression_loader<E, true, false>::evaluate(expr, i);
+                    vectorization::expression_loader<E, true, SourcesAligned>::evaluate(expr, i);
                 simd<value_t>::store(temp0, &data[i]);
             }
 
@@ -360,6 +382,9 @@ public:
                 simd<value_t>::storeu(temp, &data[i]);
             }
         }
+#else
+        (void)cap;
+        (void)aligned_end;
 #endif
 
         for (; i < n; ++i)
@@ -368,6 +393,7 @@ public:
         }
     }
 
+public:
     //================================================================================================
     template <typename E, typename T>
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE static void run(

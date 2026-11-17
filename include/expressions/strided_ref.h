@@ -190,6 +190,27 @@ template <typename T> struct row_ref
     int64_t  stride{0};
 };
 
+// Leaf of the CPU flat fast path (expressions_evaluator.h): every operand is packed
+// with the destination's element count, so element i is ptr[i]. The evaluator
+// lowers the tree to these leaves and passes it to the hot loop by value: the
+// pointers then live in registers instead of being reloaded after every store
+// (clang-cl and MSVC do not use type-based alias analysis, so a float store
+// may alias a pointer held in memory).
+template <typename T> struct flat_ref
+{
+    using value_type = T;
+
+    T const* ptr{nullptr};
+};
+
+template <typename T> struct is_flat_ref : std::false_type
+{
+};
+
+template <typename T> struct is_flat_ref<flat_ref<T>> : std::true_type
+{
+};
+
 template <typename T> struct is_strided_ref : std::false_type
 {
 };

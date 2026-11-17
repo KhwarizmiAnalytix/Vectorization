@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 
 #include "terminals/tensor.h"
 
@@ -75,6 +76,43 @@ template <typename T, bool Raw, bool NoAlias = false> void CPU_Triad(benchmark::
     report_traffic<T>(state, n, 3);
 }
 
+// Sum of use_count() over the retained tensor leaves of an expression tree, so the
+// count does not depend on how the builder shapes the tree (e.g. `a + 3 * b`
+// contracting into fma(3, b, a) under VECTORIZATION_FUSE_MUL_ADD).
+template <typename T> struct is_retained_ref : std::false_type
+{
+};
+
+template <typename T> struct is_retained_ref<vectorization::retained_ref<T>> : std::true_type
+{
+};
+
+template <typename E> int64_t retained_use_count(E const& expr)
+{
+    using raw = vectorization::remove_cvref_t<E>;
+    if constexpr (vectorization::is_pure_expression<raw>::value)
+    {
+        int64_t count = retained_use_count(expr.rhs());
+        if constexpr (VECTORIZATION_EXPR_HAS_LHS(expr))
+        {
+            count += retained_use_count(expr.lhs());
+        }
+        if constexpr (VECTORIZATION_EXPR_HAS_MHS(expr))
+        {
+            count += retained_use_count(expr.mhs());
+        }
+        return count;
+    }
+    else if constexpr (is_retained_ref<raw>::value)
+    {
+        return expr.storage.use_count();
+    }
+    else
+    {
+        return 0;
+    }
+}
+
 template <typename T> void CPU_ExpressionCapture(benchmark::State& state)
 {
     const auto n = static_cast<std::size_t>(state.range(0));
@@ -87,7 +125,7 @@ template <typename T> void CPU_ExpressionCapture(benchmark::State& state)
     {
         const auto base_a     = a.as_view();
         auto       expression = a + T(3) * b;
-        retains = expression.lhs().storage.use_count() + expression.rhs().rhs().storage.use_count();
+        retains               = retained_use_count(expression);
         // Subtract the owners' references and the probe view held above.
         retains -= 3;
         benchmark::DoNotOptimize(base_a);

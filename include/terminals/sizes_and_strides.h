@@ -38,7 +38,10 @@ namespace vectorization
 // 1 size_t for the size
 // 5 eightbytes of inline sizes and 5 eightbytes of inline strides, OR pointer
 // to out-of-line array
-class VECTORIZATION_API sizes_and_strides
+// Only the out-of-line resizeSlowPath() is exported. Exporting the whole class makes
+// clang-cl call the trivial inline accessors (sizes_data(), strides_data(), ...) through
+// the DLL import table instead of inlining them, which every expression pays for.
+class sizes_and_strides
 {
 public:
     static constexpr size_t MAX_INLINE_SIZE = 5;
@@ -329,7 +332,7 @@ public:
         }
     }
 
-    void resizeSlowPath(size_t newSize, size_t oldSize);
+    VECTORIZATION_API void resizeSlowPath(size_t newSize, size_t oldSize);
 
 private:
     bool isInline() const noexcept { return size_ <= MAX_INLINE_SIZE; }

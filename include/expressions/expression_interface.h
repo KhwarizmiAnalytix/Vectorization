@@ -56,6 +56,12 @@ template <typename T> struct stored_operand<T, true>
 
 template <typename T> using stored_operand_t = typename stored_operand<T>::type;
 
+// Tag for trinary_expression's forwarding constructor.
+struct forward_operands_t
+{
+    explicit forward_operands_t() = default;
+};
+
 // Tensor leaves retain their allocation and snapshot shape/strides. Temporaries
 // and views therefore stay valid for the lifetime of a saved expression.
 template <typename T> VECTORIZATION_FUNCTION_ATTRIBUTE stored_operand_t<T> store_operand(T&& x)
@@ -292,6 +298,16 @@ public:
     VECTORIZATION_FUNCTION_ATTRIBUTE trinary_expression(rmv_lhs&& lhs, rmv_mhs&& mhs, rmv_rhs&& rhs)
         : lhs_(store_operand(std::move(lhs))), mhs_(store_operand(std::move(mhs))),
           rhs_(store_operand(std::move(rhs)))
+    {
+    }
+
+    // Builds a node from operands of any value category, e.g. the stored leaves of an
+    // rvalue `x * y` node that `+` contracts into fma (expressions_builder.h). Rvalue
+    // retained leaves are moved, so the contraction adds no reference-count traffic.
+    template <typename L, typename M, typename R>
+    VECTORIZATION_FUNCTION_ATTRIBUTE trinary_expression(forward_operands_t, L&& l, M&& m, R&& r)
+        : lhs_(store_operand(std::forward<L>(l))), mhs_(store_operand(std::forward<M>(m))),
+          rhs_(store_operand(std::forward<R>(r)))
     {
     }
 

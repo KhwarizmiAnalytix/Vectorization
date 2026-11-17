@@ -194,6 +194,169 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE row_lowered_t<E> lower_rows(E const& expr)
     }
 }
 
+// Type of an expression whose packed tensor leaves are replaced by flat_ref.
+template <typename E, typename = void> struct flat_ref_lowered
+{
+    using type = E;  // scalars
+};
+
+template <typename T, int MaxRank> struct flat_ref_lowered<strided_ref<T, MaxRank>>
+{
+    using type = flat_ref<std::remove_const_t<T>>;
+};
+
+template <typename T> struct flat_ref_lowered<memory::data_view<T>>
+{
+    using type = flat_ref<std::remove_const_t<T>>;
+};
+
+// Host leaves, so a reduction can lower a user expression or tensor directly
+// without first copying descriptors through lower_raw().
+template <typename T> struct flat_ref_lowered<retained_ref<T>>
+{
+    using type = flat_ref<std::remove_const_t<T>>;
+};
+
+template <typename T, bool IsView> struct flat_ref_lowered<tensor_impl<T, IsView>>
+{
+    using type = flat_ref<std::remove_const_t<T>>;
+};
+
+template <typename E>
+using flat_ref_lowered_t = typename flat_ref_lowered<vectorization::remove_cvref_t<E>>::type;
+
+template <typename L, typename Ev> struct flat_ref_lowered<unary_expression<L, Ev>>
+{
+    using type = unary_expression<flat_ref_lowered_t<stored_operand_t<remove_cvref_t<L>>>, Ev>;
+};
+
+template <typename L, typename R, typename Ev> struct flat_ref_lowered<binary_expression<L, R, Ev>>
+{
+    using type = binary_expression<flat_ref_lowered_t<stored_operand_t<remove_cvref_t<L>>>,
+        flat_ref_lowered_t<stored_operand_t<remove_cvref_t<R>>>,
+        Ev>;
+};
+
+template <typename L, typename M, typename R, typename Ev>
+struct flat_ref_lowered<trinary_expression<L, M, R, Ev>>
+{
+    using type = trinary_expression<flat_ref_lowered_t<stored_operand_t<remove_cvref_t<L>>>,
+        flat_ref_lowered_t<stored_operand_t<remove_cvref_t<M>>>,
+        flat_ref_lowered_t<stored_operand_t<remove_cvref_t<R>>>,
+        Ev>;
+};
+
+// Rebuilds a tree whose leaves all satisfy leaves_flat() with flat_ref leaves
+// holding just the data pointer. Accepts lower_raw() trees, user expressions
+// (retained leaves) and packed tensors.
+template <typename E>
+VECTORIZATION_HOST_FUNCTION_ATTRIBUTE flat_ref_lowered_t<E> lower_flat(E const& expr)
+{
+    using expr_t = vectorization::remove_cvref_t<E>;
+    if constexpr (is_pure_expression<expr_t>::value)
+    {
+        if constexpr (VECTORIZATION_EXPR_HAS_MHS(expr))
+        {
+            return flat_ref_lowered_t<E>(
+                lower_flat(expr.lhs()), lower_flat(expr.mhs()), lower_flat(expr.rhs()));
+        }
+        else if constexpr (VECTORIZATION_EXPR_HAS_LHS(expr))
+        {
+            return flat_ref_lowered_t<E>(lower_flat(expr.lhs()), lower_flat(expr.rhs()));
+        }
+        else
+        {
+            return flat_ref_lowered_t<E>(lower_flat(expr.rhs()));
+        }
+    }
+    else if constexpr (is_strided_ref<expr_t>::value || is_data_view<expr_t>::value ||
+                       is_tensor<expr_t>::value)
+    {
+        return flat_ref_lowered_t<E>{expr.data()};
+    }
+    else
+    {
+        return expr;
+    }
+}
+
+// Address of the first flat_ref leaf of a lower_flat() tree, or nullptr when the
+// tree has none (scalar-only).
+template <typename L>
+VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void const* first_flat_leaf(L const& lowered) noexcept
+{
+    using expr_t = vectorization::remove_cvref_t<L>;
+    if constexpr (is_pure_expression<expr_t>::value)
+    {
+        void const* p = nullptr;
+        if constexpr (VECTORIZATION_EXPR_HAS_LHS(lowered))
+        {
+            p = first_flat_leaf(lowered.lhs());
+        }
+        if constexpr (VECTORIZATION_EXPR_HAS_MHS(lowered))
+        {
+            p = p != nullptr ? p : first_flat_leaf(lowered.mhs());
+        }
+        return p != nullptr ? p : first_flat_leaf(lowered.rhs());
+    }
+    else if constexpr (is_flat_ref<expr_t>::value)
+    {
+        return lowered.ptr;
+    }
+    else
+    {
+        return nullptr;
+    }
+}
+
+// True when every flat_ref leaf has the same offset as `ref` within an
+// `alignment`-byte block (a power of two). Then, for any i where &ref[i] is
+// aligned, so is every leaf's element i, and the SIMD body can use aligned loads.
+template <typename L>
+VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool leaves_co_aligned(
+    L const& lowered, void const* ref, std::uintptr_t alignment) noexcept
+{
+    using expr_t = vectorization::remove_cvref_t<L>;
+    if constexpr (is_pure_expression<expr_t>::value)
+    {
+        bool same = leaves_co_aligned(lowered.rhs(), ref, alignment);
+        if constexpr (VECTORIZATION_EXPR_HAS_LHS(lowered))
+        {
+            same = same && leaves_co_aligned(lowered.lhs(), ref, alignment);
+        }
+        if constexpr (VECTORIZATION_EXPR_HAS_MHS(lowered))
+        {
+            same = same && leaves_co_aligned(lowered.mhs(), ref, alignment);
+        }
+        return same;
+    }
+    else if constexpr (is_flat_ref<expr_t>::value)
+    {
+        const auto a = reinterpret_cast<std::uintptr_t>(lowered.ptr);
+        const auto b = reinterpret_cast<std::uintptr_t>(ref);
+        return ((a ^ b) & (alignment - 1)) == 0;
+    }
+    else
+    {
+        return true;
+    }
+}
+
+// Number of leading elements of `ptr` before the first `alignment`-aligned one,
+// capped at n; n when ptr is not even aligned to its element type.
+template <typename T>
+VECTORIZATION_HOST_FUNCTION_ATTRIBUTE size_t align_head(
+    T const* ptr, size_t n, std::uintptr_t alignment) noexcept
+{
+    const auto address = reinterpret_cast<std::uintptr_t>(ptr);
+    if (address % sizeof(T) != 0)
+    {
+        return n;
+    }
+    const size_t head = ((alignment - (address & (alignment - 1))) & (alignment - 1)) / sizeof(T);
+    return head < n ? head : n;
+}
+
 // Points every row_ref leaf at its element `offsets[op]` and sets its inner stride.
 template <typename L>
 VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void bind_row(

@@ -204,6 +204,7 @@ template <typename E> struct raw_lowered;
 template <typename E> auto lower_raw(E const& expr);
 
 template <typename T> struct row_ref;
+template <typename T> struct flat_ref;
 
 }  // namespace vectorization
 
@@ -238,6 +239,11 @@ template <typename T> struct is_base_expression<retained_ref<T>> : std::true_typ
 };
 
 template <typename value_t> struct is_base_expression<row_ref<value_t>>
+{
+    static constexpr bool value = true;
+};
+
+template <typename value_t> struct is_base_expression<flat_ref<value_t>>
 {
     static constexpr bool value = true;
 };
@@ -437,6 +443,20 @@ struct scalar_type<T,
     row_ref<value_t>,
     typename std::enable_if_t<vectorization::is_fundamental<T>::value
         && !vectorization::is_packet<T>::value>>
+{
+    using value = std::remove_const_t<value_t>;
+};
+
+template <typename value_t, typename T> struct scalar_type<flat_ref<value_t>, T>
+{
+    using value = std::remove_const_t<value_t>;
+};
+
+template <typename T, typename value_t>
+struct scalar_type<T,
+    flat_ref<value_t>,
+    typename std::enable_if_t<vectorization::is_fundamental<T>::value &&
+                              !vectorization::is_packet<T>::value>>
 {
     using value = std::remove_const_t<value_t>;
 };

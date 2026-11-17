@@ -224,41 +224,56 @@ benchmark_tensorbaselines --benchmark_filter='Exp/f32/'   # one case, all implem
 benchmark_tensorbaselines --benchmark_min_time=0.5s       # full run
 ```
 
-Wall time in µs at n = 32,771. Measured with clang-cl 22, AVX2 and SLEEF in a
-Release build, one thread, on a 16-core 3.2 GHz x86-64 machine (48 KiB L1D and
-2 MiB L2 per core). Treat differences under about 10% as noise.
+Wall time in µs at n = 32,771. Measured with clang-cl 22, AVX2 and SVML (the
+default x86 math provider when SLEEF is off) in a Release build, one thread, on a
+16-core 3.2 GHz x86-64 machine (48 KiB L1D and 2 MiB L2 per core). Treat
+differences under about 10% as noise. LibTorch rows were not part of this run.
 
-| Op | f32 Vec. | f32 Loop | f32 Eigen | f32 Torch | f64 Vec. | f64 Loop | f64 Eigen | f64 Torch |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Add `a + b` | 2.25 | 1.97 | 1.98 | 2.60 | 4.29 | 3.81 | 3.82 | 4.52 |
-| Mul `a * b` | 2.16 | 1.93 | 1.92 | 2.57 | 4.24 | 3.83 | 3.87 | 4.44 |
-| Saxpy `2.5a + b` | 2.33 | 1.96 | 1.95 | 2.75 | 4.54 | 3.79 | 3.86 | 4.53 |
-| Fma `a * b + c` | 3.08 | 2.28 | 2.40 | 3.17 | 6.33 | 4.58 | 4.74 | 5.49 |
-| Composite `sqrt(a²+b²) + c` | 4.51 | 4.36 | 4.27 | 16.5 | 17.5 | 17.2 | 16.9 | 40.1 |
-| Exp | 9.95 | 49.3 | 8.41 | 11.8 | 29.3 | 76.4 | 20.1 | 31.6 |
-| Log | 25.2 | 69.1 | 6.12 | 28.7 | 63.7 | 79.8 | 24.5 | 73.1 |
-| Sqrt | 4.30 | 16.8 | 4.24 | 4.75 | 17.2 | 34.0 | 17.1 | 17.6 |
-| Sin | 19.8 | 194 | 8.05 | 17.3 | 44.4 | 224 | 42.1 | 44.7 |
-| Cos | 23.0 | 198 | 8.12 | 16.6 | 45.2 | 218 | 42.5 | 49.1 |
-| Tanh | 49.9 | 200 | 5.28 | 50.1 | 101 | 256 | 19.4 | 106 |
-| Sum | 0.545 | 11.4 | 0.539 | 3.34 | 1.07 | 11.3 | 1.08 | 5.46 |
-| Dot `sum(a * b)` | 1.16 | 11.3 | 1.09 | 12.4 | 2.27 | 11.4 | 2.24 | 12.6 |
+| Op | f32 Vec. | f32 Loop | f32 Eigen | f64 Vec. | f64 Loop | f64 Eigen |
+|---|---:|---:|---:|---:|---:|---:|
+| Add `a + b` | 2.07 | 1.99 | 1.98 | 3.97 | 3.84 | 3.86 |
+| Mul `a * b` | 2.07 | 1.98 | 2.00 | 3.98 | 3.85 | 3.87 |
+| Saxpy `2.5a + b` | 2.09 | 2.01 | 2.00 | 4.00 | 3.85 | 3.91 |
+| Fma `a * b + c` | 2.56 | 2.34 | 2.47 | 4.87 | 4.62 | 4.80 |
+| Composite `sqrt(a²+b²) + c` | 4.66 | 4.58 | 4.42 | 17.4 | 17.1 | 17.1 |
+| Exp | 10.8 | 51.3 | 9.03 | 20.4 | 76.3 | 19.5 |
+| Log | 10.9 | 74.0 | 6.08 | 28.3 | 81.7 | 24.3 |
+| Sqrt | 4.46 | 17.6 | 4.42 | 17.2 | 34.1 | 17.1 |
+| Sin | 19.6 | 203 | 8.17 | 20.3 | 220 | 40.1 |
+| Cos | 19.8 | 210 | 8.11 | 22.1 | 222 | 40.7 |
+| Tanh | 15.1 | 202 | 5.39 | 53.2 | 250 | 18.9 |
+| Sum | 0.550 | 11.3 | 0.548 | 1.09 | 11.5 | 1.09 |
+| Dot `sum(a * b)` | 1.14 | 11.3 | 1.09 | 2.28 | 11.4 | 2.22 |
 
 What the numbers show:
 
-- **Reductions:** Vectorization matches Eigen and is 2–10× faster than LibTorch
-  and 2–20× faster than the scalar loop, which cannot reorder floating-point
-  additions.
-- **Fused expressions:** Vectorization, Eigen and the loop are level.
-  LibTorch is 2–5× slower because it materializes temporaries.
-- **Element-wise arithmetic:** Vectorization is 10–20% behind the
-  auto-vectorized loop and Eigen, and `a * b + c` is about 35% behind.
-- **Small arrays:** each call has about 60 ns of fixed overhead. At 1,027
-  elements, Add takes 0.085 µs against 0.021 µs for the loop.
-- **Transcendentals:** Eigen is 2–10× faster for log, tanh, sin and cos in
-  float, and for log and tanh in double. Vectorization roughly matches LibTorch.
-  The reference check accepts relative errors up to 2e-5 (float), so it does not
-  separate faster approximations from more accurate ones.
+- **Element-wise arithmetic, fused expressions and reductions:** Vectorization
+  is within about 5% of the faster of the auto-vectorized loop and Eigen at
+  n = 32,771 (9% for `a * b + c` in float) and within 4% at n = 1,048,579.
+  Reductions are 10–20× faster than the scalar loop, which cannot reorder
+  floating-point additions.
+- **Multiply-add:** `a * b + c`, `c + a * b` and `c += a * b` build
+  `fma(a, b, c)` when the target has a hardware FMA, as the compiler does for
+  the loop (see `VECTORIZATION_FUSE_MUL_ADD` in
+  `include/common/vectorization_macros.h`). The fused result is rounded once,
+  so it can differ from separate multiply-then-add in the last bit. Define
+  `VECTORIZATION_FUSE_MUL_ADD=0` to keep separate rounding.
+- **Small arrays:** a two-operand expression has about 45 ns of fixed cost. At
+  1,027 elements, Add takes 0.068 µs against 0.021 µs for the loop. About 20 ns
+  of it is reference counting: every tensor leaf retains its storage so a saved
+  expression stays valid after its operands are destroyed (design plan,
+  section 5, capture).
+- **Transcendentals:** Vectorization is level with Eigen for sqrt in both types
+  and exp in double, and about 2× faster for sin and cos in double. Eigen is
+  1.8–2.8× faster for log, sin, cos and tanh in float and for tanh in double,
+  and about 20% faster for exp in float and log in double. Vectorization calls SVML for these; Eigen uses
+  inline polynomial approximations. The reference check accepts relative errors
+  up to 2e-5 (float), so it does not separate faster approximations from more
+  accurate ones.
+- **SLEEF:** with `VECTORIZATION_ENABLE_SLEEF=ON` (`sleef` token), float log
+  (24.5 µs) and tanh (47.8 µs) are 2.3× and 3.2× slower than with SVML, float
+  exp, sin and cos are within about 15%, and every double function is 1.5–2.2×
+  slower. On x86, SVML is the faster provider.
 
 Results depend on the CPU backend, the math provider (SLEEF, SVML or the
 built-in fallback), the compiler and `VECTORIZATION_PACKET_SIZE`. Rerun the

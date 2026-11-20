@@ -215,60 +215,97 @@ each operation on the same inputs through four implementations:
 | `LibTorch` | `torch::*_out` kernel on one thread (only with `VECTORIZATION_ENABLE_LIBTORCH=ON`) |
 
 Rows are named `<Op>/<f32|f64>/<n>/<implementation>` and run at 1,027, 32,771
-and 1,048,579 elements (L1-, L2- and DRAM-sized). Outputs are preallocated.
-Before timing, each result is checked against a double-precision reference,
-and a mismatch reports an error instead of a time.
+and 1,048,579 elements (L1-, L2- and DRAM-sized). Strided rows,
+`<StridedOp>/<f32|f64>/512x509/<implementation>`, reduce or combine a 512 × 509
+window of a 512 × 520 row-major array: a `slice()` view, an Eigen `block()`, or a
+double loop over the parent buffer. Outputs are preallocated. Before timing,
+each result is checked against a double-precision reference (min and max
+exactly), and a mismatch reports an error instead of a time.
 
 ```sh
 benchmark_tensorbaselines --benchmark_filter='Exp/f32/'   # one case, all implementations
+benchmark_tensorbaselines --benchmark_filter='^Strided'   # the strided views
 benchmark_tensorbaselines --benchmark_min_time=0.5s       # full run
 ```
 
-Wall time in µs at n = 32,771. Measured with clang-cl 22, AVX2 and SVML (the
-default x86 math provider when SLEEF is off) in a Release build, one thread, on a
-16-core 3.2 GHz x86-64 machine (48 KiB L1D and 2 MiB L2 per core). Treat
-differences under about 10% as noise. LibTorch rows were not part of this run.
+Wall time in µs at n = 32,771 (strided rows: the whole 512 × 509 window).
+Measured with clang-cl 22, AVX2 and SVML (the default x86 math provider when
+SLEEF is off) in a Release build, one thread pinned to one performance core of
+an 8P + 16E-core x86-64 desktop CPU (48 KiB L1D and 2 MiB L2 per core), median
+of 5 repetitions. Treat differences under about 10% as noise. LibTorch rows
+were not part of this run.
 
 | Op | f32 Vec. | f32 Loop | f32 Eigen | f64 Vec. | f64 Loop | f64 Eigen |
 |---|---:|---:|---:|---:|---:|---:|
-| Add `a + b` | 2.07 | 1.99 | 1.98 | 3.97 | 3.84 | 3.86 |
-| Mul `a * b` | 2.07 | 1.98 | 2.00 | 3.98 | 3.85 | 3.87 |
-| Saxpy `2.5a + b` | 2.09 | 2.01 | 2.00 | 4.00 | 3.85 | 3.91 |
-| Fma `a * b + c` | 2.56 | 2.34 | 2.47 | 4.87 | 4.62 | 4.80 |
-| Composite `sqrt(a²+b²) + c` | 4.66 | 4.58 | 4.42 | 17.4 | 17.1 | 17.1 |
-| Exp | 10.8 | 51.3 | 9.03 | 20.4 | 76.3 | 19.5 |
-| Log | 10.9 | 74.0 | 6.08 | 28.3 | 81.7 | 24.3 |
-| Sqrt | 4.46 | 17.6 | 4.42 | 17.2 | 34.1 | 17.1 |
-| Sin | 19.6 | 203 | 8.17 | 20.3 | 220 | 40.1 |
-| Cos | 19.8 | 210 | 8.11 | 22.1 | 222 | 40.7 |
-| Tanh | 15.1 | 202 | 5.39 | 53.2 | 250 | 18.9 |
-| Sum | 0.550 | 11.3 | 0.548 | 1.09 | 11.5 | 1.09 |
-| Dot `sum(a * b)` | 1.14 | 11.3 | 1.09 | 2.28 | 11.4 | 2.22 |
+| Add `a + b` | 2.02 | 1.97 | 1.96 | 4.01 | 3.91 | 3.92 |
+| Mul `a * b` | 2.02 | 1.97 | 1.96 | 4.02 | 3.91 | 3.92 |
+| Saxpy `2.5a + b` | 2.02 | 1.96 | 1.98 | 4.03 | 3.92 | 3.96 |
+| Fma `a * b + c` | 2.46 | 2.31 | 2.40 | 4.89 | 4.63 | 4.86 |
+| Composite `sqrt(a²+b²) + c` | 4.49 | 4.34 | 4.34 | 17.5 | 17.4 | 17.4 |
+| Exp | 9.6–16.4 | 50.2 | 8.57 | 20.4–32.9 | 76.7 | 19.7 |
+| Log | 9.6–16.5 | 68.7 | 5.56 | 28.4–37.4 | 81.1 | 24.2 |
+| Sqrt | 4.33 | 17.3 | 4.33 | 17.4 | 34.7 | 17.4 |
+| Sin | 17.7 | 195 | 7.65 | 20.3 | 227 | 40.9 |
+| Cos | 17.9 | 203 | 7.63 | 21.8 | 225 | 40.9 |
+| Tanh | 15.1 | 202 | 5.36 | 53.0 | 252 | 18.9 |
+| Sum | 0.562 | 11.6 | 0.556 | 1.11 | 11.5 | 1.11 |
+| Dot `sum(a * b)` | 1.16 | 11.6 | 1.11 | 2.29 | 11.6 | 2.23 |
+| Max `hmax(a)` | 0.728 | 23.1 | 0.722 | 1.45 | 23.1 | 1.45 |
+| Min `hmin(a)` | 0.727 | 23.1 | 0.722 | 1.45 | 23.1 | 1.45 |
+| Strided sum | 5.85 | 92.0 | 5.34 | 12.3–15.4 | 92.3 | 10.7–13.0 |
+| Strided max | 5.99 | 184 | 7.58 | 13.2–15.5 | 184 | 13.1–13.4 |
+| Strided dot `sum(va * vb)` | 12.8–15.9 | 184 | 11.5–12.8 | 46.8–59.8 | 185 | 48.7–61.9 |
+| Strided fma `va * vb + va` | 41.8–52.8 | 40.0–50.1 | 41.1–50.5 | 84.5–101 | 81.4–103 | 84.6–102 |
+
+Ranges are the spread over several full runs on the same build where it
+exceeded the noise level; see the notes on transcendentals and strided views
+below.
 
 What the numbers show:
 
 - **Element-wise arithmetic, fused expressions and reductions:** Vectorization
   is within about 5% of the faster of the auto-vectorized loop and Eigen at
-  n = 32,771 (9% for `a * b + c` in float) and within 4% at n = 1,048,579.
-  Reductions are 10–20× faster than the scalar loop, which cannot reorder
-  floating-point additions.
+  n = 32,771 (7% for `a * b + c` in float) and within 5% at n = 1,048,579.
+  These cases are bound by load/store or cache bandwidth, which all three
+  implementations saturate. Reductions are 10–30× faster than the scalar loop,
+  which cannot reorder floating-point additions.
+- **Min and max:** `hmin`, `hmax` and `accumulate` run on the same four
+  independent SIMD accumulators as `sum` and are level with Eigen's
+  `minCoeff()` / `maxCoeff()`. On x86 they skip NaN elements, as `std::fmin` /
+  `std::fmax` do.
+- **Strided views:** reductions over strided views and broadcast expressions
+  walk the iteration planner's rows: each contiguous row runs the packed SIMD
+  body, rows with a broadcast operand use splatted loads, and accumulators are
+  carried from row to row, so no element index is divided. Strided max is about
+  20% faster than Eigen in float; strided sum and dot are within about 10–25%
+  of Eigen in float. In double the 2.1 MiB parent buffer is just over the 2 MiB
+  L2, and all three implementations vary by up to 30% between runs.
 - **Multiply-add:** `a * b + c`, `c + a * b` and `c += a * b` build
   `fma(a, b, c)` when the target has a hardware FMA, as the compiler does for
   the loop (see `VECTORIZATION_FUSE_MUL_ADD` in
   `include/common/vectorization_macros.h`). The fused result is rounded once,
   so it can differ from separate multiply-then-add in the last bit. Define
   `VECTORIZATION_FUSE_MUL_ADD=0` to keep separate rounding.
-- **Small arrays:** a two-operand expression has about 45 ns of fixed cost. At
-  1,027 elements, Add takes 0.068 µs against 0.021 µs for the loop. About 20 ns
-  of it is reference counting: every tensor leaf retains its storage so a saved
-  expression stays valid after its operands are destroyed (design plan,
-  section 5, capture).
-- **Transcendentals:** Vectorization is level with Eigen for sqrt in both types
-  and exp in double, and about 2× faster for sin and cos in double. Eigen is
-  1.8–2.8× faster for log, sin, cos and tanh in float and for tanh in double,
-  and about 20% faster for exp in float and log in double. Vectorization calls SVML for these; Eigen uses
-  inline polynomial approximations. The reference check accepts relative errors
-  up to 2e-5 (float), so it does not separate faster approximations from more
+- **Small arrays:** a two-operand assignment has about 22 ns of fixed cost
+  (Eigen: about 2 ns). At 1,027 elements, Add takes 0.042 µs against 0.021 µs
+  for the loop. When every operand is packed with the destination's shape and
+  is the destination itself or disjoint from it, assignment skips shape
+  inference, re-lowering and the general overlap check. About three quarters
+  of what remains is the atomic reference counting of the operands: every
+  tensor leaf retains its storage so a saved expression stays valid after its
+  operands are destroyed (design plan, section 5, capture).
+- **Transcendentals:** Vectorization is level with Eigen for sqrt in both
+  types and about 2× faster for sin and cos in double. Eigen is 2.3–3× faster
+  for log, sin, cos and tanh in float and for tanh in double. Vectorization
+  spends 92–97% of that time inside SVML (one library call per SIMD register);
+  Eigen inlines polynomial approximations. Exp and log also vary by up to 1.8×
+  with where the input and output arrays fall relative to each other within a
+  4 KiB page (the ranges in the table), an effect of the per-register SVML
+  call that inlined code does not show. On this benchmark's input ranges
+  Eigen's float approximations measured as accurate as SVML or better (max
+  error vs. a double reference: tanh 3.8 vs 3.2 ULP, sin 1.4 vs 2.3, log 1.3
+  vs 3.9, exp 0.6 vs 2.4). The reference check accepts relative errors up to
+  2e-5 (float), so it does not separate faster approximations from more
   accurate ones.
 - **SLEEF:** with `VECTORIZATION_ENABLE_SLEEF=ON` (`sleef` token), float log
   (24.5 µs) and tanh (47.8 µs) are 2.3× and 3.2× slower than with SVML, float

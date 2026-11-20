@@ -22,6 +22,10 @@
  * result is checked against a double-precision reference; a mismatch skips the
  * case with an error instead of reporting a misleading time.
  *
+ * Strided rows (<StridedOp>/<f32|f64>/512x509/<implementation>) reduce or
+ * combine a 512 x 509 window of a 512 x 520 row-major array (a slice() view,
+ * an Eigen block(), or a double loop), so no implementation sees one flat span.
+ *
  * Compare, for example:
  *   benchmark_tensorbaselines --benchmark_filter='Exp/f32/'
  *
@@ -35,6 +39,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <random>
 #include <string>
 #include <type_traits>
@@ -145,6 +150,16 @@ template <typename Op, typename T> bool elementwise_matches(const T* got, const 
 
 template <typename Op, typename T> bool reduction_matches(T got, const inputs<T>& in)
 {
+    if constexpr (Op::extremum)
+    {
+        // Min / max select an element, so the result must match exactly.
+        T ref = Op::template init<T>();
+        for (std::size_t i = 0; i < in.a.size(); ++i)
+        {
+            ref = Op::fold(ref, Op::scalar(in.a[i], in.b[i], in.c[i]));
+        }
+        return got == ref;
+    }
     double ref = 0.0, scale = 0.0;
     for (std::size_t i = 0; i < in.a.size(); ++i)
     {
@@ -265,13 +280,17 @@ BASELINE_UNARY(Tanh, tanh, -4, 4)
 #undef BASELINE_UNARY
 #undef BASELINE_ELEMENTWISE
 
-// Reductions: scalar() is the per-element term the Loop baseline accumulates.
+// Reductions: scalar() is the per-element term; the Loop baseline folds the
+// terms with fold(), starting from init<U>().
 struct SumOp
 {
     static constexpr const char*                              name      = "Sum";
     static constexpr bool                                     reduction = true;
+    static constexpr bool                                     extremum  = false;
     static constexpr std::size_t                              streams   = 1;
     static constexpr double                                   lo = -4, hi = 4;
+    template <typename U> static U                            init() { return U(0); }
+    template <typename U> static U                            fold(U acc, U x) { return acc + x; }
     template <typename U> static U                            scalar(U a, U, U) { return a; }
     template <typename A, typename B, typename C> static auto vec(const A& a, const B&, const C&)
     {
@@ -288,8 +307,11 @@ struct DotOp
 {
     static constexpr const char*                              name      = "Dot";
     static constexpr bool                                     reduction = true;
+    static constexpr bool                                     extremum  = false;
     static constexpr std::size_t                              streams   = 2;
     static constexpr double                                   lo = -4, hi = 4;
+    template <typename U> static U                            init() { return U(0); }
+    template <typename U> static U                            fold(U acc, U x) { return acc + x; }
     template <typename U> static U                            scalar(U a, U b, U) { return a * b; }
     template <typename A, typename B, typename C> static auto vec(const A& a, const B& b, const C&)
     {
@@ -301,6 +323,49 @@ struct DotOp
         return a.matrix().dot(b.matrix());
     }
     BASELINE_TORCH(torch::dot_out(o, a, b))
+};
+
+// Extrema: the Loop baseline is a compare-select fold the compiler can vectorize.
+struct MaxOp
+{
+    static constexpr const char*   name      = "Max";
+    static constexpr bool          reduction = true;
+    static constexpr bool          extremum  = true;
+    static constexpr std::size_t   streams   = 1;
+    static constexpr double        lo = -4, hi = 4;
+    template <typename U> static U init() { return -std::numeric_limits<U>::max(); }
+    template <typename U> static U fold(U acc, U x) { return acc < x ? x : acc; }
+    template <typename U> static U scalar(U a, U, U) { return a; }
+    template <typename A, typename B, typename C> static auto vec(const A& a, const B&, const C&)
+    {
+        return vectorization::hmax(a);
+    }
+    template <typename A, typename B, typename C> static auto eigen(const A& a, const B&, const C&)
+    {
+        return a.maxCoeff();
+    }
+    BASELINE_TORCH(torch::amax_out(o, a, std::vector<int64_t>{0}))
+};
+
+struct MinOp
+{
+    static constexpr const char*   name      = "Min";
+    static constexpr bool          reduction = true;
+    static constexpr bool          extremum  = true;
+    static constexpr std::size_t   streams   = 1;
+    static constexpr double        lo = -4, hi = 4;
+    template <typename U> static U init() { return std::numeric_limits<U>::max(); }
+    template <typename U> static U fold(U acc, U x) { return x < acc ? x : acc; }
+    template <typename U> static U scalar(U a, U, U) { return a; }
+    template <typename A, typename B, typename C> static auto vec(const A& a, const B&, const C&)
+    {
+        return vectorization::hmin(a);
+    }
+    template <typename A, typename B, typename C> static auto eigen(const A& a, const B&, const C&)
+    {
+        return a.minCoeff();
+    }
+    BASELINE_TORCH(torch::amin_out(o, a, std::vector<int64_t>{0}))
 };
 
 #undef BASELINE_TORCH
@@ -365,10 +430,10 @@ template <typename Op, typename T> void bench_loop(benchmark::State& state, std:
     {
         const auto run = [a, b, c, n]
         {
-            T acc = T(0);
+            T acc = Op::template init<T>();
             for (std::size_t i = 0; i < n; ++i)
             {
-                acc += Op::scalar(a[i], b[i], c[i]);
+                acc = Op::fold(acc, Op::scalar(a[i], b[i], c[i]));
             }
             return acc;
         };
@@ -483,6 +548,256 @@ template <typename Op, typename T> void bench_libtorch(benchmark::State& state, 
 
 #endif  // VECTORIZATION_HAS_LIBTORCH
 
+// ── strided views ─────────────────────────────────────────────────────────────
+//
+// A 512 x 509 window of a 512 x 520 row-major array: each row is contiguous but
+// rows are not adjacent, so no implementation can treat the window as one flat
+// span. Vectorization reads it as a slice() view, Eigen as a block(), and Loop
+// is the same double loop over the parent buffer. The buffer (~1 MiB in f32)
+// is L2-resident on most current x86 cores.
+
+constexpr std::int64_t kRows = 512, kCols = 520, kWindow = 509;
+
+enum class strided_op : std::uint8_t
+{
+    sum,  // sum(view)
+    max,  // hmax(view)
+    dot,  // sum(va * vb)
+    fma   // out = va * vb + va, into a packed 512 x 509 tensor
+};
+
+template <strided_op Op> constexpr const char* strided_name()
+{
+    switch (Op)
+    {
+    case strided_op::sum:
+        return "StridedSum";
+    case strided_op::max:
+        return "StridedMax";
+    case strided_op::dot:
+        return "StridedDot";
+    default:
+        return "StridedFma";
+    }
+}
+
+template <typename T> struct strided_inputs
+{
+    std::vector<T> a = make_input<T>(static_cast<std::size_t>(kRows * kCols), -4, 4, 1u);
+    std::vector<T> b = make_input<T>(static_cast<std::size_t>(kRows * kCols), -4, 4, 2u);
+};
+
+// Checks a reduction result, or the packed output of the fma case (row-major
+// kRows x kWindow), against a double-precision reference.
+template <strided_op Op, typename T>
+bool strided_matches(const strided_inputs<T>& in, T reduced, const T* out)
+{
+    double acc = Op == strided_op::max ? -std::numeric_limits<double>::max() : 0.0, scale = 0.0;
+    for (std::int64_t r = 0; r < kRows; ++r)
+    {
+        for (std::int64_t c = 0; c < kWindow; ++c)
+        {
+            const double x = in.a[r * kCols + c], y = in.b[r * kCols + c];
+            if constexpr (Op == strided_op::fma)
+            {
+                const double ref = x * y + x;
+                if (!(std::abs(out[r * kWindow + c] - ref) <=
+                        elementwise_tolerance<T>() * std::max(1.0, std::abs(ref))))
+                {
+                    return false;
+                }
+            }
+            else if constexpr (Op == strided_op::max)
+            {
+                acc = std::max(acc, x);
+            }
+            else
+            {
+                const double term = Op == strided_op::sum ? x : x * y;
+                acc += term;
+                scale += std::abs(term);
+            }
+        }
+    }
+    if constexpr (Op == strided_op::fma)
+    {
+        return true;
+    }
+    else if constexpr (Op == strided_op::max)
+    {
+        return static_cast<double>(reduced) == acc;
+    }
+    else
+    {
+        return std::abs(static_cast<double>(reduced) - acc) <=
+               reduction_tolerance<T>() * std::max(1.0, scale);
+    }
+}
+
+template <strided_op Op> void set_strided_counters(benchmark::State& state, std::size_t elem_bytes)
+{
+    const auto items   = state.iterations() * kRows * kWindow;
+    const auto streams = Op == strided_op::sum || Op == strided_op::max ? 1
+                         : Op == strided_op::dot                        ? 2
+                                                                        : 3;
+    state.SetItemsProcessed(items);
+    state.SetBytesProcessed(items * static_cast<int64_t>(elem_bytes * streams));
+}
+
+template <strided_op Op, typename T> void bench_strided_vectorization(benchmark::State& state)
+{
+    const strided_inputs<T>  in;
+    vectorization::tensor<T> A(kRows, kCols), B(kRows, kCols);
+    std::copy(in.a.begin(), in.a.end(), A.data());
+    std::copy(in.b.begin(), in.b.end(), B.data());
+    auto va = A.slice(1, 0, kWindow);
+    auto vb = B.slice(1, 0, kWindow);
+    if constexpr (Op == strided_op::fma)
+    {
+        vectorization::tensor<T> out(kRows, kWindow);
+        out = va * vb + va;
+        if (!strided_matches<Op>(in, T(0), out.data()))
+        {
+            return skip_mismatch(state);
+        }
+        for (auto _ : state)
+        {
+            out = va * vb + va;
+            benchmark::DoNotOptimize(out.data());
+            benchmark::ClobberMemory();
+        }
+    }
+    else
+    {
+        const auto run = [&]
+        {
+            if constexpr (Op == strided_op::sum)
+            {
+                return static_cast<T>(vectorization::sum(va));
+            }
+            else if constexpr (Op == strided_op::max)
+            {
+                return static_cast<T>(vectorization::hmax(va));
+            }
+            else
+            {
+                return static_cast<T>(vectorization::sum(va * vb));
+            }
+        };
+        if (!strided_matches<Op, T>(in, run(), nullptr))
+        {
+            return skip_mismatch(state);
+        }
+        for (auto _ : state)
+        {
+            benchmark::DoNotOptimize(run());
+        }
+    }
+    set_strided_counters<Op>(state, sizeof(T));
+}
+
+template <strided_op Op, typename T> void bench_strided_loop(benchmark::State& state)
+{
+    const strided_inputs<T> in;
+    std::vector<T>          out(static_cast<std::size_t>(kRows * kWindow));
+    const T*                a = in.a.data();
+    const T*                b = in.b.data();
+    T*                      o = out.data();
+    benchmark::DoNotOptimize(a);
+    benchmark::DoNotOptimize(b);
+    const auto run = [a, b, o]
+    {
+        T acc = Op == strided_op::max ? -std::numeric_limits<T>::max() : T(0);
+        for (std::int64_t r = 0; r < kRows; ++r)
+        {
+            for (std::int64_t c = 0; c < kWindow; ++c)
+            {
+                const T x = a[r * kCols + c], y = b[r * kCols + c];
+                if constexpr (Op == strided_op::sum)
+                {
+                    acc += x;
+                }
+                else if constexpr (Op == strided_op::max)
+                {
+                    acc = acc < x ? x : acc;
+                }
+                else if constexpr (Op == strided_op::dot)
+                {
+                    acc += x * y;
+                }
+                else
+                {
+                    o[r * kWindow + c] = x * y + x;
+                }
+            }
+        }
+        return acc;
+    };
+    if (!strided_matches<Op>(in, run(), o))
+    {
+        return skip_mismatch(state);
+    }
+    for (auto _ : state)
+    {
+        benchmark::DoNotOptimize(run());
+        benchmark::ClobberMemory();
+    }
+    set_strided_counters<Op>(state, sizeof(T));
+}
+
+template <strided_op Op, typename T> void bench_strided_eigen(benchmark::State& state)
+{
+    using array_t = Eigen::Array<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+    using map_t   = Eigen::Map<const array_t>;
+    const strided_inputs<T> in;
+    const array_t           A  = map_t(in.a.data(), kRows, kCols);
+    const array_t           B  = map_t(in.b.data(), kRows, kCols);
+    const auto              va = A.block(0, 0, kRows, kWindow);
+    const auto              vb = B.block(0, 0, kRows, kWindow);
+    if constexpr (Op == strided_op::fma)
+    {
+        array_t out(kRows, kWindow);
+        out = va * vb + va;
+        if (!strided_matches<Op>(in, T(0), out.data()))
+        {
+            return skip_mismatch(state);
+        }
+        for (auto _ : state)
+        {
+            out = va * vb + va;
+            benchmark::DoNotOptimize(out.data());
+            benchmark::ClobberMemory();
+        }
+    }
+    else
+    {
+        const auto run = [&]
+        {
+            if constexpr (Op == strided_op::sum)
+            {
+                return static_cast<T>(va.sum());
+            }
+            else if constexpr (Op == strided_op::max)
+            {
+                return static_cast<T>(va.maxCoeff());
+            }
+            else
+            {
+                return static_cast<T>((va * vb).sum());
+            }
+        };
+        if (!strided_matches<Op, T>(in, run(), nullptr))
+        {
+            return skip_mismatch(state);
+        }
+        for (auto _ : state)
+        {
+            benchmark::DoNotOptimize(run());
+        }
+    }
+    set_strided_counters<Op>(state, sizeof(T));
+}
+
 // ── registration ──────────────────────────────────────────────────────────────
 
 // Wall time drives the iteration count (process CPU time is coarse on Windows,
@@ -519,6 +834,24 @@ template <typename... Ops> void register_ops()
     (register_case<Ops, double>(), ...);
 }
 
+// Rows are named <StridedOp>/<f32|f64>/512x509/<implementation>.
+template <strided_op Op, typename T> void register_strided()
+{
+    const std::string prefix = std::string(strided_name<Op>()) + "/" + type_name<T>() + "/512x509/";
+    configure(
+        benchmark::RegisterBenchmark(prefix + "Vectorization", bench_strided_vectorization<Op, T>));
+    configure(benchmark::RegisterBenchmark(prefix + "Loop", bench_strided_loop<Op, T>));
+    configure(benchmark::RegisterBenchmark(prefix + "Eigen", bench_strided_eigen<Op, T>));
+}
+
+template <typename T> void register_strided_ops()
+{
+    register_strided<strided_op::sum, T>();
+    register_strided<strided_op::max, T>();
+    register_strided<strided_op::dot, T>();
+    register_strided<strided_op::fma, T>();
+}
+
 [[maybe_unused]] const bool kRegistered = []
 {
     register_ops<AddOp,
@@ -533,7 +866,11 @@ template <typename... Ops> void register_ops()
         CosOp,
         TanhOp,
         SumOp,
-        DotOp>();
+        DotOp,
+        MaxOp,
+        MinOp>();
+    register_strided_ops<float>();
+    register_strided_ops<double>();
     return true;
 }();
 

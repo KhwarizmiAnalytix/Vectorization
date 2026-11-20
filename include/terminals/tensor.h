@@ -857,8 +857,23 @@ public:
         }
         else
         {
-            check_assignment_overlap(expr, to_strided_ref(), unchecked_alias);
-            evaluator::run(expr, *this, stream);
+            // Common case: every leaf is packed with this tensor's exact shape and
+            // is this tensor or disjoint from it. The result shape is known and the
+            // general shape, lowering and overlap passes would only confirm it.
+            if (device() == device_enum::CPU && contiguous_ &&
+                detail::leaves_packed_like(expr,
+                    static_cast<int>(rank()),
+                    sizes_and_strides_.sizes_data(),
+                    static_cast<void const*>(data()),
+                    numel_))
+            {
+                evaluator::run_packed(expr, *this);
+            }
+            else
+            {
+                check_assignment_overlap(expr, to_strided_ref(), unchecked_alias);
+                evaluator::run(expr, *this, stream);
+            }
         }
         record_stream_if_redirected(stream);
         return *this;
@@ -1161,11 +1176,21 @@ public:
     // Used by store_operand() to capture the tensor as an expression leaf.
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE auto to_strided_ref() const
     {
+        strided_ref<element_t> s;
+        write_strided_ref(s);
+        return s;
+    }
+
+    // Fills `s` in place. store_operand() uses it so a leaf's descriptor is
+    // written once, where it lives, instead of being built in a temporary and
+    // copied (a large copy right after narrow field stores stalls on store
+    // forwarding, which dominated small expressions).
+    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void write_strided_ref(strided_ref<element_t>& s) const
+    {
         VECTORIZATION_CHECK_IF_NOT_ON_CUDA(rank() <= static_cast<size_t>(kMaxRank),
             "tensors of rank {} cannot be expression operands (limit {})",
             rank(),
             kMaxRank);
-        strided_ref<element_t> s;
         s.view_       = view_;
         s.rank        = static_cast<int>(rank());
         s.numel       = numel_;
@@ -1178,7 +1203,6 @@ public:
             s.sizes[i]   = sizes_and_strides_.size_at_unchecked(static_cast<size_t>(i));
             s.strides[i] = sizes_and_strides_.stride_at_unchecked(static_cast<size_t>(i));
         }
-        return s;
     }
 
     // -----------------------------------------------------------------------

@@ -139,6 +139,12 @@ template <typename T> struct row_lowered<memory::data_view<T>>
     using type = row_ref<std::remove_const_t<T>>;
 };
 
+// Host leaves, so a reduction can plan a user expression without lower_raw().
+template <typename T> struct row_lowered<retained_ref<T>>
+{
+    using type = row_ref<std::remove_const_t<T>>;
+};
+
 template <typename E>
 using row_lowered_t = typename row_lowered<vectorization::remove_cvref_t<E>>::type;
 
@@ -387,6 +393,98 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void bind_row(
         lowered.ptr    = static_cast<value_t const*>(plan.bases[op]) + offsets[op];
         lowered.stride = plan.strides[op][plan.rank - 1];
         ++op;
+    }
+}
+
+// Points every flat_ref leaf of a lower_flat() tree at its element `offsets[op]`.
+// Used for rows whose sources all have inner stride 1: the row then runs through
+// the same pointer-only SIMD body as a packed expression.
+template <typename L>
+VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void bind_flat_row(
+    L& lowered, iteration_plan const& plan, int64_t const* offsets, int& op) noexcept
+{
+    using expr_t = vectorization::remove_cvref_t<L>;
+    if constexpr (is_pure_expression<expr_t>::value)
+    {
+        if constexpr (VECTORIZATION_EXPR_HAS_MHS(lowered))
+        {
+            bind_flat_row(lowered.mutable_lhs(), plan, offsets, op);
+            bind_flat_row(lowered.mutable_mhs(), plan, offsets, op);
+            bind_flat_row(lowered.mutable_rhs(), plan, offsets, op);
+        }
+        else if constexpr (VECTORIZATION_EXPR_HAS_LHS(lowered))
+        {
+            bind_flat_row(lowered.mutable_lhs(), plan, offsets, op);
+            bind_flat_row(lowered.mutable_rhs(), plan, offsets, op);
+        }
+        else
+        {
+            bind_flat_row(lowered.mutable_rhs(), plan, offsets, op);
+        }
+    }
+    else if constexpr (is_flat_ref<expr_t>::value)
+    {
+        using value_t = typename expr_t::value_type;
+        lowered.ptr   = static_cast<value_t const*>(plan.bases[op]) + offsets[op];
+        ++op;
+    }
+}
+
+// Moves every flat_ref / row_ref leaf forward by `step[op]` elements. With a
+// single outer dimension this is the whole row advance: no counters, offsets
+// or rebinding.
+template <typename L>
+VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void advance_row(
+    L& lowered, int64_t const* step, int& op) noexcept
+{
+    using expr_t = vectorization::remove_cvref_t<L>;
+    if constexpr (is_pure_expression<expr_t>::value)
+    {
+        if constexpr (VECTORIZATION_EXPR_HAS_MHS(lowered))
+        {
+            advance_row(lowered.mutable_lhs(), step, op);
+            advance_row(lowered.mutable_mhs(), step, op);
+            advance_row(lowered.mutable_rhs(), step, op);
+        }
+        else if constexpr (VECTORIZATION_EXPR_HAS_LHS(lowered))
+        {
+            advance_row(lowered.mutable_lhs(), step, op);
+            advance_row(lowered.mutable_rhs(), step, op);
+        }
+        else
+        {
+            advance_row(lowered.mutable_rhs(), step, op);
+        }
+    }
+    else if constexpr (is_flat_ref<expr_t>::value || is_row_ref<expr_t>::value)
+    {
+        lowered.ptr += step[op];
+        ++op;
+    }
+}
+
+// Advances the outer coordinates of a plan by one row (dimension counter, no
+// division) and updates each operand's element offset to match.
+inline void next_row(iteration_plan const& plan,
+    std::array<int64_t, kMaxRank>&         coord,
+    std::array<int64_t, kMaxOperands>&     offsets) noexcept
+{
+    for (int d = plan.rank - 2; d >= 0; --d)
+    {
+        ++coord[d];
+        for (int k = 0; k < plan.n_operands; ++k)
+        {
+            offsets[k] += plan.strides[k][d];
+        }
+        if (coord[d] < plan.sizes[d])
+        {
+            return;
+        }
+        for (int k = 0; k < plan.n_operands; ++k)
+        {
+            offsets[k] -= coord[d] * plan.strides[k][d];
+        }
+        coord[d] = 0;
     }
 }
 

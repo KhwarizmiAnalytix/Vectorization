@@ -267,6 +267,67 @@ VECTORIZATION_FUNCTION_ATTRIBUTE bool leaves_flat(E const& expr, size_t numel) n
     }
 }
 
+// True when every tensor leaf of `expr` is packed with exactly the shape
+// (rank, sizes) and is either `dst` itself or disjoint from the `numel`
+// elements at `dst`. The result shape is then (rank, sizes), flat evaluation is
+// exact, and an elementwise pass has no overlap hazard (an exact alias reads
+// each element before writing it), so a CPU assignment can skip shape
+// inference, re-lowering and the general overlap check. Any other case returns
+// false and takes the general path, which reports errors such as partial overlap.
+template <typename E>
+VECTORIZATION_HOST_FUNCTION_ATTRIBUTE bool leaves_packed_like(
+    E const& expr, int rank, int64_t const* sizes, void const* dst, size_t numel) noexcept
+{
+    using expr_t = vectorization::remove_cvref_t<E>;
+    if constexpr (is_pure_expression<expr_t>::value)
+    {
+        if constexpr (VECTORIZATION_EXPR_HAS_MHS(expr))
+        {
+            return leaves_packed_like(expr.lhs(), rank, sizes, dst, numel) &&
+                   leaves_packed_like(expr.mhs(), rank, sizes, dst, numel) &&
+                   leaves_packed_like(expr.rhs(), rank, sizes, dst, numel);
+        }
+        else if constexpr (VECTORIZATION_EXPR_HAS_LHS(expr))
+        {
+            return leaves_packed_like(expr.lhs(), rank, sizes, dst, numel) &&
+                   leaves_packed_like(expr.rhs(), rank, sizes, dst, numel);
+        }
+        else
+        {
+            return leaves_packed_like(expr.rhs(), rank, sizes, dst, numel);
+        }
+    }
+    else if constexpr (is_strided_ref<expr_t>::value || is_data_view<expr_t>::value)
+    {
+        if constexpr (is_strided_ref<expr_t>::value)
+        {
+            if (!expr.contiguous || expr.numel != numel || expr.rank != rank)
+            {
+                return false;
+            }
+            for (int d = 0; d < rank; ++d)
+            {
+                if (expr.sizes[d] != sizes[d])
+                {
+                    return false;
+                }
+            }
+        }
+        else if (rank != 1 || expr.size() != numel)
+        {
+            return false;
+        }
+        const auto  bytes = numel * sizeof(*expr.data());
+        auto const* p     = reinterpret_cast<unsigned char const*>(expr.data());
+        auto const* d     = static_cast<unsigned char const*>(dst);
+        return p == d || p + bytes <= d || d + bytes <= p;
+    }
+    else
+    {
+        return true;  // scalars
+    }
+}
+
 // Rewrites every strided_ref leaf of a (copied) expression into the index
 // space of `out`: rank, sizes and numel become the result's, strides become
 // broadcast strides. Flat-index evaluation of the rewritten tree over

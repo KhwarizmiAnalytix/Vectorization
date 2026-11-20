@@ -69,7 +69,11 @@ template <typename T> VECTORIZATION_FUNCTION_ATTRIBUTE stored_operand_t<T> store
     using raw = vectorization::remove_cvref_t<T>;
     if constexpr (is_tensor<raw>::value)
     {
-        return {x.to_strided_ref(), x.retained_storage()};
+        // Written in place (named return value): building the descriptor in a
+        // temporary and copying it cost more than the rest of a small expression.
+        stored_operand_t<T> leaf(x.retained_storage());
+        x.write_strided_ref(leaf);
+        return leaf;
     }
     else
     {

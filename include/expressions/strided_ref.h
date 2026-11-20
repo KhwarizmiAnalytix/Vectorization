@@ -134,6 +134,14 @@ template <typename T> struct retained_ref : strided_ref<T>
         : strided_ref<T>(ref), storage(std::move(keep))
     {
     }
+
+    // Ownership only; store_operand() then writes the tensor's descriptor
+    // straight into this leaf (tensor::write_strided_ref) rather than building
+    // it in a temporary and copying it.
+    explicit retained_ref(memory::retained_ptr<std::remove_const_t<T>> keep)
+        : storage(std::move(keep))
+    {
+    }
 };
 
 // Compute the element offset for flat index `flat` using the strided layout.

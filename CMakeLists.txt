@@ -567,7 +567,16 @@ if(VECTORIZATION_COMPILER_FLAGS)
   else()
     separate_arguments(_vec_simd_flags_list UNIX_COMMAND "${VECTORIZATION_COMPILER_FLAGS}")
   endif()
-  target_compile_options(Vectorization PUBLIC ${_vec_simd_flags_list})
+  # nvcc takes a bare /arch or /D option as a second input file ("A single input
+  # file is required"), so forward host flags with -Xcompiler as Scalars does.
+  # Clang as the CUDA compiler takes them directly.
+  foreach(_vec_simd_flag IN LISTS _vec_simd_flags_list)
+    target_compile_options(
+      Vectorization PUBLIC "$<$<COMPILE_LANG_AND_ID:CUDA,NVIDIA>:-Xcompiler=${_vec_simd_flag}>"
+                           "$<$<NOT:$<COMPILE_LANG_AND_ID:CUDA,NVIDIA>>:${_vec_simd_flag}>"
+    )
+  endforeach()
+  unset(_vec_simd_flag)
 endif()
 
 # =============================================================================

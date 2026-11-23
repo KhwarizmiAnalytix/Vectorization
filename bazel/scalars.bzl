@@ -13,12 +13,17 @@ def scalars_defines():
     """
     defines = [
         "SCALARS_HAS_SVML=0",
-        "SCALARS_COMPILER_SUPPORTS_SVML_EXTENSIONS=0",
         "SCALARS_HAS_SLEEF=0",
         "SCALARS_HAS_MKL=0",
         "SCALARS_HAS_ACCELERATE=0",
         "SCALARS_PACKET_SIZE=1",
     ]
+    # cl.exe ships the SVML intrinsics (_mm256_exp_ps, ...) that Scalars
+    # otherwise defines itself, as Scalars' CMake compiler probe detects.
+    defines += select({
+        Label("@rules_cc//cc/compiler:msvc-cl"): ["SCALARS_COMPILER_SUPPORTS_SVML_EXTENSIONS=1"],
+        "//conditions:default": ["SCALARS_COMPILER_SUPPORTS_SVML_EXTENSIONS=0"],
+    })
     for backend in ["sse", "avx", "avx2", "avx512", "neon", "sve"]:
         values = {
             Label("//bazel:cpu_" + backend): ["SCALARS_HAS_" + backend.upper() + "=1"],

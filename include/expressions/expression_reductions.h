@@ -162,6 +162,7 @@ template <typename T, reduce_op Op> struct simd_reducer
     // a multiple of the SIMD width. A selects aligned loads.
     template <bool A, typename F> void run(F const& flat, size_t i, size_t end, acc_t& result)
     {
+        VECTORIZATION_MATH_CALL_FRAME(F);
         while (i < end)
         {
             size_t stop = end;
@@ -218,6 +219,7 @@ template <typename T, reduce_op Op> struct simd_reducer
         acc_t&             result)
     {
         static_assert(!reduce_is_count<Op>, "count reductions flush; use run() per row");
+        VECTORIZATION_MATH_CALL_FRAME(F);
         // A local copy of the (pointer-only) tree keeps the leaf pointers in
         // registers; advanced through a reference they would be stored and
         // reloaded at every row, delaying each row's first loads.

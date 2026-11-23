@@ -133,6 +133,9 @@ target_compile_definitions(
 target_link_libraries(
   VectorizationCxxTests PRIVATE Gtest::gtest Gtest::gtest_main Vectorization::Vectorization
 )
+if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+  target_link_libraries(VectorizationCxxTests PRIVATE msvcrt.lib)
+endif()
 if(VECTORIZATION_ENABLE_MKL)
   target_link_libraries(VectorizationCxxTests PRIVATE MKL::MKL)
 endif()
@@ -286,7 +289,7 @@ set_target_properties(
 # not leave these TUs on C++17.
 set(_vectorization_clang_cuda_x_flags
     "$<$<COMPILE_LANGUAGE:CUDA>:-x>" "$<$<COMPILE_LANGUAGE:CUDA>:cuda>"
-    "$<$<COMPILE_LANGUAGE:CUDA>:-std=c++${VECTORIZATION_CXX_STANDARD}>"
+    "$<$<COMPILE_LANGUAGE:CUDA>:${VECTORIZATION_CLANG_CUDA_STD_FLAG}>"
 )
 
 # Windows MSVC-runtime-library (CRT) flags for CUDA-tagged .cpp files.
@@ -382,7 +385,9 @@ if(cuda_test_sources OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/TestTensorGpu.cpp")
 endif()
 if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND _vectorization_has_cuda_gpu_test_source)
   set_target_properties(
-    VectorizationCxxTests PROPERTIES CUDA_ARCHITECTURES "${VECTORIZATION_CUDA_ARCHITECTURES}"
+    VectorizationCxxTests PROPERTIES
+      CUDA_ARCHITECTURES "${VECTORIZATION_CUDA_ARCHITECTURES}"
+      CUDA_RUNTIME_LIBRARY None
   )
   # CMAKE_CUDA_COMPILER_ID is "unknown" when CMAKE_CUDA_COMPILER_FORCED=TRUE (the
   # Clang+CMake 3.28 workaround in cuda.cmake skips the compiler probe). Use
@@ -407,7 +412,7 @@ if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND _vectorization_has_cuda_gpu_tes
     # emit -std=. Apply it target-wide for every CUDA TU (.cu and tagged .cpp).
     target_compile_options(
       VectorizationCxxTests
-      PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-std=c++${VECTORIZATION_CXX_STANDARD}>
+      PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:${VECTORIZATION_CLANG_CUDA_STD_FLAG}>
     )
 
     # CUDA 13 dropped texture_fetch_functions.h; see vectorization_apply_cuda_texture_fetch_shim()
@@ -498,9 +503,16 @@ if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND _vectorization_has_cuda_gpu_tes
     # _vec_tensor_test_sources, not just TestTensorGpu.cpp — see the ODR-safety comment at the top
     # of this file for why TestTensor.cpp/TestTensorF2.cpp/etc. are equally
     # exposed once they're tagged as CUDA sources.
-    set_source_files_properties(
-      ${_vec_tensor_test_sources} PROPERTIES COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:CUDA>:-O1>"
-    )
+    #
+    # Not with cl.exe as the host compiler: nvcc's -O sets only the host
+    # optimization level, so it reached cl.exe as /O1 after CMake's /O2 and
+    # only produced "D9025: overriding '/O2' with '/O1'". cl.exe has no record
+    # of the GCC crash above.
+    if(NOT MSVC)
+      set_source_files_properties(
+        ${_vec_tensor_test_sources} PROPERTIES COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:CUDA>:-O1>"
+      )
+    endif()
   endif()
   unset(_vec_tensor_test_sources)
   message(
@@ -677,6 +689,9 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
     endif()
 
     add_executable(${target_name} "${_bench_source}")
+    if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+      target_link_libraries(${target_name} PRIVATE msvcrt.lib)
+    endif()
 
     if(VECTORIZATION_ENABLE_CLANGTIDY)
       xsigma_target_clang_tidy(${target_name} ${VECTORIZATION_ENABLE_FIX})
@@ -689,6 +704,7 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
                    CUDA_STANDARD_REQUIRED ON
                    CUDA_ARCHITECTURES "${VECTORIZATION_CUDA_ARCHITECTURES}"
                    CUDA_SEPARABLE_COMPILATION OFF
+                   CUDA_RUNTIME_LIBRARY None
       )
       # Same Clang CUDA + MSVC C++20 std::fma ambiguity as VectorizationCxxTests
       # above (see the detailed comment there) — Clang implicitly marks

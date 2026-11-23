@@ -76,6 +76,45 @@ if(NOT TARGET Scalars::Scalars)
   )
 endif()
 
+# Clang-CUDA on Windows: fix CUDA rules in every scope that enables CUDA (see
+# the module). Must be registered before Memory runs enable_language(CUDA).
+if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
+   AND NOT CMAKE_USER_MAKE_RULES_OVERRIDE_CUDA
+)
+  set(CMAKE_USER_MAKE_RULES_OVERRIDE_CUDA
+      "${CMAKE_CURRENT_LIST_DIR}/tools/clang_cuda_windows_rules.cmake"
+  )
+endif()
+# The forced Clang CUDA compiler gets none of CMake's default CXX flags, so
+# CUDA TUs miss NDEBUG in optimized configurations and, with clang-cl, /EHsc.
+# Without /EHsc clang-cl builds them without C++ exception handling while the
+# DLLs they call throw through their frames, and inline code differs from the
+# CXX TUs it is shared with. Give CUDA sources the same defaults as CXX.
+if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+  add_compile_definitions(
+    "$<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<NOT:$<CONFIG:Debug>>>:NDEBUG>"
+  )
+  if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    add_compile_options("$<$<COMPILE_LANGUAGE:CUDA>:/EHsc>")
+  endif()
+  # The device pass has no DLLs, so Clang ignores every dllexport/dllimport
+  # there with a -Wignored-attributes warning, once per exported declaration
+  # per GPU architecture. Silence that group for the device pass only; the
+  # host pass keeps it.
+  if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    add_compile_options(
+      "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:/clang:-Xarch_device /clang:-Wno-ignored-attributes>"
+    )
+  else()
+    add_compile_options("$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xarch_device -Wno-ignored-attributes>")
+  endif()
+endif()
+# Clang knows CUDA releases only up to its own version and warns about each
+# CUDA TU when the toolkit is newer. Memory silences this through
+# CMAKE_CUDA_FLAGS, which reaches only its own directory scope.
+if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+  add_compile_options("$<$<COMPILE_LANGUAGE:CUDA>:-Wno-unknown-cuda-version>")
+endif()
 if(NOT TARGET Memory::Memory)
   # Tensor allocation and expression evaluation must use the same GPU runtime.
   set(MEMORY_GPU_BACKEND "${VECTORIZATION_GPU_BACKEND}" CACHE STRING "Memory GPU backend" FORCE)
@@ -83,6 +122,69 @@ if(NOT TARGET Memory::Memory)
     "${VECTORIZATION_THIRDPARTY_DIR}/Memory" "${CMAKE_CURRENT_BINARY_DIR}/ThirdParty/Memory"
     EXCLUDE_FROM_ALL
   )
+endif()
+# With a Clang C++ compiler, Memory forces Clang as the CUDA compiler. CMake
+# then loads its Windows-Clang-CUDA rules, including the table that maps
+# MSVC_RUNTIME_LIBRARY to compile flags, only in Memory's directory scope.
+# Every other directory with CUDA sources (LinearAlgebra's .cu kernels, our
+# CUDA-tagged tests) fails to generate: "MSVC_RUNTIME_LIBRARY value
+# 'MultiThreadedDLL' not known for this CUDA compiler". Define the table here,
+# in the top-level scope, with the flags CMake uses for Clang; clang-cl
+# accepts them too.
+if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
+   AND NOT DEFINED CMAKE_CUDA_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDLL
+)
+  set(CMAKE_CUDA_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreaded
+      -D_MT -Xclang --dependent-lib=libcmt
+  )
+  set(CMAKE_CUDA_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDLL
+      -D_DLL -D_MT -Xclang --dependent-lib=msvcrt
+  )
+  set(CMAKE_CUDA_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDebug
+      -D_DEBUG -D_MT -Xclang --dependent-lib=libcmtd
+  )
+  set(CMAKE_CUDA_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDebugDLL
+      -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd
+  )
+  # clang-cl also uses /Fo<OBJECT> as the output of every per-architecture
+  # ptxas step, so with more than one --cuda-gpu-arch each cubin overwrites the
+  # last and fatbinary fails ("elf arch does not match user-specified arch").
+  # -o names only the final object and lets the driver use temporaries.
+  if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    string(REPLACE "/Fo<OBJECT>" "-o <OBJECT>" CMAKE_CUDA_COMPILE_OBJECT
+                   "${CMAKE_CUDA_COMPILE_OBJECT}"
+    )
+    if(VECTORIZATION_CPU_BACKEND STREQUAL "avx2")
+      add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:/clang:-mavx2>)
+    endif()
+  endif()
+  set(CMAKE_CUDA_RUNTIME_LIBRARY_LINK_OPTIONS_SHARED
+      "${CUDAToolkit_LIBRARY_DIR}/cudadevrt.lib"
+      "${CUDAToolkit_LIBRARY_DIR}/cudart.lib"
+  )
+  set(CMAKE_CUDA_RUNTIME_LIBRARY_LINK_OPTIONS_STATIC
+      "${CUDAToolkit_LIBRARY_DIR}/cudadevrt.lib"
+      "${CUDAToolkit_LIBRARY_DIR}/cudart_static.lib"
+  )
+  set(CMAKE_CUDA_RUNTIME_LIBRARY_LINK_OPTIONS_SHARED
+      "${CUDAToolkit_LIBRARY_DIR}/cudadevrt.lib"
+      "${CUDAToolkit_LIBRARY_DIR}/cudart.lib"
+      CACHE INTERNAL "CUDA shared runtime link options" FORCE
+  )
+  set(CMAKE_CUDA_RUNTIME_LIBRARY_LINK_OPTIONS_STATIC
+      "${CUDAToolkit_LIBRARY_DIR}/cudadevrt.lib"
+      "${CUDAToolkit_LIBRARY_DIR}/cudart_static.lib"
+      CACHE INTERNAL "CUDA static runtime link options" FORCE
+  )
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL" CACHE STRING "MSVC runtime library" FORCE)
+  # Bare .lib names are clang-cl's spelling; the GNU clang++ driver treats them
+  # as input files ("no such file or directory: 'kernel32.lib'").
+  if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    set(CMAKE_CXX_STANDARD_LIBRARIES
+        "kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib"
+        CACHE STRING "C++ standard libraries" FORCE
+    )
+  endif()
 endif()
 get_target_property(_vec_memory_definitions Memory::Memory INTERFACE_COMPILE_DEFINITIONS)
 foreach(_backend IN ITEMS cuda hip metal)
@@ -145,4 +247,40 @@ if(NOT TARGET Scalars::Scalars)
         CACHE STRING "CPU SIMD backend resolved by Scalars" FORCE
     )
   endif()
+endif()
+# Dependencies pass host-compiler flags to CUDA sources as -Xcompiler=<flag>,
+# which is right for nvcc but ignored by clang-cl ("unknown argument"), which
+# takes the bare flags. Drop the prefix on <target> when clang-cl compiles CUDA.
+# /Zc:preprocessor is dropped entirely: it is there for cl.exe behind nvcc, and
+# clang-cl, whose preprocessor always conforms, reports it as unused.
+function(vectorization_unwrap_cuda_xcompiler_options target)
+  if(NOT (WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda"
+          AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
+          AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC" AND TARGET ${target})
+  )
+    return()
+  endif()
+  foreach(_property IN ITEMS COMPILE_OPTIONS INTERFACE_COMPILE_OPTIONS)
+    get_target_property(_options ${target} ${_property})
+    if(_options)
+      string(REPLACE "<COMPILE_LANGUAGE:CUDA>:-Xcompiler=" "<COMPILE_LANGUAGE:CUDA>:" _options
+                     "${_options}"
+      )
+      list(REMOVE_ITEM _options "$<$<COMPILE_LANGUAGE:CUDA>:/Zc:preprocessor>")
+      set_property(TARGET ${target} PROPERTY ${_property} "${_options}")
+    endif()
+  endforeach()
+endfunction()
+# For Scalars this is more than noise: its host SIMD flags (/arch:AVX2
+# /D__FMA__ ...) would otherwise be lost, and CUDA TUs would see a different
+# Scalars SIMD ABI than ordinary C++ TUs, an ODR violation that miscompiles
+# code shared between them.
+vectorization_unwrap_cuda_xcompiler_options(Scalars)
+
+# Memory links CUPTI's nvperf_host.lib, whose import library exports DllMain.
+# LLD skips that symbol, as it must, and warns on every Memory.dll link.
+if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND TARGET Memory
+   AND CMAKE_CXX_COMPILER_LINKER_ID STREQUAL "LLD"
+)
+  target_link_options(Memory PRIVATE "LINKER:/ignore:importeddllmain")
 endif()

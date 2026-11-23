@@ -6,6 +6,7 @@
 # Vectorization's: @xsigma_logging → @logging, @scalars//:scalars → @scalars//:Scalars.
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//bazel:linear_algebra.bzl", "linear_algebra_copts", "linear_algebra_defines", "linear_algebra_linkopts")
+load("@xsigma_vectorization//bazel:vectorization.bzl", "vectorization_arch_copts")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -47,7 +48,9 @@ cc_library(
     name = "linear_algebra_lib",
     srcs = [":linear_algebra_srcs"],
     hdrs = [":linear_algebra_hdrs"],
-    copts = linear_algebra_copts(),
+    # LinearAlgebra includes Scalars SIMD headers, which require the ISA flags
+    # Scalars was built with (as in bazel/scalars.bzl).
+    copts = linear_algebra_copts() + vectorization_arch_copts(),
     defines = linear_algebra_defines() + select({
         "//bazel:shared_libs": ["LINALG_SHARED_DEFINE"],
         "//conditions:default": ["LINALG_STATIC_DEFINE"],

@@ -49,6 +49,20 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   )
 endif()
 
+# Language-standard flag for Clang as the CUDA compiler (see below). clang-cl
+# ignores a GNU -std= with a warning, and given /clang:-std= as well as the
+# -std:c++NN CMake emits it reports the latter as unused, so use clang-cl's
+# own spelling.
+if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+  if(VECTORIZATION_CXX_STANDARD GREATER_EQUAL 23)
+    set(VECTORIZATION_CLANG_CUDA_STD_FLAG "-std:c++latest")
+  else()
+    set(VECTORIZATION_CLANG_CUDA_STD_FLAG "-std:c++${VECTORIZATION_CXX_STANDARD}")
+  endif()
+else()
+  set(VECTORIZATION_CLANG_CUDA_STD_FLAG "-std=c++${VECTORIZATION_CXX_STANDARD}")
+endif()
+
 # ---------------------------------------------------------------------------
 # vectorization_apply_cuda_flags(<target>)
 # Apply CUDA language properties and per-target compile options.
@@ -65,14 +79,35 @@ function(vectorization_apply_cuda_flags target)
   if(CMAKE_CUDA_COMPILER_ID STREQUAL "Clang")
     target_compile_options(${target} PRIVATE
         $<$<COMPILE_LANGUAGE:CUDA>:-ffast-math>
-        $<$<COMPILE_LANGUAGE:CUDA>:-std=c++${VECTORIZATION_CXX_STANDARD}>)
+        $<$<COMPILE_LANGUAGE:CUDA>:${VECTORIZATION_CLANG_CUDA_STD_FLAG}>)
   else()
     target_compile_options(${target} PRIVATE
         $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math -Xcompiler=-fPIC>)
   endif()
+  # nvcc treats constexpr functions (std::array accessors, lambdas) as host-only
+  # and warns (#20013-D/#20015-D) when our __host__ __device__ expression code
+  # calls them; Clang CUDA allows these calls by default, and LinearAlgebra
+  # already passes the same flag for its kernels.
+  target_compile_options(${target} PRIVATE
+      $<$<COMPILE_LANG_AND_ID:CUDA,NVIDIA>:--expt-relaxed-constexpr>)
+  target_compile_options(${target} INTERFACE
+      $<$<COMPILE_LANG_AND_ID:CUDA,NVIDIA>:--expt-relaxed-constexpr>)
   if(MSVC)
     target_compile_options(${target} PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:/Zc:preprocessor>
         $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>)
+    # CUDA 13's CCCL headers, which our public headers include, reject cl.exe's
+    # traditional preprocessor (#error in cuda/std/__cccl/preprocessor.h), so
+    # nvcc consumers such as the CUDA-tagged tests need it too.
+    target_compile_options(${target} INTERFACE
+        $<$<COMPILE_LANG_AND_ID:CUDA,NVIDIA>:-Xcompiler=/Zc:preprocessor>)
+    # nvcc's own front end does not see the cl.exe warning policy, so apply its
+    # equivalents for CUDA consumers: #1394-D is C4251 (field without a DLL
+    # interface, which the exporting headers already disable for cl.exe) and
+    # #940-D is C4715 (missing return, disabled project-wide in platform.cmake).
+    target_compile_options(${target} PRIVATE
+        $<$<COMPILE_LANG_AND_ID:CUDA,NVIDIA>:-diag-suppress=940,1394>)
+    target_compile_options(${target} INTERFACE
+        $<$<COMPILE_LANG_AND_ID:CUDA,NVIDIA>:-diag-suppress=940,1394>)
   endif()
 endfunction()

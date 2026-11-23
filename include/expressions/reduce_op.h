@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include <cfloat>
 #include <cstdint>
 #include <limits>
 #include <type_traits>
@@ -78,7 +79,16 @@ template <typename T> VECTORIZATION_FUNCTION_ATTRIBUTE T reduce_finite_max()
 {
     static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>,
         "reduce_identity supports float and double");
-    return std::numeric_limits<T>::max();
+    // FLT_MAX/DBL_MAX, not numeric_limits<T>::max(): that constexpr function is
+    // host-only under -fno-cuda-host-device-constexpr (Windows Clang-CUDA).
+    if constexpr (std::is_same_v<T, float>)
+    {
+        return FLT_MAX;
+    }
+    else
+    {
+        return DBL_MAX;
+    }
 }
 
 template <typename T, reduce_op Op> VECTORIZATION_FUNCTION_ATTRIBUTE T reduce_identity()

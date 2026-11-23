@@ -800,7 +800,7 @@ static void GPU_SumAddMulSin(benchmark::State& state)
 
     for (auto _ : state)
     {
-        T const sum = vectorization::accumulate(a + b * ::sin(x));
+        T sum = vectorization::accumulate(a + b * ::sin(x));
         benchmark::DoNotOptimize(sum);
     }
     state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(kSumN));

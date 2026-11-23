@@ -6,6 +6,7 @@ load(
     "//bazel:vectorization.bzl",
     "vectorization_arch_copts",
     "vectorization_copts",
+    "vectorization_cuda_copts",
     "vectorization_defines",
     "vectorization_gpu_copts",
     "vectorization_linkopts",
@@ -47,7 +48,10 @@ cc_library(
 )
 
 # Compile every tensor expression TU with the same device compiler to avoid
-# mixing CPU-only and GPU template definitions in one executable (ODR).
+# mixing CPU-only and GPU template definitions in one executable (ODR). Keep
+# this in sync with CMake, which selects every Test*.cpp containing "tensor<"
+# (Testing/Cxx/CMakeLists.txt): a missing file links CPU-only copies of the
+# evaluator, and GPU tensor tests then fail with "no GPU/Metal dispatch".
 _GPU_TEST_SRCS = [
     "TestLinalgFactorizations.cpp",
     "TestLinalgSolves.cpp",
@@ -59,6 +63,7 @@ _GPU_TEST_SRCS = [
     "TestTensorFusedUpdate.cpp",
     "TestTensorGpu.cpp",
     "TestTensorGpuProfiler.cpp",
+    "TestTensorMulAddContraction.cpp",
     "TestTensorProducts.cpp",
     "TestTensorReductions.cpp",
     "TestTensorShapes.cpp",
@@ -83,10 +88,7 @@ cuda_library(
     testonly = True,
     srcs = _GPU_TEST_SRCS,
     hdrs = glob(["*.h"]),
-    copts = ["-std=c++20"] + select({
-        "@rules_cuda//cuda:compiler_is_nvcc": ["--expt-relaxed-constexpr"],
-        "//conditions:default": [],
-    }),
+    copts = vectorization_cuda_copts(),
     defines = _GPU_TEST_DEFINES,
     host_copts = vectorization_arch_copts() + vectorization_gpu_copts(),
     includes = ["."],
@@ -160,10 +162,7 @@ cuda_library(
     name = "tensor_cuda_benchmark",
     srcs = ["BenchmarkTensorGpu.cpp"],
     hdrs = glob(["*.h"]),
-    copts = ["-std=c++20"] + select({
-        "@rules_cuda//cuda:compiler_is_nvcc": ["--expt-relaxed-constexpr"],
-        "//conditions:default": [],
-    }),
+    copts = vectorization_cuda_copts(),
     defines = vectorization_defines(),
     host_copts = vectorization_arch_copts() + vectorization_gpu_copts(),
     includes = ["."],

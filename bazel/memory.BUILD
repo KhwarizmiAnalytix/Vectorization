@@ -181,7 +181,12 @@ cc_library(
         "//bazel:disable_mimalloc": [],
         "//conditions:default": ["@mimalloc"],
     }) + select({
-        "//bazel:enable_cuda": ["@rules_cuda//cuda:runtime"],
+        # The caching allocator also uses the driver API (cuMemCreate/cuMemMap for
+        # virtual-memory segments), as CMake's CUDA::cuda_driver link provides.
+        "//bazel:enable_cuda": [
+            "@rules_cuda//cuda:runtime",
+            "@cuda//:cuda",
+        ],
         "//conditions:default": [],
     }) + select({
         "//bazel:enable_hip": ["@local_config_hip//:hip"],

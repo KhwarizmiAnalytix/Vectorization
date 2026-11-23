@@ -317,6 +317,7 @@ MACRO_EXPRESSION_OPERATOR_2_ARG(div, /);
 
 //================================================================================================
 #define EXPRESSION_ARG2_MOPERATOR_HELPER(op, symbol, ref)                                          \
+    VECTORIZATION_EXEC_CHECK_DISABLE                                                               \
     template <typename LHS,                                                                        \
         typename RHS,                                                                              \
         std::enable_if_t<vectorization::is_base_expression<LHS>::value, int> = 0>                  \

@@ -793,7 +793,7 @@ public:
         return as_view().contiguous();
     }
 
-    VECTORIZATION_HOST_FUNCTION_ATTRIBUTE ~tensor_impl() = default;
+    VECTORIZATION_DEFAULTED_HOST_FUNCTION_ATTRIBUTE ~tensor_impl() = default;
 
     // -----------------------------------------------------------------------
     // Expression constructors / assignment

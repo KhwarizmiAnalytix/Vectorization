@@ -96,17 +96,23 @@ template <typename T, int MaxRank = kMaxRank> struct strided_ref
 
     VECTORIZATION_FUNCTION_ATTRIBUTE T*          data() const noexcept { return view_.data(); }
     VECTORIZATION_FUNCTION_ATTRIBUTE size_t      size() const noexcept { return numel; }
+    // The data_view placement and identity accessors behind these are host-only.
+    VECTORIZATION_EXEC_CHECK_DISABLE
     VECTORIZATION_FUNCTION_ATTRIBUTE device_enum device() const noexcept { return view_.device(); }
+    VECTORIZATION_EXEC_CHECK_DISABLE
     VECTORIZATION_FUNCTION_ATTRIBUTE int         device_index() const noexcept
     {
         return view_.device_index();
     }
+    VECTORIZATION_EXEC_CHECK_DISABLE
     VECTORIZATION_FUNCTION_ATTRIBUTE auto stream() const noexcept { return view_.stream(); }
     VECTORIZATION_FUNCTION_ATTRIBUTE bool is_aligned() const noexcept { return view_.is_aligned(); }
     VECTORIZATION_FUNCTION_ATTRIBUTE bool is_contiguous() const noexcept { return contiguous; }
     // Delegation to data_view for allocation-identity checks used by tests.
     VECTORIZATION_FUNCTION_ATTRIBUTE auto base() const noexcept { return view_.base(); }
+    VECTORIZATION_EXEC_CHECK_DISABLE
     VECTORIZATION_FUNCTION_ATTRIBUTE auto id() const noexcept { return view_.id(); }
+    VECTORIZATION_EXEC_CHECK_DISABLE
     VECTORIZATION_FUNCTION_ATTRIBUTE auto provenance() const noexcept { return view_.provenance(); }
 
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE static constexpr size_t length() noexcept
@@ -142,6 +148,38 @@ template <typename T> struct retained_ref : strided_ref<T>
         : storage(std::move(keep))
     {
     }
+
+    // Written out rather than implicit: nvcc gives an implicit or defaulted
+    // special member the execution space of its callers, and the expression
+    // nodes that hold this leaf copy and move it from __host__ __device__
+    // constructors, so the implicit members would be __host__ __device__ and
+    // warn on retained_ptr's host-only ones. The leaf never reaches a device.
+    VECTORIZATION_EXEC_CHECK_DISABLE
+    VECTORIZATION_FUNCTION_ATTRIBUTE retained_ref(retained_ref const& other)
+        : strided_ref<T>(other), storage(other.storage)
+    {
+    }
+    VECTORIZATION_EXEC_CHECK_DISABLE
+    VECTORIZATION_FUNCTION_ATTRIBUTE retained_ref(retained_ref&& other) noexcept
+        : strided_ref<T>(std::move(other)), storage(std::move(other.storage))
+    {
+    }
+    VECTORIZATION_EXEC_CHECK_DISABLE
+    VECTORIZATION_FUNCTION_ATTRIBUTE retained_ref& operator=(retained_ref const& other)
+    {
+        strided_ref<T>::operator=(other);
+        storage = other.storage;
+        return *this;
+    }
+    VECTORIZATION_EXEC_CHECK_DISABLE
+    VECTORIZATION_FUNCTION_ATTRIBUTE retained_ref& operator=(retained_ref&& other) noexcept
+    {
+        strided_ref<T>::operator=(std::move(other));
+        storage = std::move(other.storage);
+        return *this;
+    }
+    VECTORIZATION_EXEC_CHECK_DISABLE
+    VECTORIZATION_FUNCTION_ATTRIBUTE ~retained_ref() {}
 };
 
 // Compute the element offset for flat index `flat` using the strided layout.
@@ -154,19 +192,26 @@ VECTORIZATION_FUNCTION_ATTRIBUTE std::size_t strided_offset(
     {
         return flat;
     }
-    const int n   = s.rank;
-    size_t    off = 0;
-    size_t    rem = flat;
+    // Index through the arrays' addresses rather than std::array::operator[]:
+    // that operator is constexpr, and Windows Clang-CUDA builds compile with
+    // -fno-cuda-host-device-constexpr (see Testing/Cxx/CMakeLists.txt), which
+    // leaves constexpr standard-library functions host-only. std::array is an
+    // aggregate holding just its int64_t[MaxRank] element array.
+    const auto* sizes   = reinterpret_cast<const int64_t*>(&s.sizes);
+    const auto* strides = reinterpret_cast<const int64_t*>(&s.strides);
+    const int   n       = s.rank;
+    size_t      off     = 0;
+    size_t      rem     = flat;
     for (int k = n - 1; k >= 0; --k)
     {
-        const auto dk = static_cast<size_t>(s.sizes[k]);
+        const auto dk = static_cast<size_t>(sizes[k]);
         if (dk == 0)
         {
             return 0;
         }
         const size_t idx = rem % dk;
         rem /= dk;
-        off += idx * static_cast<size_t>(s.strides[k]);
+        off += idx * static_cast<size_t>(strides[k]);
     }
     return off;
 }

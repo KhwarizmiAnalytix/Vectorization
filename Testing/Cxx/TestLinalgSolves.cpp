@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <initializer_list>
 #include <limits>
 #include <vector>
 
@@ -18,6 +19,19 @@ using vectorization::tensor;
 template <typename A> std::vector<size_t> shape(A const& a)
 {
     return {a.dimensions().begin(), a.dimensions().end()};
+}
+
+// An n x 1 tensor. Not tensor<T>{{2}, {3}}: nvcc's front end finds that
+// ambiguous between the 1-D and the 2-D initializer-list constructors.
+template <typename T> tensor<T> column(std::initializer_list<T> values)
+{
+    tensor<T> result(values.size(), 1);
+    size_t    i = 0;
+    for (T const value : values)
+    {
+        result[i++] = value;
+    }
+    return result;
 }
 
 template <typename T> class LinalgSolves : public ::testing::Test
@@ -194,7 +208,7 @@ TYPED_TEST(LinalgSolves, CholeskyUsesSelectedTriangleAndReusesUpperOrLowerFactor
 TYPED_TEST(LinalgSolves, RejectsMalformedRhsPivotsAndPlacement)
 {
     using T = TypeParam;
-    tensor<T> a{{2, 0}, {0, 3}}, b{{2}, {3}};
+    tensor<T> a{{2, 0}, {0, 3}}, b = column<T>({2, 3});
     auto      factors = vectorization::lu_factor(a);
     tensor<T> scalar(std::vector<size_t>{}), short_rhs(1, 1), vector{1, 2};
     for (auto const* invalid : {&scalar, &short_rhs})
@@ -253,12 +267,12 @@ TYPED_TEST(LinalgSolves, EmptyMatricesRhsAndBroadcastBatches)
 TYPED_TEST(LinalgSolves, SingularStatusAndTinyNonsingularSystems)
 {
     using T = TypeParam;
-    tensor<T> singular{{0, 1}, {0, 2}}, b{{1}, {2}};
+    tensor<T> singular{{0, 1}, {0, 2}}, b = column<T>({1, 2});
     auto      ex = vectorization::solve_ex(singular, b);
     EXPECT_EQ(ex.info[0], T(1));
     EXPECT_ANY_THROW(vectorization::solve_ex(singular, b, true, true));
     EXPECT_ANY_THROW(vectorization::solve(singular, b));
-    tensor<T> tiny{{T(1e-8), 0}, {0, T(2e-8)}}, x{{2}, {3}};
+    tensor<T> tiny{{T(1e-8), 0}, {0, T(2e-8)}}, x = column<T>({2, 3});
     expect_close(vectorization::solve(tiny, rhs(tiny, x, true)), x);
 }
 

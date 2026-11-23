@@ -34,6 +34,7 @@ Do_not_include_expression_evaluator_directly_use_expression_it;
 #include "common/vectorization_type_traits.h"
 #include "expressions/expression_interface_loader.h"
 #include "expressions/iteration_plan.h"
+#include "expressions/math_call_frame.h"
 #include "expressions/overlap.h"
 #include "expressions/reduce_op.h"
 
@@ -135,6 +136,7 @@ private:
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE static void run_chunk_contiguous(
         E const expr, value_t* data, size_t begin, size_t end) noexcept
     {
+        VECTORIZATION_MATH_CALL_FRAME(E);
         size_t i = begin;
 #if VECTORIZATION_VECTORIZED
         constexpr size_t      length = VectorLength;
@@ -303,6 +305,7 @@ private:
     VECTORIZATION_HOST_FUNCTION_ATTRIBUTE static void run_flat(
         E const expr, value_t* data, size_t n, size_t cap, size_t aligned_end) noexcept
     {
+        VECTORIZATION_MATH_CALL_FRAME(E);
         size_t i = 0;
 
 #if VECTORIZATION_VECTORIZED

@@ -64,6 +64,7 @@ struct forward_operands_t
 
 // Tensor leaves retain their allocation and snapshot shape/strides. Temporaries
 // and views therefore stay valid for the lifetime of a saved expression.
+VECTORIZATION_EXEC_CHECK_DISABLE
 template <typename T> VECTORIZATION_FUNCTION_ATTRIBUTE stored_operand_t<T> store_operand(T&& x)
 {
     using raw = vectorization::remove_cvref_t<T>;
@@ -113,8 +114,10 @@ public:
 
     // Defaulted copy/move must carry __host__ __device__ for CUDA/HIP device
     // code to be able to copy expression nodes (e.g. when capturing in a kernel).
-    VECTORIZATION_FUNCTION_ATTRIBUTE unary_expression(unary_expression const& e)     = default;
-    VECTORIZATION_FUNCTION_ATTRIBUTE unary_expression(unary_expression&& e) noexcept = default;
+    VECTORIZATION_DEFAULTED_FUNCTION_ATTRIBUTE unary_expression(
+        unary_expression const& e) = default;
+    VECTORIZATION_DEFAULTED_FUNCTION_ATTRIBUTE unary_expression(
+        unary_expression&& e) noexcept = default;
 
     // Expressions are invariant
     VECTORIZATION_FUNCTION_ATTRIBUTE unary_expression& operator=(
@@ -203,8 +206,10 @@ public:
     {
     }
 
-    VECTORIZATION_FUNCTION_ATTRIBUTE binary_expression(binary_expression const& e)     = default;
-    VECTORIZATION_FUNCTION_ATTRIBUTE binary_expression(binary_expression&& e) noexcept = default;
+    VECTORIZATION_DEFAULTED_FUNCTION_ATTRIBUTE binary_expression(
+        binary_expression const& e) = default;
+    VECTORIZATION_DEFAULTED_FUNCTION_ATTRIBUTE binary_expression(
+        binary_expression&& e) noexcept = default;
 
     // Expressions are invariant
     VECTORIZATION_FUNCTION_ATTRIBUTE binary_expression& operator=(
@@ -315,8 +320,10 @@ public:
     {
     }
 
-    VECTORIZATION_FUNCTION_ATTRIBUTE trinary_expression(trinary_expression const& e)     = default;
-    VECTORIZATION_FUNCTION_ATTRIBUTE trinary_expression(trinary_expression&& e) noexcept = default;
+    VECTORIZATION_DEFAULTED_FUNCTION_ATTRIBUTE trinary_expression(
+        trinary_expression const& e) = default;
+    VECTORIZATION_DEFAULTED_FUNCTION_ATTRIBUTE trinary_expression(
+        trinary_expression&& e) noexcept = default;
 
     // Expressions are invariant
     VECTORIZATION_FUNCTION_ATTRIBUTE trinary_expression& operator=(

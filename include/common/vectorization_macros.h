@@ -104,6 +104,31 @@
 #define VECTORIZATION_HOST_FUNCTION_ATTRIBUTE VECTORIZATION_HOST_ONLY
 #endif
 
+// Execution-space attributes for special members explicitly defaulted on their
+// first declaration. nvcc ignores __host__/__device__ there (warning #20012-D)
+// and infers the space from the callers, so the attribute is dropped for nvcc
+// only; Clang CUDA and HIP honour it.
+#if defined(__NVCC__)
+#define VECTORIZATION_DEFAULTED_FUNCTION_ATTRIBUTE
+#define VECTORIZATION_DEFAULTED_HOST_FUNCTION_ATTRIBUTE
+#else
+#define VECTORIZATION_DEFAULTED_FUNCTION_ATTRIBUTE VECTORIZATION_FUNCTION_ATTRIBUTE
+#define VECTORIZATION_DEFAULTED_HOST_FUNCTION_ATTRIBUTE VECTORIZATION_HOST_FUNCTION_ATTRIBUTE
+#endif
+
+// Placed before a __host__ __device__ function template (or member of a class
+// template) whose host instantiations call host-only code, such as the
+// ownership of a host tensor leaf. nvcc otherwise warns (#20011-D/#20014-D) for
+// every such instantiation even though it never runs on the device. Clang CUDA
+// and HIP diagnose only device-emitted calls, so they need no pragma. As in
+// CCCL, this relies on the conforming preprocessor (/Zc:preprocessor) that
+// CUDA 13 already requires with cl.exe.
+#if defined(__NVCC__)
+#define VECTORIZATION_EXEC_CHECK_DISABLE _Pragma("nv_exec_check_disable")
+#else
+#define VECTORIZATION_EXEC_CHECK_DISABLE
+#endif
+
 #if __cplusplus >= 201703L
 #define VECTORIZATION_NODISCARD [[nodiscard]]
 #define VECTORIZATION_UNUSED [[maybe_unused]]

@@ -26,6 +26,15 @@ function(xsigma_add_linearalgebra_product)
         unset(LINALG_ENABLE_${_legacy_gpu} CACHE)
     endforeach()
 
+    # Build LinearAlgebra's kernels for the SMs Scalars resolved (which honors
+    # CMAKE_CUDA_ARCHITECTURES). Left alone, LinearAlgebra falls back to
+    # "native", which CMake cannot resolve with Clang as the CUDA compiler
+    # ("no NVIDIA GPU was detected") and which would differ from Scalars' list.
+    if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND SCALARS_CUDA_ARCHITECTURES)
+        set(LINALG_CUDA_ARCHITECTURES "${SCALARS_CUDA_ARCHITECTURES}"
+            CACHE STRING "Configured by Vectorization" FORCE)
+    endif()
+
     # --- CPU BLAS backends: forward from Vectorization public flags ---
     foreach(_linalg_feature IN ITEMS MKL BLAS BLIS)
         if(DEFINED VECTORIZATION_ENABLE_${_linalg_feature})
@@ -44,4 +53,19 @@ function(xsigma_add_linearalgebra_product)
         CACHE BOOL "Configured by Vectorization" FORCE)
 
     add_subdirectory("${_linalg_src}" "${CMAKE_BINARY_DIR}/ThirdParty/LinearAlgebra_build" EXCLUDE_FROM_ALL)
+
+    # Windows Clang-CUDA needs the same two fixes as our CUDA-tagged tests
+    # (Testing/Cxx/CMakeLists.txt) for LinearAlgebra's .cu kernels: NOMINMAX,
+    # since the CUDA headers pull in windows.h's min/max macros, and
+    # -fno-cuda-host-device-constexpr, since MSVC's C++20 std::lerp otherwise
+    # makes "call to 'fma' is ambiguous" against Clang's device overloads.
+    if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
+       AND TARGET LinearAlgebra)
+        target_compile_definitions(LinearAlgebra PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:NOMINMAX>)
+        target_compile_options(LinearAlgebra
+            PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xclang -fno-cuda-host-device-constexpr>")
+    endif()
+    # Its CUDA kernels get /Zc:preprocessor as nvcc's -Xcompiler=/Zc:preprocessor,
+    # which clang-cl ignores with a warning (see Cmake/dependencies.cmake).
+    vectorization_unwrap_cuda_xcompiler_options(LinearAlgebra)
 endfunction()

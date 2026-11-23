@@ -136,6 +136,12 @@ def vectorization_linkopts():
             "-lpthread",
             "-ldl",
         ],
+    }) + select({
+        # rules_cuda's Windows runtime links cudadevrt.lib, which names the
+        # static CRT (LIBCMT) while everything else uses the DLL CRT
+        # (LNK4098). Keep the static CRT out, as the DLL CRT build requires.
+        Label("//bazel:enable_cuda_windows"): ["/NODEFAULTLIB:LIBCMT"],
+        "//conditions:default": [],
     })
 
 def vectorization_gpu_copts():
@@ -149,6 +155,38 @@ def vectorization_gpu_copts():
     """
     return select({
         Label("//bazel:enable_cuda_windows"): ["/Zc:preprocessor"],
+        "//conditions:default": [],
+    })
+
+def vectorization_cuda_copts():
+    """Returns copts for cuda_library targets that compile Vectorization code.
+
+    Mirrors Cmake/tools/cuda.cmake and Cmake/dependencies.cmake:
+      nvcc          --expt-relaxed-constexpr: constexpr functions (std::array
+                    accessors, lambdas) are callable from __host__ __device__
+                    expression code, as Clang CUDA allows by default.
+      nvcc/Windows  -diag-suppress=940,1394: nvcc's equivalents of C4715 and
+                    C4251, which the cl.exe builds already disable.
+                    -diag-suppress=108,174: Windows SDK headers (winnt.h,
+                    rpcndr.h, reached through CUDA's NVTX headers). nvcc
+                    treats them as system headers only when WindowsSdkDir is
+                    set, and rules_cuda passes nvcc just PATH/INCLUDE/TEMP/TMP.
+                    The CMake nvcc build still reports both for our code.
+      Clang         -Wno-unknown-cuda-version: the toolkit may be newer than
+                    the CUDA releases Clang knows.
+      Clang/Windows device-only -Wno-ignored-attributes: the device pass
+                    ignores every dllexport/dllimport.
+    """
+    return ["-std=" + VECTORIZATION_CXX_STD] + select({
+        "@rules_cuda//cuda:compiler_is_nvcc": ["--expt-relaxed-constexpr"],
+        "@rules_cuda//cuda:compiler_is_clang": ["-Wno-unknown-cuda-version"],
+        "//conditions:default": [],
+    }) + select({
+        Label("//bazel:cuda_nvcc_windows"): ["-diag-suppress=108,174,940,1394"],
+        Label("//bazel:cuda_clang_windows"): [
+            "-Xarch_device",
+            "-Wno-ignored-attributes",
+        ],
         "//conditions:default": [],
     })
 

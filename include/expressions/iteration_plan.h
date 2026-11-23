@@ -33,6 +33,7 @@
 #include "expressions/expression_interface.h"
 #include "expressions/expression_interface_loader.h"
 #include "expressions/expression_shape.h"
+#include "expressions/math_call_frame.h"
 #include "expressions/strided_ref.h"
 
 // CPU iteration planner for elementwise expressions whose operands are not all
@@ -652,6 +653,7 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void loop2d(L lowered,
     int64_t                                         row_begin,
     int64_t                                         row_end) noexcept
 {
+    VECTORIZATION_MATH_CALL_FRAME(L);
     const int     outer   = plan.rank - 1;
     const int64_t inner_n = plan.row_size();
     std::array<int64_t, kMaxRank>     coord{};
@@ -744,8 +746,8 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void run_planned(
     T*            out     = dst.data();
     const int64_t rows    = plan.rows();
 
-    static constexpr int64_t kGrainSize = 32768;  // elements, as in PyTorch
 #if VECTORIZATION_ENABLE_PARALLEL
+    static constexpr int64_t kGrainSize = 32768;  // elements, as in PyTorch
     if (plan.numel < kGrainSize || rows < 2)
     {
         detail::loop2d(lowered, out, plan, 0, rows);

@@ -169,8 +169,9 @@ template <typename T> VECTORIZATION_NOINLINE void test_shapes_broadcasting()
     {
         tensor_t a(dims_t{3});
         tensor_t dst(dims_t{2, 3});
-        tensor_t small(dims_t{3});
-        EXPECT_THROW({ small = dst + a; }, logging::exception);
+        // Not "small": <rpcndr.h> (pulled in by windows.h) defines it as a macro.
+        tensor_t narrow(dims_t{3});
+        EXPECT_THROW({ narrow = dst + a; }, logging::exception);
         EXPECT_NO_THROW({ dst = dst * T(0) + a; });
     }
 }

@@ -8,9 +8,10 @@ cc_library(
     srcs = ["loguru.cpp"],
     hdrs = ["loguru.hpp"],
     copts = select({
+        # No /std: on Windows: .bazelrc builds every target as C++20, and a
+        # second /std: here only makes cl.exe warn (D9025) that it overrides it.
         "@platforms//os:windows": [
             "/W0",  # Disable warnings
-            "/std:c++17",
         ],
         "@platforms//os:macos": [
             "-w",  # Disable warnings

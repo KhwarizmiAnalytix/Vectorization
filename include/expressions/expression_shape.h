@@ -90,6 +90,8 @@ VECTORIZATION_CUDA_FUNCTION_TYPE inline bool broadcast_into(
     return true;
 }
 
+// Product expressions report their shape through a host-only result_shape().
+VECTORIZATION_EXEC_CHECK_DISABLE
 template <typename E>
 VECTORIZATION_FUNCTION_ATTRIBUTE bool accumulate_shape(
     E const& expr, expression_shape& acc) noexcept

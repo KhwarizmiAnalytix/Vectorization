@@ -258,125 +258,6 @@ set_target_properties(
              VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
 )
 
-# Shared by both the VectorizationCxxTests block below and the BenchmarkTensorGpu.cpp
-# block further down this file — factored out so the two Clang-CUDA workarounds each
-# have exactly one place their flags/logic are typed, instead of two copies that could
-# silently drift apart on a future edit to only one of them.
-#
-# `-x cuda`: vectorization_tag_gpu_expression_sources() (see the ODR-safety comment at
-# the top of this file) sets the CMake LANGUAGE CUDA source property on these .cpp
-# files, and Library/Memory/Cmake/cuda.cmake tries to inject `-x cuda` into
-# CMAKE_CUDA_COMPILE_OBJECT for exactly this case — but with the Ninja generator that
-# template is never consulted (Ninja emits its own hardcoded
-# "<LANG>_COMPILER__<target>_unscanned_<config>" rule instead), so the generated command
-# was plain `clang++ ... -c TestTensorGpu.cpp -o ...` with no `-x cuda`. Clang then
-# compiled these files as ordinary C++ by extension: __CUDACC__ was never defined, every
-# `--cuda-gpu-arch=...` flag logged "argument unused during compilation", and
-# expressions_evaluator's `#if (VECTORIZATION_HAS_CUDA && defined(__CUDACC__))`
-# GPU-dispatch branch was silently compiled out of every one of these TUs — including
-# TestTensorGpu.cpp itself. At runtime that made every GPU tensor.run()/fill() call
-# (real .cu files were unaffected, since Clang infers CUDA mode from the .cu
-# extension without needing -x) trip check_cpu_reachable's "destination device()
-# is not CPU, and no GPU/Metal dispatch handled it in this translation unit" assertion
-# instead of actually dispatching to the GPU — confirmed via TensorGpu.* test failures
-# on Clang 22.1.8 + CUDA 13.1 with a real RTX 4060 Ti present. Force CUDA mode
-# explicitly via these tokens rather than relying on the (silently ineffective)
-# CMAKE_CUDA_COMPILE_OBJECT override.
-# CMAKE_CUDA_COMPILER_FORCED skips CMake's normal CUDA_STANDARD → -std= flag
-# emission, and Ninja often omits CMAKE_CUDA_FLAGS from these tagged .cpp CUDA
-# TUs. Emit -std explicitly so gtest (u16string_view / optional) and project
-# headers that need C++20 compile correctly — CI's -DCMAKE_CXX_STANDARD=17 must
-# not leave these TUs on C++17.
-set(_vectorization_clang_cuda_x_flags
-    "$<$<COMPILE_LANGUAGE:CUDA>:-x>" "$<$<COMPILE_LANGUAGE:CUDA>:cuda>"
-    "$<$<COMPILE_LANGUAGE:CUDA>:${VECTORIZATION_CLANG_CUDA_STD_FLAG}>"
-)
-
-# Windows MSVC-runtime-library (CRT) flags for CUDA-tagged .cpp files.
-# Library/Memory/Cmake/cuda.cmake appends the equivalent -D_MT/-D_DLL/
-# --dependent-lib flags to CMAKE_CUDA_FLAGS so Clang-CUDA TUs pick the same
-# CRT as ordinary CXX TUs (CMAKE_MSVC_RUNTIME_LIBRARY's automatic
-# translation only applies to the CXX/CUDA compiler-probe path, which
-# CMAKE_CUDA_COMPILER_FORCED skips) -- but CMAKE_CUDA_FLAGS is a plain
-# directory-scoped variable set in Library/Memory's scope, and (like -x cuda
-# / -std= above) Ninja's per-source rule for these LANGUAGE-CUDA-tagged .cpp
-# files never consults it, so it never reaches this directory. Confirmed via
-# lld-link: "mismatch detected for 'RuntimeLibrary'" — TestTensor.cpp.obj
-# (tagged CUDA, no _MT/_DLL defined during compilation) came back
-# MT_StaticRelease while sibling CXX objects in the same executable came
-# back MD_DynamicRelease (CMake's normal MSVC_RUNTIME_LIBRARY translation).
-# Re-derive the same flags here, in the scope where they actually apply.
-set(_vectorization_clang_cuda_crt_flags "")
-if(WIN32)
-  # Ninja is a single-config generator here, so CMAKE_BUILD_TYPE is fixed at
-  # configure time -- use it (not the $<CONFIG:Debug> generator expression)
-  # for BOTH the -D_DEBUG define and the --dependent-lib name below. Mixing
-  # the two (case-sensitive STREQUAL vs. $<CONFIG:...>'s case-insensitive
-  # match) would let them disagree whenever CMAKE_BUILD_TYPE is spelled
-  # differently than "Debug" case-wise (e.g. setup.py's --sanitizer/
-  # --valgrind/--coverage path sets "DEBUG"), re-creating the exact
-  # RuntimeLibrary-mismatch class of bug this block exists to fix: one
-  # decision would pick the debug dependent-lib name while the other skipped
-  # -D_DEBUG, or vice versa.
-  set(_vectorization_clang_cuda_crt_is_debug FALSE)
-  if(CMAKE_BUILD_TYPE MATCHES "^[Dd][Ee][Bb][Uu][Gg]$")
-    set(_vectorization_clang_cuda_crt_is_debug TRUE)
-  endif()
-  if(DEFINED CMAKE_MSVC_RUNTIME_LIBRARY AND NOT CMAKE_MSVC_RUNTIME_LIBRARY MATCHES "DLL")
-    if(_vectorization_clang_cuda_crt_is_debug)
-      set(_vectorization_clang_cuda_crt_dependent_lib "libcmtd")
-    else()
-      set(_vectorization_clang_cuda_crt_dependent_lib "libcmt")
-    endif()
-    set(_vectorization_clang_cuda_crt_flags "$<$<COMPILE_LANGUAGE:CUDA>:-D_MT>")
-  else()
-    if(_vectorization_clang_cuda_crt_is_debug)
-      set(_vectorization_clang_cuda_crt_dependent_lib "msvcrtd")
-    else()
-      set(_vectorization_clang_cuda_crt_dependent_lib "msvcrt")
-    endif()
-    set(_vectorization_clang_cuda_crt_flags "$<$<COMPILE_LANGUAGE:CUDA>:-D_MT>"
-                                            "$<$<COMPILE_LANGUAGE:CUDA>:-D_DLL>"
-    )
-  endif()
-  if(_vectorization_clang_cuda_crt_is_debug)
-    list(APPEND _vectorization_clang_cuda_crt_flags "$<$<COMPILE_LANGUAGE:CUDA>:-D_DEBUG>")
-  endif()
-  list(APPEND _vectorization_clang_cuda_crt_flags "$<$<COMPILE_LANGUAGE:CUDA>:-Xclang>"
-       "$<$<COMPILE_LANGUAGE:CUDA>:--dependent-lib=${_vectorization_clang_cuda_crt_dependent_lib}>"
-  )
-  unset(_vectorization_clang_cuda_crt_dependent_lib)
-  unset(_vectorization_clang_cuda_crt_is_debug)
-endif()
-
-# CUDA 13 dropped texture_fetch_functions.h (legacy bound-texture-reference API,
-# superseded by texture objects / texture_indirect_functions.h, which CUDA 13 still
-# ships), but this Clang's <__clang_cuda_runtime_wrapper.h> unconditionally `#include`s
-# it for every CUDA TU regardless of toolkit version — a fatal "file not found" on CUDA
-# 13 until a Clang release picks up the fix (confirmed on Clang 20.1.2 + CUDA 13.1).
-# Nothing in this project calls the legacy API, so shadow the
-# include with an empty stub instead of touching Clang or the CUDA toolkit; call
-# find_package again inside here (cheap — CMake reuses the cached result) since
-# CUDAToolkit_INCLUDE_DIRS is a normal variable scoped to whichever subdirectory first
-# found it, not visible in this file's scope otherwise.
-function(vectorization_apply_cuda_texture_fetch_shim _vatfs_target)
-  find_package(CUDAToolkit REQUIRED)
-  set(_vatfs_has_header FALSE)
-  foreach(_vatfs_inc_dir IN LISTS CUDAToolkit_INCLUDE_DIRS)
-    if(EXISTS "${_vatfs_inc_dir}/texture_fetch_functions.h")
-      set(_vatfs_has_header TRUE)
-    endif()
-  endforeach()
-  if(NOT _vatfs_has_header)
-    target_include_directories(
-      ${_vatfs_target} BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/cuda_texture_fetch_shim"
-    )
-    message(STATUS "${_vatfs_target}: stubbing missing CUDA texture_fetch_functions.h "
-                   "(removed in CUDA 13+, still unconditionally #included by this Clang version)"
-    )
-  endif()
-endfunction()
-
 # CUDA-specific properties for the test executable when any CUDA source is present
 # (.cu files or .cpp files compiled as CUDA via LANGUAGE CUDA).
 set(_vectorization_has_cuda_gpu_test_source FALSE)
@@ -386,40 +267,12 @@ endif()
 if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND _vectorization_has_cuda_gpu_test_source)
   set_target_properties(
     VectorizationCxxTests PROPERTIES
+      CUDA_STANDARD ${VECTORIZATION_CXX_STANDARD}
+      CUDA_STANDARD_REQUIRED ON
       CUDA_ARCHITECTURES "${VECTORIZATION_CUDA_ARCHITECTURES}"
       CUDA_RUNTIME_LIBRARY None
   )
-  # CMAKE_CUDA_COMPILER_ID is "unknown" when CMAKE_CUDA_COMPILER_FORCED=TRUE (the
-  # Clang+CMake 3.28 workaround in cuda.cmake skips the compiler probe). Use
-  # CMAKE_CXX_COMPILER_ID as the reliable fallback: when Clang is the CUDA compiler
-  # it is always also the CXX compiler, so CMAKE_CXX_COMPILER_ID is always "Clang".
-  if(CMAKE_CUDA_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    # The CUDA_ARCHITECTURES property set above is a no-op for flag generation here:
-    # CMAKE_CUDA_COMPILER_FORCED (see cuda.cmake) skips the compiler-probe step that
-    # would normally load Clang's CUDA arch-flag-generation rules, so CMake never
-    # translates CUDA_ARCHITECTURES into --cuda-gpu-arch flags. Without them Clang
-    # falls back to its own default (sm_35), which CUDA 12+ toolkits reject outright.
-    # Emit the flags directly instead of relying on the property.
-    foreach(_vectorization_cuda_arch IN LISTS VECTORIZATION_CUDA_ARCHITECTURES)
-      target_compile_options(
-        VectorizationCxxTests
-        PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--cuda-gpu-arch=sm_${_vectorization_cuda_arch}>
-      )
-    endforeach()
-    unset(_vectorization_cuda_arch)
-
-    # Same FORCED-compiler gap as above: CUDA_STANDARD target property does not
-    # emit -std=. Apply it target-wide for every CUDA TU (.cu and tagged .cpp).
-    target_compile_options(
-      VectorizationCxxTests
-      PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:${VECTORIZATION_CLANG_CUDA_STD_FLAG}>
-    )
-
-    # CUDA 13 dropped texture_fetch_functions.h; see vectorization_apply_cuda_texture_fetch_shim()
-    # above (shared with the BenchmarkTensorGpu.cpp block further down this file) for
-    # the full explanation.
-    vectorization_apply_cuda_texture_fetch_shim(VectorizationCxxTests)
-
+  if(CMAKE_CUDA_COMPILER_ID STREQUAL "Clang")
     # `-Xclang -fno-cuda-host-device-constexpr` works around a Clang CUDA +
     # C++20 ambiguity where std::lerp's implicit __host__ __device__ annotation
     # collides with the device-only std::fma overloads from
@@ -455,33 +308,16 @@ if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND _vectorization_has_cuda_gpu_tes
     # ODR-safety tagging above (see comment at the top of this file) compiles
     # TestTensor.cpp, TestTensorF2.cpp, etc. as CUDA too, and they instantiate the
     # same expression-tree templates, so they're equally exposed to the crash.
-    #
-    # `-x cuda`: see _vectorization_clang_cuda_x_flags above (shared with the
-    # BenchmarkTensorGpu.cpp block further down this file) for the full explanation.
     if(WIN32)
       set_source_files_properties(
         ${_vec_tensor_test_sources}
         PROPERTIES
           COMPILE_OPTIONS
-          "${_vectorization_clang_cuda_x_flags};${_vectorization_clang_cuda_crt_flags};$<$<COMPILE_LANGUAGE:CUDA>:-Xclang>;$<$<COMPILE_LANGUAGE:CUDA>:-fno-cuda-host-device-constexpr>;$<$<COMPILE_LANGUAGE:CUDA>:-O1>"
+          "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xclang -fno-cuda-host-device-constexpr>;$<$<COMPILE_LANGUAGE:CUDA>:-O1>"
       )
     else()
       set_source_files_properties(
-        ${_vec_tensor_test_sources}
-        PROPERTIES COMPILE_OPTIONS
-                   "${_vectorization_clang_cuda_x_flags};$<$<COMPILE_LANGUAGE:CUDA>:-O1>"
-      )
-    endif()
-    # Clang on Windows does not populate CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES,
-    # so lld-link cannot find cudadevrt.lib / cudart_static.lib that Clang
-    # adds automatically via -l flags. Point the linker at the CUDA lib dir.
-    if(WIN32)
-      target_link_directories(
-        VectorizationCxxTests PRIVATE "${CMAKE_CUDA_COMPILER_TOOLKIT_LIBRARY_ROOT}/lib/x64"
-      )
-    else()
-      target_link_directories(
-        VectorizationCxxTests PRIVATE "${CMAKE_CUDA_COMPILER_TOOLKIT_LIBRARY_ROOT}/lib64"
+        ${_vec_tensor_test_sources} PROPERTIES COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:CUDA>:-O1>"
       )
     endif()
   else()
@@ -715,34 +551,7 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
       # MSVC's <cmath> — scope the workaround to WIN32, same reasoning as
       # VectorizationCxxTests above, so it doesn't break
       # __clang_cuda_texture_intrinsics.h on Linux/macOS for no benefit.
-      if(CMAKE_CUDA_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-        # Same missing texture_fetch_functions.h on CUDA 13 as VectorizationCxxTests
-        # above; see vectorization_apply_cuda_texture_fetch_shim() there for the full
-        # explanation.
-        vectorization_apply_cuda_texture_fetch_shim(${target_name})
-
-        # CUDA_ARCHITECTURES set above is a no-op for flag generation here -- same
-        # CMAKE_CUDA_COMPILER_FORCED issue as VectorizationCxxTests above. Emit the
-        # flags directly instead of relying on the property.
-        foreach(_vectorization_cuda_arch IN LISTS VECTORIZATION_CUDA_ARCHITECTURES)
-          target_compile_options(
-            ${target_name}
-            PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--cuda-gpu-arch=sm_${_vectorization_cuda_arch}>
-          )
-        endforeach()
-        unset(_vectorization_cuda_arch)
-
-        # `-x cuda`: same Ninja-generator gap as VectorizationCxxTests above; see
-        # _vectorization_clang_cuda_x_flags there for the full explanation.
-        target_compile_options(${target_name} PRIVATE ${_vectorization_clang_cuda_x_flags})
-
-        # Windows CRT (RuntimeLibrary) flags: this target's single CUDA-tagged
-        # source links against Vectorization.lib/Memory.lib etc. built as
-        # ordinary CXX, so it needs the same _MT/_DLL/--dependent-lib flags as
-        # VectorizationCxxTests' _vec_tensor_test_sources — see
-        # _vectorization_clang_cuda_crt_flags above for the full explanation.
-        target_compile_options(${target_name} PRIVATE ${_vectorization_clang_cuda_crt_flags})
-
+      if(CMAKE_CUDA_COMPILER_ID STREQUAL "Clang")
         # Same Clang -O3 ICE (always-inline / GVN passes, confirmed on both Clang 20
         # and Clang 22) as VectorizationCxxTests' _vec_tensor_test_sources above —
         # BenchmarkTensorGpu.cpp instantiates the same heavy tensor.h expression
@@ -750,8 +559,6 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
         # the detailed comment there for what was actually re-tested on this
         # machine before keeping -O1).
         if(WIN32)
-          # Keep the frontend option paired with -Xclang when CMake de-duplicates
-          # target options: the CRT flags above also contain -Xclang.
           target_compile_options(
             ${target_name}
             PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xclang -fno-cuda-host-device-constexpr>"
@@ -759,15 +566,6 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
           )
         else()
           target_compile_options(${target_name} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O1>)
-        endif()
-        if(WIN32)
-          target_link_directories(
-            ${target_name} PRIVATE "${CMAKE_CUDA_COMPILER_TOOLKIT_LIBRARY_ROOT}/lib/x64"
-          )
-        else()
-          target_link_directories(
-            ${target_name} PRIVATE "${CMAKE_CUDA_COMPILER_TOOLKIT_LIBRARY_ROOT}/lib64"
-          )
         endif()
       endif()
     elseif(_bench_is_gpu AND _bench_gpu_lang STREQUAL "HIP")

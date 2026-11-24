@@ -76,24 +76,10 @@ if(NOT TARGET Scalars::Scalars)
   )
 endif()
 
-# Clang-CUDA on Windows: fix CUDA rules in every scope that enables CUDA (see
-# the module). Must be registered before Memory runs enable_language(CUDA).
-if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
-   AND NOT CMAKE_USER_MAKE_RULES_OVERRIDE_CUDA
-)
-  set(CMAKE_USER_MAKE_RULES_OVERRIDE_CUDA
-      "${CMAKE_CURRENT_LIST_DIR}/tools/clang_cuda_windows_rules.cmake"
-  )
-endif()
-# The forced Clang CUDA compiler gets none of CMake's default CXX flags, so
-# CUDA TUs miss NDEBUG in optimized configurations and, with clang-cl, /EHsc.
-# Without /EHsc clang-cl builds them without C++ exception handling while the
-# DLLs they call throw through their frames, and inline code differs from the
-# CXX TUs it is shared with. Give CUDA sources the same defaults as CXX.
+# CMake's MSVC rules give /EHsc to CXX only, so clang-cl would build CUDA TUs
+# without C++ exception handling while the DLLs they call throw through their
+# frames, and inline code would differ from the CXX TUs it is shared with.
 if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-  add_compile_definitions(
-    "$<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<NOT:$<CONFIG:Debug>>>:NDEBUG>"
-  )
   if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
     add_compile_options("$<$<COMPILE_LANGUAGE:CUDA>:/EHsc>")
   endif()
@@ -110,9 +96,8 @@ if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CXX_COMPILER_ID
   endif()
 endif()
 # Clang knows CUDA releases only up to its own version and warns about each
-# CUDA TU when the toolkit is newer. Memory silences this through
-# CMAKE_CUDA_FLAGS, which reaches only its own directory scope.
-if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+# CUDA TU when the toolkit is newer.
+if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CUDA_COMPILER_ID STREQUAL "Clang")
   add_compile_options("$<$<COMPILE_LANGUAGE:CUDA>:-Wno-unknown-cuda-version>")
 endif()
 if(NOT TARGET Memory::Memory)
@@ -123,40 +108,9 @@ if(NOT TARGET Memory::Memory)
     EXCLUDE_FROM_ALL
   )
 endif()
-# With a Clang C++ compiler, Memory forces Clang as the CUDA compiler. CMake
-# then loads its Windows-Clang-CUDA rules, including the table that maps
-# MSVC_RUNTIME_LIBRARY to compile flags, only in Memory's directory scope.
-# Every other directory with CUDA sources (LinearAlgebra's .cu kernels, our
-# CUDA-tagged tests) fails to generate: "MSVC_RUNTIME_LIBRARY value
-# 'MultiThreadedDLL' not known for this CUDA compiler". Define the table here,
-# in the top-level scope, with the flags CMake uses for Clang; clang-cl
-# accepts them too.
-if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
-   AND NOT DEFINED CMAKE_CUDA_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDLL
-)
-  set(CMAKE_CUDA_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreaded
-      -D_MT -Xclang --dependent-lib=libcmt
-  )
-  set(CMAKE_CUDA_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDLL
-      -D_DLL -D_MT -Xclang --dependent-lib=msvcrt
-  )
-  set(CMAKE_CUDA_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDebug
-      -D_DEBUG -D_MT -Xclang --dependent-lib=libcmtd
-  )
-  set(CMAKE_CUDA_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDebugDLL
-      -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd
-  )
-  # clang-cl also uses /Fo<OBJECT> as the output of every per-architecture
-  # ptxas step, so with more than one --cuda-gpu-arch each cubin overwrites the
-  # last and fatbinary fails ("elf arch does not match user-specified arch").
-  # -o names only the final object and lets the driver use temporaries.
-  if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-    string(REPLACE "/Fo<OBJECT>" "-o <OBJECT>" CMAKE_CUDA_COMPILE_OBJECT
-                   "${CMAKE_CUDA_COMPILE_OBJECT}"
-    )
-    if(VECTORIZATION_CPU_BACKEND STREQUAL "avx2")
-      add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:/clang:-mavx2>)
-    endif()
+if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+  if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC" AND VECTORIZATION_CPU_BACKEND STREQUAL "avx2")
+    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:/clang:-mavx2>)
   endif()
   set(CMAKE_CUDA_RUNTIME_LIBRARY_LINK_OPTIONS_SHARED
       "${CUDAToolkit_LIBRARY_DIR}/cudadevrt.lib"

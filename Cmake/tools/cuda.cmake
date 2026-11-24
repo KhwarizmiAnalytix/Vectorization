@@ -3,20 +3,19 @@ include_guard(GLOBAL)
 # =============================================================================
 # CUDA GPU backend for Vectorization
 #
-# Mirrors LinearAlgebra's Cmake/cuda.cmake and PyTorch cmake/Cuda.cmake.
-# Called from CMakeLists.txt when VECTORIZATION_GPU_BACKEND=cuda; see
-# vectorization_apply_cuda_flags() for per-target usage.
+# Included from the top-level CMakeLists.txt before any dependency is added.
+# A language enabled in a subdirectory is invisible to its siblings, so CUDA
+# must be enabled here for CMake's own rules (CUDA_ARCHITECTURES,
+# CUDA_STANDARD, the toolkit path, MSVC_RUNTIME_LIBRARY) to apply to every
+# target: ours, Memory's, Scalars' and LinearAlgebra's.
 #
 # Vectorization uses LANGUAGE CUDA tagging on .cpp expression-template
-# sources (vectorization_tag_gpu_expression_sources()) rather than .cu files,
-# so this module only needs enable_language(CUDA) and arch setup — no
-# find_package(CUDAToolkit) for cublas/cusolver here.
+# sources (vectorization_tag_gpu_expression_sources()) rather than .cu files.
 # =============================================================================
 
-# Arch selection: honour any existing CMAKE_CUDA_ARCHITECTURES (e.g. from a
-# parent project's Memory/cuda.cmake), fall through to XSIGMA_CUDA_ARCHITECTURES_DEFAULT
-# (set by a shared fleet helper), otherwise the Turing+ fleet default.
-# sm_70 was removed in CUDA 12.8; CUDA 13.x starts at sm_75.
+# Honour any existing CMAKE_CUDA_ARCHITECTURES, fall through to
+# XSIGMA_CUDA_ARCHITECTURES_DEFAULT (set by a shared fleet helper), otherwise the
+# Turing+ fleet default. sm_70 was removed in CUDA 12.8; CUDA 13.x starts at sm_75.
 if(DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT CMAKE_CUDA_ARCHITECTURES STREQUAL ""
    AND NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "native")
   set(_vec_cuda_archs "${CMAKE_CUDA_ARCHITECTURES}")
@@ -35,40 +34,36 @@ if(NOT CMAKE_CUDA_ARCHITECTURES)
   set(CMAKE_CUDA_ARCHITECTURES "${VECTORIZATION_CUDA_ARCHITECTURES}")
 endif()
 
-enable_language(CUDA)
+# Clang compiles CUDA whenever it is the C++ compiler; otherwise nvcc.
+if(NOT CMAKE_CUDA_COMPILER AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+  set(CMAKE_CUDA_COMPILER "${CMAKE_CXX_COMPILER}" CACHE FILEPATH "CUDA compiler (Clang)")
+endif()
 
-# With a forced Clang compiler, enable_language(CUDA) reloads
-# CMakeCUDACompiler.cmake and its empty implicit-include list shadows the
-# previously cached fallback. Restore it so system TBB's /usr/include is not
-# emitted ahead of libstdc++, breaking cmath's include_next <math.h>.
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  list(APPEND CMAKE_CUDA_IMPLICIT_INCLUDE_DIRECTORIES ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES})
-  list(REMOVE_DUPLICATES CMAKE_CUDA_IMPLICIT_INCLUDE_DIRECTORIES)
-  set(CMAKE_CUDA_IMPLICIT_INCLUDE_DIRECTORIES "${CMAKE_CUDA_IMPLICIT_INCLUDE_DIRECTORIES}"
-      CACHE INTERNAL "CUDA implicit host include directories" FORCE
+# CMake identifies Clang as a CUDA compiler by compiling a probe for a fixed GPU
+# architecture. Releases before 3.31.10 only probe sm_52 and older, which
+# CUDA 13 no longer supports, so identification fails.
+find_package(CUDAToolkit REQUIRED)
+if(CMAKE_CUDA_COMPILER STREQUAL CMAKE_CXX_COMPILER AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
+   AND CUDAToolkit_VERSION VERSION_GREATER_EQUAL 13.0
+   AND CMAKE_VERSION VERSION_LESS 3.31.10)
+  message(
+    FATAL_ERROR
+      "Clang as the CUDA compiler with CUDA ${CUDAToolkit_VERSION} requires CMake 3.31.10 or "
+      "newer (found ${CMAKE_VERSION}). Install one, e.g. python3 -m pip install 'cmake>=3.31.10'."
   )
 endif()
 
-# Language-standard flag for Clang as the CUDA compiler (see below). clang-cl
-# ignores a GNU -std= with a warning, and given /clang:-std= as well as the
-# -std:c++NN CMake emits it reports the latter as unused, so use clang-cl's
-# own spelling.
-if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-  if(VECTORIZATION_CXX_STANDARD GREATER_EQUAL 23)
-    set(VECTORIZATION_CLANG_CUDA_STD_FLAG "-std:c++latest")
-  else()
-    set(VECTORIZATION_CLANG_CUDA_STD_FLAG "-std:c++${VECTORIZATION_CXX_STANDARD}")
-  endif()
-else()
-  set(VECTORIZATION_CLANG_CUDA_STD_FLAG "-std=c++${VECTORIZATION_CXX_STANDARD}")
+if(WIN32 AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"
+   AND CMAKE_CUDA_COMPILER STREQUAL CMAKE_CXX_COMPILER AND NOT CMAKE_USER_MAKE_RULES_OVERRIDE_CUDA)
+  set(CMAKE_USER_MAKE_RULES_OVERRIDE_CUDA "${CMAKE_CURRENT_LIST_DIR}/clang_cuda_windows_rules.cmake")
 endif()
+
+enable_language(CUDA)
 
 # ---------------------------------------------------------------------------
 # vectorization_apply_cuda_flags(<target>)
 # Apply CUDA language properties and per-target compile options.
 # Mirrors linalg_apply_cuda_flags() and PyTorch's torch_cuda_compile_options.
-# CMAKE_CUDA_COMPILER_FORCED skips CUDA_STANDARD → -std= emission for Clang,
-# so the explicit -std= flag is required in that case.
 # ---------------------------------------------------------------------------
 function(vectorization_apply_cuda_flags target)
   set_target_properties(${target} PROPERTIES
@@ -77,9 +72,7 @@ function(vectorization_apply_cuda_flags target)
       CUDA_ARCHITECTURES "${VECTORIZATION_CUDA_ARCHITECTURES}"
       CUDA_SEPARABLE_COMPILATION OFF)
   if(CMAKE_CUDA_COMPILER_ID STREQUAL "Clang")
-    target_compile_options(${target} PRIVATE
-        $<$<COMPILE_LANGUAGE:CUDA>:-ffast-math>
-        $<$<COMPILE_LANGUAGE:CUDA>:${VECTORIZATION_CLANG_CUDA_STD_FLAG}>)
+    target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-ffast-math>)
   else()
     target_compile_options(${target} PRIVATE
         $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math -Xcompiler=-fPIC>)

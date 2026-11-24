@@ -233,6 +233,11 @@ endif()
 if(VECTORIZATION_GPU_BACKEND STREQUAL "hip")
   include("${CMAKE_CURRENT_SOURCE_DIR}/Cmake/tools/hip.cmake")
 endif()
+# CUDA is enabled here, not by a dependency, so that every directory shares the
+# identified compiler and CMake's CUDA language rules (see Cmake/tools/cuda.cmake).
+if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda")
+  include("${CMAKE_CURRENT_SOURCE_DIR}/Cmake/tools/cuda.cmake")
+endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/Cmake/dependencies.cmake")
 
 # Logging is required — Vectorization log/check/throw macros go through the Logging
@@ -525,7 +530,6 @@ endif()
 
 # ---- CUDA GPU backend -------------------------------------------------------
 if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda")
-  include(cuda)
   vectorization_apply_cuda_flags(Vectorization)
 endif()
 

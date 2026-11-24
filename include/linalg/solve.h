@@ -130,8 +130,19 @@ template <typename T> tensor<T> transpose_last_two(tensor<T> const& src)
     return dst;
 }
 
-template <typename T> thread_local memory::data_ptr<T> linear_solver_workspace_cache;
-template <typename T> thread_local memory::data_ptr<T> triangular_solver_workspace_cache;
+// Function-local thread_local for the same GCC 13 `__tls_guard` reason as
+// the caches in linalg/factorizations.h.
+template <typename T> memory::data_ptr<T>& linear_solver_workspace_cache()
+{
+    thread_local memory::data_ptr<T> cache;
+    return cache;
+}
+
+template <typename T> memory::data_ptr<T>& triangular_solver_workspace_cache()
+{
+    thread_local memory::data_ptr<T> cache;
+    return cache;
+}
 
 // Solves A X = B (A already LU-factored) one RHS column at a time: upstream
 // linear_solver::apply has no nrhs/ldx parameter, same gap
@@ -148,7 +159,7 @@ void lu_solve_standard_block(T const* lu_block,
     using kernel        = ::linalg::linear_solver<T, detail::product_cpu_backend>;
     const auto required = kernel::workspace_size(
         static_cast<linalg_int>(n), ::linalg::linear_solver_type::LU_UPFRONT_LINEAR_SOLVER);
-    T* const workspace = grow_workspace(linear_solver_workspace_cache<T>, required);
+    T* const workspace = grow_workspace(linear_solver_workspace_cache<T>(), required);
 
     std::vector<T> lu_copy(lu_block, lu_block + static_cast<size_t>(n) * static_cast<size_t>(n));
     std::vector<linalg_int> pivot_ints(static_cast<size_t>(n));
@@ -187,7 +198,7 @@ void cholesky_solve_block(
     using kernel        = ::linalg::linear_solver<T, detail::product_cpu_backend>;
     const auto required = kernel::workspace_size(
         static_cast<linalg_int>(n), ::linalg::linear_solver_type::CHOLESKY_UPFRONT_LINEAR_SOLVER);
-    T* const workspace = grow_workspace(linear_solver_workspace_cache<T>, required);
+    T* const workspace = grow_workspace(linear_solver_workspace_cache<T>(), required);
 
     std::vector<T> factor_copy(
         factor_block, factor_block + static_cast<size_t>(n) * static_cast<size_t>(n));
@@ -232,7 +243,7 @@ void lu_solve_transposed_block(T const* lu_block,
     using kernel = ::linalg::triangular_solver<T, detail::product_cpu_backend>;
     const auto required =
         kernel::workspace_size(static_cast<linalg_int>(n), static_cast<linalg_int>(nrhs));
-    T* const workspace = grow_workspace(triangular_solver_workspace_cache<T>, required);
+    T* const workspace = grow_workspace(triangular_solver_workspace_cache<T>(), required);
 
     std::vector<T> stage1(static_cast<size_t>(n) * static_cast<size_t>(nrhs));
     kernel::apply(/*upper=*/true,
@@ -494,7 +505,7 @@ auto solve_triangular(
     const auto required =
         kernel::workspace_size(static_cast<linalg_int>(n), static_cast<linalg_int>(nrhs));
     T* const workspace =
-        detail::grow_workspace(detail::triangular_solver_workspace_cache<T>, required);
+        detail::grow_workspace(detail::triangular_solver_workspace_cache<T>(), required);
 
     for (size_t idx = 0; idx < total; ++idx)
     {

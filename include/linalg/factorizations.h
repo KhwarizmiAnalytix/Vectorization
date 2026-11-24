@@ -58,8 +58,20 @@ template <typename T, typename A> typename tensor<T>::dimensions_type factor_bat
     return dims;
 }
 
-template <typename T> thread_local memory::data_ptr<T> lu_workspace_cache;
-template <typename T> thread_local memory::data_ptr<T> cholesky_workspace_cache;
+// Function-local thread_local rather than thread_local variable templates:
+// GCC 13 emits a duplicate `__tls_guard` when a TU also has an inline
+// thread_local (terminals/stream_guard.h) and rejects the translation unit.
+template <typename T> memory::data_ptr<T>& lu_workspace_cache()
+{
+    thread_local memory::data_ptr<T> cache;
+    return cache;
+}
+
+template <typename T> memory::data_ptr<T>& cholesky_workspace_cache()
+{
+    thread_local memory::data_ptr<T> cache;
+    return cache;
+}
 
 template <typename T> T* grow_workspace(memory::data_ptr<T>& cache, size_t required_bytes)
 {
@@ -118,7 +130,7 @@ template <typename A> auto lu_factor_impl(A const& a, bool check_errors, char co
 
     using kernel         = ::linalg::lu_decomposition<T, product_cpu_backend>;
     const auto required  = kernel::workspace_size(static_cast<linalg_int>(n));
-    T* const   workspace = grow_workspace(lu_workspace_cache<T>, required);
+    T* const   workspace = grow_workspace(lu_workspace_cache<T>(), required);
 
     // Upstream writes linalg_int pivots; pivots are stored as tensor<T> (see
     // linalg_results.h). Reuse the thread's cached buffer across calls.
@@ -284,7 +296,7 @@ template <typename A> auto cholesky_impl(A const& a, bool upper, bool check_erro
     // on every backend and transpose its output below.
     const auto type      = ::linalg::cholesky_decomposition_enum::LOWER_TRIANGULAR;
     const auto required  = kernel::workspace_size(static_cast<linalg_int>(n), type);
-    T* const   workspace = grow_workspace(cholesky_workspace_cache<T>, required);
+    T* const   workspace = grow_workspace(cholesky_workspace_cache<T>(), required);
 
     const auto nn              = static_cast<size_t>(n) * static_cast<size_t>(n);
     size_t     first_failed    = batch;

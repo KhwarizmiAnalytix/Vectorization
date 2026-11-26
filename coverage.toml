@@ -17,6 +17,11 @@ coverage_report_dir = "coverage_report"
 # caught this.
 modules = ["Vectorization"]
 
+[coverage.gcc]
+# lcov 2.x treats "inconsistent" end-line data from GCC 15 instrumentation as
+# a fatal error; add it to the ignore list so coverage collection succeeds.
+lcov_ignore_errors = ["mismatch", "negative", "gcov", "inconsistent"]
+
 [coverage.exclude]
 patterns = [
     "*ThirdParty*",

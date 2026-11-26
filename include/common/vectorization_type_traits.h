@@ -441,8 +441,8 @@ template <typename value_t, typename T> struct scalar_type<row_ref<value_t>, T>
 template <typename T, typename value_t>
 struct scalar_type<T,
     row_ref<value_t>,
-    typename std::enable_if_t<vectorization::is_fundamental<T>::value
-        && !vectorization::is_packet<T>::value>>
+    typename std::enable_if_t<vectorization::is_fundamental<T>::value &&
+                              !vectorization::is_packet<T>::value>>
 {
     using value = std::remove_const_t<value_t>;
 };
@@ -464,8 +464,8 @@ struct scalar_type<T,
 template <typename T, typename value_t, bool IsView>
 struct scalar_type<T,
     tensor_impl<value_t, IsView>,
-    typename std::enable_if_t<vectorization::is_fundamental<T>::value
-        && !vectorization::is_packet<T>::value>>
+    typename std::enable_if_t<vectorization::is_fundamental<T>::value &&
+                              !vectorization::is_packet<T>::value>>
 {
     using value = std::remove_const_t<value_t>;
 };
@@ -479,8 +479,8 @@ struct scalar_type<unary_expression<E, EVALUATOR>, T>
 template <typename T, typename E, typename EVALUATOR>
 struct scalar_type<T,
     unary_expression<E, EVALUATOR>,
-    typename std::enable_if_t<vectorization::is_fundamental<T>::value
-        && !vectorization::is_packet<T>::value>>
+    typename std::enable_if_t<vectorization::is_fundamental<T>::value &&
+                              !vectorization::is_packet<T>::value>>
 {
     using value = typename scalar_type<vectorization::remove_cvref_t<E>,
         vectorization::remove_cvref_t<E>>::value;
@@ -496,8 +496,8 @@ struct scalar_type<binary_expression<LHS, RHS, EVALUATOR>, T>
 template <typename T, typename LHS, typename RHS, typename EVALUATOR>
 struct scalar_type<T,
     binary_expression<LHS, RHS, EVALUATOR>,
-    typename std::enable_if_t<vectorization::is_fundamental<T>::value
-        && !vectorization::is_packet<T>::value>>
+    typename std::enable_if_t<vectorization::is_fundamental<T>::value &&
+                              !vectorization::is_packet<T>::value>>
 {
     using value = typename scalar_type<vectorization::remove_cvref_t<LHS>,
         vectorization::remove_cvref_t<RHS>>::value;
@@ -513,8 +513,8 @@ struct scalar_type<trinary_expression<LHS, MHS, RHS, EVALUATOR>, T>
 template <typename T, typename LHS, typename MHS, typename RHS, typename EVALUATOR>
 struct scalar_type<T,
     trinary_expression<LHS, MHS, RHS, EVALUATOR>,
-    typename std::enable_if_t<vectorization::is_fundamental<T>::value
-        && !vectorization::is_packet<T>::value>>
+    typename std::enable_if_t<vectorization::is_fundamental<T>::value &&
+                              !vectorization::is_packet<T>::value>>
 {
     using value = typename scalar_type<vectorization::remove_cvref_t<MHS>,
         vectorization::remove_cvref_t<RHS>>::value;

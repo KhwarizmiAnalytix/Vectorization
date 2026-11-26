@@ -212,13 +212,13 @@ struct metal_expr_fusable<trinary_expression<L, M, R, Ev>>
 // `body` is the MSL expression (`in0[tid]+c0*in1[tid]`).
 struct metal_fuse_state
 {
-    static constexpr int kMaxSlots = 29;
+    static constexpr int               kMaxSlots = 29;
     std::array<void const*, kMaxSlots> buffers{};
     std::array<float, kMaxSlots>       scalars{};
-    int                  n_buffers{0};
-    int                  n_scalars{0};
-    std::string          body;
-    bool                 ok{true};
+    int                                n_buffers{0};
+    int                                n_scalars{0};
+    std::string                        body;
+    bool                               ok{true};
 };
 
 inline void metal_fuse_fail(metal_fuse_state& st)
@@ -552,8 +552,13 @@ template <typename E, typename T> void run_metal(E const& expr, T& rhs)
                 throw std::runtime_error("Metal fused kernel exceeds the device buffer limit");
             }
             std::string const src = metal_detail::metal_fuse_source(st);
-            scalars::metal_backend::dispatch_fused(
-                src, st.buffers.data(), st.n_buffers, st.scalars.data(), st.n_scalars, rhs.data(), n);
+            scalars::metal_backend::dispatch_fused(src,
+                st.buffers.data(),
+                st.n_buffers,
+                st.scalars.data(),
+                st.n_scalars,
+                rhs.data(),
+                n);
         }
         else
         {

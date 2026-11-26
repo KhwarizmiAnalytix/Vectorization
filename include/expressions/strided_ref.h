@@ -85,22 +85,22 @@ static constexpr int kMaxRank = 8;
 // placement and stream bookkeeping unchanged.
 template <typename T, int MaxRank = kMaxRank> struct strided_ref
 {
-    tensor_data_view<T> view_{};
-    int                 rank{0};
+    tensor_data_view<T>          view_{};
+    int                          rank{0};
     std::array<int64_t, MaxRank> sizes{};
     std::array<int64_t, MaxRank> strides{};
-    size_t              numel{0};
-    bool                contiguous{false};
-    size_t              align_start{0};
-    size_t              align_end{0};
+    size_t                       numel{0};
+    bool                         contiguous{false};
+    size_t                       align_start{0};
+    size_t                       align_end{0};
 
-    VECTORIZATION_FUNCTION_ATTRIBUTE T*          data() const noexcept { return view_.data(); }
-    VECTORIZATION_FUNCTION_ATTRIBUTE size_t      size() const noexcept { return numel; }
+    VECTORIZATION_FUNCTION_ATTRIBUTE T*     data() const noexcept { return view_.data(); }
+    VECTORIZATION_FUNCTION_ATTRIBUTE size_t size() const noexcept { return numel; }
     // The data_view placement and identity accessors behind these are host-only.
     VECTORIZATION_EXEC_CHECK_DISABLE
     VECTORIZATION_FUNCTION_ATTRIBUTE device_enum device() const noexcept { return view_.device(); }
     VECTORIZATION_EXEC_CHECK_DISABLE
-    VECTORIZATION_FUNCTION_ATTRIBUTE int         device_index() const noexcept
+    VECTORIZATION_FUNCTION_ATTRIBUTE int device_index() const noexcept
     {
         return view_.device_index();
     }

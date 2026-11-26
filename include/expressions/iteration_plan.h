@@ -56,13 +56,14 @@ static constexpr int kMaxOperands = 32;
 //   3 — anything else: scalar rows
 struct iteration_plan
 {
-    int         rank{0};        // after dropping size-1 dimensions and merging
-    int         n_operands{0};  // destination + every tensor leaf, in tree order
-    int         tier{3};
-    int64_t     numel{0};
-    std::array<int64_t, kMaxRank>                            sizes{};    // outermost first; sizes[rank - 1] is the row
-    std::array<std::array<int64_t, kMaxRank>, kMaxOperands> strides{};  // operand 0 is the destination
-    std::array<void const*, kMaxOperands>                   bases{};    // first element of each source (index 0 unused)
+    int                           rank{0};        // after dropping size-1 dimensions and merging
+    int                           n_operands{0};  // destination + every tensor leaf, in tree order
+    int                           tier{3};
+    int64_t                       numel{0};
+    std::array<int64_t, kMaxRank> sizes{};  // outermost first; sizes[rank - 1] is the row
+    std::array<std::array<int64_t, kMaxRank>, kMaxOperands>
+                                          strides{};  // operand 0 is the destination
+    std::array<void const*, kMaxOperands> bases{};  // first element of each source (index 0 unused)
 
     VECTORIZATION_FUNCTION_ATTRIBUTE int64_t row_size() const noexcept
     {
@@ -113,7 +114,8 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void plan_leaves(
         plan.bases[op] = expr.data();
         if constexpr (is_strided_ref<expr_t>::value)
         {
-            broadcast_strides(out, expr.rank, expr.sizes.data(), expr.strides.data(), plan.strides[op].data());
+            broadcast_strides(
+                out, expr.rank, expr.sizes.data(), expr.strides.data(), plan.strides[op].data());
         }
         else
         {
@@ -508,7 +510,7 @@ inline bool dim_outer_than(iteration_plan const& plan, int a, int b) noexcept
 inline void sort_merge_classify(iteration_plan& plan)
 {
     std::array<int, kMaxRank> perm;
-    int m = 0;
+    int                       m = 0;
     for (int d = 0; d < plan.rank; ++d)
     {
         if (plan.sizes[d] != 1)
@@ -542,10 +544,10 @@ inline void sort_merge_classify(iteration_plan& plan)
         perm[j] = d;
     }
 
-    std::array<int64_t, kMaxRank>                            sizes;
+    std::array<int64_t, kMaxRank>                           sizes;
     std::array<std::array<int64_t, kMaxRank>, kMaxOperands> strides;
-    int     r = 0;
-    sizes[0]  = plan.sizes[perm[0]];
+    int                                                     r = 0;
+    sizes[0]                                                  = plan.sizes[perm[0]];
     for (int op = 0; op < plan.n_operands; ++op)
     {
         strides[op][0] = plan.strides[op][perm[0]];
@@ -654,8 +656,8 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void loop2d(L lowered,
     int64_t                                         row_end) noexcept
 {
     VECTORIZATION_MATH_CALL_FRAME(L);
-    const int     outer   = plan.rank - 1;
-    const int64_t inner_n = plan.row_size();
+    const int                         outer   = plan.rank - 1;
+    const int64_t                     inner_n = plan.row_size();
     std::array<int64_t, kMaxRank>     coord{};
     std::array<int64_t, kMaxOperands> offsets{};
 
@@ -753,10 +755,9 @@ VECTORIZATION_HOST_FUNCTION_ATTRIBUTE void run_planned(
         detail::loop2d(lowered, out, plan, 0, rows);
         return;
     }
-    const int64_t row_grain = std::max<int64_t>(1, kGrainSize / plan.row_size());
-    auto _loop2d_fn = [&](size_t begin, size_t end) {
-        detail::loop2d(lowered, out, plan, static_cast<int64_t>(begin), static_cast<int64_t>(end));
-    };
+    const int64_t row_grain  = std::max<int64_t>(1, kGrainSize / plan.row_size());
+    auto          _loop2d_fn = [&](size_t begin, size_t end)
+    { detail::loop2d(lowered, out, plan, static_cast<int64_t>(begin), static_cast<int64_t>(end)); };
     parallel_tools::parallel_for(
         size_t{0}, static_cast<size_t>(rows), static_cast<size_t>(row_grain), _loop2d_fn);
 #else

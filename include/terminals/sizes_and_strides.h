@@ -88,7 +88,8 @@ public:
         }
         return !(
             isInline()
-                ? std::memcmp(inlineStorage_.data(), other.inlineStorage_.data(), sizeof(inlineStorage_))
+                ? std::memcmp(
+                      inlineStorage_.data(), other.inlineStorage_.data(), sizeof(inlineStorage_))
                 : std::memcmp(outOfLineStorage_, other.outOfLineStorage_, storageBytes(size_)));
     }
 
@@ -369,7 +370,7 @@ private:
     size_t size_{1};
     union
     {
-        int64_t* outOfLineStorage_;
+        int64_t*                                 outOfLineStorage_;
         std::array<int64_t, MAX_INLINE_SIZE * 2> inlineStorage_{};
     };
 };

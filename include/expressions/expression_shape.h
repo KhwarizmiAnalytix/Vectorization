@@ -37,7 +37,7 @@ namespace vectorization
 // (design §5, planner step 2). Scalars do not contribute.
 struct expression_shape
 {
-    int                            rank{0};
+    int                           rank{0};
     std::array<int64_t, kMaxRank> sizes{};
 
     VECTORIZATION_FUNCTION_ATTRIBUTE size_t numel() const noexcept
@@ -70,7 +70,7 @@ VECTORIZATION_CUDA_FUNCTION_TYPE inline bool broadcast_into(
     {
         return false;
     }
-    const int out_rank = acc.rank > rank ? acc.rank : rank;
+    const int                     out_rank = acc.rank > rank ? acc.rank : rank;
     std::array<int64_t, kMaxRank> out{};
     for (int i = 0; i < out_rank; ++i)
     {

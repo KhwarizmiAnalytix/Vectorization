@@ -81,7 +81,9 @@ __global__ void gpu_eval_kernel(E expr, T* __restrict__ out, size_t n)
 {
     const size_t tid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (tid < n)
+    {
         out[tid] = expression_loader<E, false, false>::evaluate(expr, tid);
+    }
 }
 
 template <typename T> __device__ T* gpu_shared_scratch()
@@ -94,7 +96,9 @@ template <typename T> __global__ void gpu_fill_kernel(T* __restrict__ out, T val
 {
     const size_t tid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (tid < n)
+    {
         out[tid] = value;
+    }
 }
 
 // Register accumulation amortizes the block tree and reduces scratch storage.
@@ -166,7 +170,9 @@ template <typename E, typename T>
 void run_gpu(E const& expr, T* data, size_t n, gpu_stream_t stream = nullptr)
 {
     if (n == 0)
+    {
         return;
+    }
     constexpr unsigned block_size = 256;
     size_t const       blocks =
         (n + static_cast<size_t>(block_size) - 1) / static_cast<size_t>(block_size);
@@ -192,7 +198,9 @@ void run_gpu(E const& expr, T* data, size_t n, gpu_stream_t stream = nullptr)
 template <typename T> void fill_gpu(T* data, T value, size_t n, gpu_stream_t stream = nullptr)
 {
     if (n == 0)
+    {
         return;
+    }
     constexpr unsigned block_size = 256;
     size_t const       blocks =
         (n + static_cast<size_t>(block_size) - 1) / static_cast<size_t>(block_size);

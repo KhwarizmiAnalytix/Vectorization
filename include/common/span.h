@@ -39,8 +39,7 @@ using std::span;
 
 namespace vectorization
 {
-template <typename T>
-class span
+template <typename T> class span
 {
 public:
     using element_type = T;

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Imported through ForceImportBeforeCppTargets (see Cmake/tools/cuda.cmake) when
+  a Visual Studio generator uses the ClangCL toolset with CUDA. NVIDIA's MSBuild
+  customization compiles CUDA with nvcc and cl.exe as its host compiler, which
+  the ClangCL toolset does not expect.
+-->
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!--
+    ClangCL prepends Clang's builtin headers to IncludePath, which MSBuild exports
+    as INCLUDE. nvcc's cl.exe host compiler then picks up Clang's vadefs.h and
+    fails on #include_next. clang-cl finds its builtin headers on its own.
+  -->
+  <PropertyGroup Condition="'$(LLVMInstallDir)' != '' AND '$(LLVMIncludeVersion)' != ''">
+    <IncludePath>$(IncludePath.Replace('$(LLVMInstallDir)\lib\clang\$(LLVMIncludeVersion)\include;', ''))</IncludePath>
+  </PropertyGroup>
+  <!--
+    ClangCL clears ClCompile.BasicRuntimeChecks, and the CUDA targets map the
+    inherited host value with Metadata(''), which fails with MSB4023. Clang does
+    not support /RTC, so CUDA host code uses the default checks as well.
+  -->
+  <ItemDefinitionGroup>
+    <CudaCompile>
+      <RuntimeChecks Condition="'%(CudaCompile.RuntimeChecks)' == 'InheritFromHost'">Default</RuntimeChecks>
+    </CudaCompile>
+  </ItemDefinitionGroup>
+</Project>

@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
+from . import vs_toolset
 from .options import OPTIONS
 
 ACTIONS = {"config", "build", "test", "install", "clean", "cleanbuild", "verifycache", "verifytoolchain"}
@@ -245,8 +246,11 @@ def dispatch(arguments, root, flags_factory, configuration_factory, parse_legacy
             compilers = {"clang": ("clang", "clang++"), "gcc": ("gcc", "g++"), "clang-cl": ("clang-cl", "clang-cl"), "msvc": ("cl", "cl")}
             cc, cxx = compilers.get(compiler, (None, None))
             cc, cxx = options.c_compiler or cc, options.cxx_compiler or cxx
-            if generator.startswith("Visual Studio") and compiler == "clang-cl":
-                command.extend(["-T", "ClangCL"])
+            toolset = vs_toolset.select(generator, compiler == "clang-cl", definitions)
+            if toolset:
+                command.extend(["-T", toolset])
+            if generator.startswith("Visual Studio"):
+                # Visual Studio generators select compilers through the toolset.
                 cc, cxx = None, None
             if cc:
                 command.append("-DCMAKE_C_COMPILER=" + cc)

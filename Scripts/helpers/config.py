@@ -8,6 +8,8 @@ import os
 import subprocess
 from typing import Optional
 
+from . import vs_toolset
+
 
 def configure_build(
     source_path: str,
@@ -49,11 +51,11 @@ def configure_build(
             arg_cmake_verbose,
         ]
 
-        if (
-            cmake_generator.startswith("Visual Studio")
-            and "=clang-cl" in cmake_cxx_compiler
-        ):
-            generator_toolset = "ClangCL"
+        if cmake_generator.startswith("Visual Studio") and not generator_toolset:
+            generator_toolset = vs_toolset.select(
+                cmake_generator, "=clang-cl" in cmake_cxx_compiler, cmake_flags
+            )
+        if generator_toolset and generator_toolset.split(",")[0] == "ClangCL":
             cmake_cxx_compiler = ""
             cmake_c_compiler = ""
 

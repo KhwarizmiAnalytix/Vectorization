@@ -256,6 +256,82 @@ jobs:
         run: python .github/scripts/ctest_cpu.py --backend=${{ matrix.cpu_backend }}
 
   # ---------------------------------------------------------------------------
+  # Windows CUDA through Visual Studio generators: MSVC and ClangCL toolsets on
+  # VS 2022 and VS 2026. These compile CUDA with NVIDIA's MSBuild customization
+  # (nvcc with cl.exe as host), a path no Ninja job exercises; Scripts/setup.py
+  # chooses the toolset (Scripts/helpers/vs_toolset.py). CUDA 13.2 predates the
+  # VS 2026 STL, so the VS 2026 jobs also cover the MSVC 14.44 (v143) fallback.
+  # Memory links the NVIDIA driver, which hosted runners lack, so tests are
+  # built but not run, as in linux-cuda.
+  # ---------------------------------------------------------------------------
+  windows-cuda-vs:
+    name: Windows GPU / CUDA / ${{ matrix.vs }} / ${{ matrix.compiler }} (build-only)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        vs: [vs2022, vs2026]
+        compiler: [msvc, clang-cl]
+        include:
+          - vs: vs2022
+            os: windows-2022
+            generator: Visual Studio 17 2022
+          # The VS 2026 image label is deprecated from 2026-12-01
+          # (actions/runner-images#15373); move this entry when it is retired.
+          - vs: vs2026
+            os: windows-2025-vs2026
+            generator: Visual Studio 18 2026
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The Visual Studio 18 2026 generator needs CMake 4.2.
+      - run: python -m pip install "cmake>=4.2,<4.3"
+
+      # Same toolkit as Scalars' and LinearAlgebra's cuda-windows jobs, plus the
+      # libraries this build links (cuBLAS, cuSOLVER, cuSPARSE, cuRAND, CUPTI)
+      # and the MSBuild integration that Visual Studio generators need.
+      - uses: Jimver/cuda-toolkit@b8bf9c6c28f8a92fbb04dcfcaee872e60c57462d # v0.2.36
+        with:
+          cuda: '13.2.0'
+          method: network
+          sub-packages: >-
+            ["nvcc", "cudart", "crt", "nvvm", "nvptxcompiler", "thrust",
+            "visual_studio_integration", "cupti", "cublas", "cublas_dev",
+            "cusolver", "cusolver_dev", "cusparse", "cusparse_dev",
+            "curand", "curand_dev", "nvjitlink"]
+
+      - name: Configure
+        run: >
+          python Scripts/setup.py config --compiler=${{ matrix.compiler }} --generator "${{ matrix.generator }}"
+          --source-dir . --build-dir build
+          --build-type=Release
+          --cpu-backend=avx2
+          --gpu-backend=cuda
+          --lto-mode=off
+          --cuda-architectures=75
+          --testing=ON
+          --benchmark=OFF
+
+      - name: Verify the effective compilers and toolset
+        shell: pwsh
+        run: |
+          python Scripts/setup.py verifytoolchain --build-dir build --compiler ${{ matrix.compiler }} --generator "${{ matrix.generator }}"
+          if ($LASTEXITCODE -ne 0) { throw 'Unexpected C++ compiler or generator' }
+          $cuda = Get-Content -Raw (Get-ChildItem build/CMakeFiles/*/CMakeCUDACompiler.cmake)
+          if ($cuda -notmatch 'set\(CMAKE_CUDA_COMPILER_ID "NVIDIA"\)') { throw 'Expected nvcc as the CUDA compiler' }
+          Select-String -Path build/CMakeCache.txt -Pattern '^CMAKE_GENERATOR_TOOLSET:'
+
+      - name: Build
+        run: python Scripts/setup.py build --build-dir build --build-type Release --parallel 4
+
+  # ---------------------------------------------------------------------------
   # Optional numerical backends: SLEEF (NEON, macOS), Apple Accelerate vForce
   # (NEON, macOS), USE_NATIVE_ARCH (-march=native), LibTorch comparison
   # tests, and the SIMD packet-size / SVE vector-width knobs. Each is a

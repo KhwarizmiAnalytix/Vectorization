@@ -59,7 +59,7 @@ function(xsigma_add_linearalgebra_product)
     # since the CUDA headers pull in windows.h's min/max macros, and
     # -fno-cuda-host-device-constexpr, since MSVC's C++20 std::lerp otherwise
     # makes "call to 'fma' is ambiguous" against Clang's device overloads.
-    if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
+    if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CUDA_COMPILER_ID STREQUAL "Clang"
        AND TARGET LinearAlgebra)
         target_compile_definitions(LinearAlgebra PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:NOMINMAX>)
         target_compile_options(LinearAlgebra

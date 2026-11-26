@@ -35,7 +35,13 @@ if(NOT CMAKE_CUDA_ARCHITECTURES)
 endif()
 
 # Clang compiles CUDA whenever it is the C++ compiler; otherwise nvcc.
-if(NOT CMAKE_CUDA_COMPILER AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+# A CUDACXX environment variable (e.g. CUDACXX=nvcc to pair nvcc with a Clang
+# C++ compiler) takes precedence, as it does in CMake itself. Visual Studio
+# generators compile CUDA only through NVIDIA's MSBuild customization (nvcc),
+# so they keep nvcc even with the ClangCL toolset.
+if(NOT CMAKE_CUDA_COMPILER AND NOT DEFINED ENV{CUDACXX}
+   AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
+   AND NOT CMAKE_GENERATOR MATCHES "^Visual Studio")
   set(CMAKE_CUDA_COMPILER "${CMAKE_CXX_COMPILER}" CACHE FILEPATH "CUDA compiler (Clang)")
 endif()
 
@@ -51,6 +57,39 @@ if(CMAKE_CUDA_COMPILER STREQUAL CMAKE_CXX_COMPILER AND CMAKE_CXX_COMPILER_ID STR
       "Clang as the CUDA compiler with CUDA ${CUDAToolkit_VERSION} requires CMake 3.31.10 or "
       "newer (found ${CMAKE_VERSION}). Install one, e.g. python3 -m pip install 'cmake>=3.31.10'."
   )
+endif()
+
+# Visual Studio 2026's MSVC STL (14.5x) rejects CUDA older than 13.4 with
+# STL1002, and CUDA 13.2's cudafe++ crashes (0xC0000005) while reporting it, so
+# CMake's compiler identification fails without a useful message. nvcc is the
+# CUDA compiler unless Clang compiles CUDA itself (see above).
+if(MSVC_VERSION GREATER_EQUAL 1950 AND CUDAToolkit_VERSION VERSION_LESS 13.4
+   AND NOT CMAKE_CUDA_COMPILER STREQUAL CMAKE_CXX_COMPILER)
+  message(
+    FATAL_ERROR
+      "CUDA ${CUDAToolkit_VERSION} does not support the MSVC ${MSVC_VERSION} STL, which needs "
+      "CUDA 13.4 or newer. Install CUDA 13.4+, or build with the MSVC 14.4x (v143) tools: "
+      "-T v143,cuda=<CUDA root> or -T ClangCL,version=14.44,cuda=<CUDA root> with a Visual "
+      "Studio generator (Scripts/setup.py selects these when v143 is installed), or a "
+      "'vcvars64.bat -vcvars_ver=14.44' environment with Ninja."
+  )
+endif()
+
+# The ClangCL toolset needs MSBuild fixes before NVIDIA's CUDA customization
+# works with it (see the props file). Try-compile projects, including CMake's
+# CUDA compiler check, need them too.
+if(CMAKE_GENERATOR MATCHES "^Visual Studio" AND CMAKE_VS_PLATFORM_TOOLSET STREQUAL "ClangCL")
+  if(CMAKE_VS_GLOBALS MATCHES "(^|;)ForceImportBeforeCppTargets=")
+    message(
+      WARNING
+        "CMAKE_VS_GLOBALS already sets ForceImportBeforeCppTargets; import "
+        "${CMAKE_CURRENT_LIST_DIR}/clangcl_cuda_msbuild.props from it, or ClangCL CUDA builds fail."
+    )
+  else()
+    list(APPEND CMAKE_VS_GLOBALS
+         "ForceImportBeforeCppTargets=${CMAKE_CURRENT_LIST_DIR}/clangcl_cuda_msbuild.props")
+    list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES CMAKE_VS_GLOBALS)
+  endif()
 endif()
 
 if(WIN32 AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"

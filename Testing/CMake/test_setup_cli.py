@@ -246,6 +246,75 @@ class SetupCliTests(unittest.TestCase):
                 command = run.call_args.args[0]
                 self.assertEqual(command[command.index("-T") + 1], "ClangCL")
 
+    def vs_toolset(self, generator, clang_cl, definitions, cuda, v143="14.44", extras=True):
+        """Return vs_toolset.select() for a fake CUDA root and Visual Studio instance."""
+        toolsets = setup.config_helper.vs_toolset
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            if extras:
+                (root / "extras/visual_studio_integration/MSBuildExtensions").mkdir(parents=True)
+            environment = {k: v for k, v in os.environ.items() if k != "CMAKE_GENERATOR_TOOLSET"}
+            with (
+                patch.dict(os.environ, environment, clear=True),
+                patch.object(toolsets, "cuda_toolkit", return_value=(root, cuda) if cuda else None),
+                patch.object(toolsets, "v143_tools_version", return_value=v143),
+            ):
+                toolset = toolsets.select(generator, clang_cl, definitions)
+            return toolset.replace(f"cuda={root}", "cuda=ROOT") if toolset else toolset
+
+    def test_visual_studio_cuda_toolset_selection(self):
+        cuda = ["-DVECTORIZATION_GPU_BACKEND=cuda"]
+        vs26, vs22 = "Visual Studio 18 2026", "Visual Studio 17 2022"
+        cases = [
+            # VS 2026's STL needs CUDA 13.4+: older toolkits use MSVC 14.44 (v143).
+            ((vs26, False, cuda, (13, 2)), {}, "v143,cuda=ROOT"),
+            ((vs26, True, cuda, (13, 2)), {}, "ClangCL,version=14.44,cuda=ROOT"),
+            ((vs26, False, cuda, (13, 4)), {}, "cuda=ROOT"),
+            ((vs26, True, cuda, (13, 4)), {}, "ClangCL,cuda=ROOT"),
+            # Without v143 the default stays and CMake explains the mismatch.
+            ((vs26, True, cuda, (13, 2)), {"v143": None}, "ClangCL,cuda=ROOT"),
+            # The toolkit is pinned only when it ships the MSBuild integration.
+            ((vs22, False, cuda, (13, 2)), {"extras": False}, None),
+            ((vs22, True, cuda, (12, 6)), {}, "ClangCL,cuda=ROOT"),
+            ((vs26, True, [], (13, 2)), {}, "ClangCL"),
+            ((vs26, False, cuda, None), {}, None),
+            (("Ninja", True, cuda, (13, 2)), {}, None),
+        ]
+        for arguments, keywords, expected in cases:
+            with self.subTest(arguments=arguments, keywords=keywords):
+                self.assertEqual(self.vs_toolset(*arguments, **keywords), expected)
+
+    def test_both_setup_modes_pass_the_selected_toolset(self):
+        toolsets = setup.config_helper.vs_toolset
+        selected = "ClangCL,version=14.44,cuda=C:/CUDA"
+        with (
+            patch.object(toolsets, "select", return_value=selected) as select,
+            patch.object(setup.config_helper.subprocess, "check_call") as run,
+        ):
+            setup.config_helper.configure_build(
+                "source", "build", "Visual Studio 18 2026", "-DCMAKE_CXX_COMPILER=clang-cl",
+                "-DCMAKE_C_COMPILER=clang-cl", ["-DVECTORIZATION_GPU_BACKEND=cuda"], "", False,
+            )
+        select.assert_called_once_with(
+            "Visual Studio 18 2026", True, ["-DVECTORIZATION_GPU_BACKEND=cuda"]
+        )
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("-T") + 1], selected)
+        self.assertFalse(any(a.startswith("-DCMAKE_CXX_COMPILER") for a in command))
+        with (
+            patch.object(toolsets, "select", return_value=selected) as select,
+            patch.object(cli.subprocess, "run", return_value=Mock(returncode=0)) as run,
+        ):
+            self.dispatch([
+                "config", "--build-dir", "build", "--compiler", "clang-cl",
+                "--generator", "Visual Studio 18 2026", "--gpu-backend", "cuda",
+            ])
+        self.assertEqual(select.call_args.args[:2], ("Visual Studio 18 2026", True))
+        self.assertIn("-DVECTORIZATION_GPU_BACKEND=cuda", select.call_args.args[2])
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("-T") + 1], selected)
+        self.assertFalse(any(a.startswith("-DCMAKE_CXX_COMPILER") for a in command))
+
     def test_build_directory_uses_script_root_and_preserves_existing_files(self):
         original = Path.cwd()
         with tempfile.TemporaryDirectory() as directory:

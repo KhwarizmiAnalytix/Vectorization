@@ -79,7 +79,7 @@ endif()
 # CMake's MSVC rules give /EHsc to CXX only, so clang-cl would build CUDA TUs
 # without C++ exception handling while the DLLs they call throw through their
 # frames, and inline code would differ from the CXX TUs it is shared with.
-if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CUDA_COMPILER_ID STREQUAL "Clang")
   if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
     add_compile_options("$<$<COMPILE_LANGUAGE:CUDA>:/EHsc>")
   endif()
@@ -108,7 +108,7 @@ if(NOT TARGET Memory::Memory)
     EXCLUDE_FROM_ALL
   )
 endif()
-if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CUDA_COMPILER_ID STREQUAL "Clang")
   if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC" AND VECTORIZATION_CPU_BACKEND STREQUAL "avx2")
     add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:/clang:-mavx2>)
   endif()
@@ -209,7 +209,7 @@ endif()
 # clang-cl, whose preprocessor always conforms, reports it as unused.
 function(vectorization_unwrap_cuda_xcompiler_options target)
   if(NOT (WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda"
-          AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
+          AND CMAKE_CUDA_COMPILER_ID STREQUAL "Clang"
           AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC" AND TARGET ${target})
   )
     return()

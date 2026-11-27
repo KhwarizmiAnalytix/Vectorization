@@ -14,6 +14,8 @@ list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/Cmake/tools"
      "${CMAKE_CURRENT_SOURCE_DIR}/Cmake/flags"
 )
 include("${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/CMakeLists.txt")
+# Choose the C++ runtime before any dependency is added, so all inherit it.
+include(cxx_runtime)
 
 # Default CPU backend (host-aware): x86_64 -> avx2, aarch64 -> neon, else -> no
 string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _xsigma_root_proc)

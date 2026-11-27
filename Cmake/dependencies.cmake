@@ -100,14 +100,8 @@ endif()
 if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CUDA_COMPILER_ID STREQUAL "Clang")
   add_compile_options("$<$<COMPILE_LANGUAGE:CUDA>:-Wno-unknown-cuda-version>")
 endif()
-if(NOT TARGET Memory::Memory)
-  # Tensor allocation and expression evaluation must use the same GPU runtime.
-  set(MEMORY_GPU_BACKEND "${VECTORIZATION_GPU_BACKEND}" CACHE STRING "Memory GPU backend" FORCE)
-  add_subdirectory(
-    "${VECTORIZATION_THIRDPARTY_DIR}/Memory" "${CMAKE_CURRENT_BINARY_DIR}/ThirdParty/Memory"
-    EXCLUDE_FROM_ALL
-  )
-endif()
+# Vectorization owns Memory; the hook is shared with nested projects.
+xsigma_add_memory()
 if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CUDA_COMPILER_ID STREQUAL "Clang")
   if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC" AND VECTORIZATION_CPU_BACKEND STREQUAL "avx2")
     add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:/clang:-mavx2>)
@@ -153,30 +147,8 @@ foreach(_backend IN ITEMS cuda hip metal)
   endif()
 endforeach()
 if(NOT TARGET Scalars::Scalars)
-  # SCALARS_ENABLE_SVML was seeded from VECTORIZATION_ENABLE_SVML above. Do not
-  # shadow it with a normal variable: on x86, when the compiler has no built-in
-  # SVML intrinsics and SLEEF is off, Scalars forces it ON so transcendentals
-  # use the vendored SVML runtime instead of a per-lane scalar fallback.
-  set(SCALARS_CPU_BACKEND "${VECTORIZATION_CPU_BACKEND}" CACHE STRING "Scalars CPU backend" FORCE)
-  set(SCALARS_GPU_BACKEND "${VECTORIZATION_GPU_BACKEND}" CACHE STRING "Scalars GPU backend" FORCE)
-  add_subdirectory(
-    "${VECTORIZATION_THIRDPARTY_DIR}/Scalars" "${CMAKE_CURRENT_BINARY_DIR}/ThirdParty/Scalars"
-    EXCLUDE_FROM_ALL
-  )
-  if(TARGET sleef)
-    # The pinned SLEEF generates sleef.h in the top-level binary directory.
-    target_include_directories(sleef INTERFACE "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include>")
-    # SLEEF links TLFloat by name but keeps its search directories private.
-    # Forward the actual directories on the target: these capture the prefix
-    # used inside SLEEF (or a system TLFloat), unlike our parent-scope prefix.
-    get_target_property(_vec_sleef_libraries sleef INTERFACE_LINK_LIBRARIES)
-    get_target_property(_vec_sleef_link_dirs sleef LINK_DIRECTORIES)
-    if("tlfloat" IN_LIST _vec_sleef_libraries AND _vec_sleef_link_dirs)
-      foreach(_vec_sleef_link_dir IN LISTS _vec_sleef_link_dirs)
-        target_link_directories(sleef INTERFACE "$<BUILD_INTERFACE:${_vec_sleef_link_dir}>")
-      endforeach()
-    endif()
-  endif()
+  # Vectorization owns Scalars; the hook is shared with nested projects.
+  xsigma_add_scalars()
   # An explicit request must be satisfied; an automatic enable that finds no
   # runtime leaves SCALARS_HAS_SVML=0 (Scalars warns) and keeps the fallback.
   if(VECTORIZATION_ENABLE_SVML AND NOT TARGET SVML::SVML)
@@ -193,13 +165,6 @@ if(NOT TARGET Scalars::Scalars)
     endif()
   else()
     set(VECTORIZATION_SVML_STATUS "OFF")
-  endif()
-  # Propagate the resolved CPU backend before configuring other consumers.
-  # For example, AVX2 on arm64 must also disable LinearAlgebra SIMD.
-  if(NOT VECTORIZATION_CPU_BACKEND STREQUAL SCALARS_CPU_BACKEND)
-    set(VECTORIZATION_CPU_BACKEND "${SCALARS_CPU_BACKEND}"
-        CACHE STRING "CPU SIMD backend resolved by Scalars" FORCE
-    )
   endif()
 endif()
 # Dependencies pass host-compiler flags to CUDA sources as -Xcompiler=<flag>,

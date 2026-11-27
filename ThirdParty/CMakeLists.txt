@@ -24,6 +24,9 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 # Path to this ThirdParty directory — used by library modules that call
 # add_third_party_library() with absolute SOURCE_DIR / INCLUDE_DIR paths.
 set(VECTORIZATION_THIRDPARTY_DIR "${CMAKE_CURRENT_LIST_DIR}")
+# Hooks may run from a nested project's directory; build sibling repos under
+# Vectorization's own binary tree regardless of the caller.
+set(VECTORIZATION_THIRDPARTY_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/ThirdParty")
 
 # =============================================================================
 # Helper Functions for Third-Party Library Management
@@ -869,5 +872,25 @@ endfunction()
 function(xsigma_add_parallel)
     include("${VECTORIZATION_THIRDPARTY_DIR}/parallel.cmake")
     xsigma_add_parallel_product()
+endfunction()
+
+# =============================================================================
+# Memory — sibling XSigma repo, compiled from ThirdParty/Memory
+# (ThirdParty/memory.cmake). Vectorization owns it; called by Vectorization and
+# by any nested project before if(TARGET Memory::Memory) — idempotent.
+# =============================================================================
+function(xsigma_add_memory)
+    include("${VECTORIZATION_THIRDPARTY_DIR}/memory.cmake")
+    xsigma_add_memory_product()
+endfunction()
+
+# =============================================================================
+# Scalars — sibling XSigma repo, compiled from ThirdParty/Scalars
+# (ThirdParty/scalars.cmake). Vectorization owns it; called by Vectorization and
+# by LinearAlgebra before if(TARGET Scalars::Scalars) — idempotent.
+# =============================================================================
+function(xsigma_add_scalars)
+    include("${VECTORIZATION_THIRDPARTY_DIR}/scalars.cmake")
+    xsigma_add_scalars_product()
 endfunction()
 

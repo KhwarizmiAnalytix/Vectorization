@@ -267,32 +267,8 @@ if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   endif()
 endif()
 
-if(APPLE)
-  message(STATUS "Applying macOS LLVM linker options")
-
-  if(DEFINED PROJECT_LLVM_INSTALL_PREFIX AND PROJECT_LLVM_INSTALL_PREFIX)
-    set(_xsigma_llvm_prefix "${PROJECT_LLVM_INSTALL_PREFIX}")
-  elseif(EXISTS "/opt/homebrew/opt/llvm/lib")
-    set(_xsigma_llvm_prefix "/opt/homebrew/opt/llvm")
-  elseif(EXISTS "/usr/local/opt/llvm/lib")
-    set(_xsigma_llvm_prefix "/usr/local/opt/llvm")
-  else()
-    set(_xsigma_llvm_prefix "/opt/homebrew/opt/llvm")
-  endif()
-
-  set(LLVM_LINK_FLAGS
-      -L${_xsigma_llvm_prefix}/lib/c++ -L${_xsigma_llvm_prefix}/lib
-      -Wl,-rpath,${_xsigma_llvm_prefix}/lib/c++ -Wl,-rpath,${_xsigma_llvm_prefix}/lib
-  )
-
-  # Add each flag only if not already included
-  foreach(flag IN LISTS LLVM_LINK_FLAGS)
-    string(FIND "${CMAKE_EXE_LINKER_FLAGS}" "${flag}" flag_found)
-    if(flag_found EQUAL -1)
-      add_link_options(${flag})
-    endif()
-  endforeach()
-endif()
+# The macOS C++ runtime (LLVM libc++) is chosen in cxx_runtime.cmake, before
+# any dependency is added, so every library in the process shares it.
 
 if(UNIX AND NOT APPLE)
   include(CheckCXXCompilerFlag)

@@ -16,8 +16,7 @@ namespace
 {
 using namespace libtorch_test;
 
-template <typename T>
-void test_libtorch_trig()
+template <typename T> void test_libtorch_trig()
 {
     using tensor_t = vectorization::tensor<T>;
 

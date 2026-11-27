@@ -32,8 +32,8 @@ namespace detail
 {
 #if VECTORIZATION_VECTORIZED
 template <typename T, reduce_op Op>
-VECTORIZATION_HOST_FUNCTION_ATTRIBUTE
-    typename simd<T>::simd_t reduce_packet_transform(typename simd<T>::simd_t x)
+VECTORIZATION_HOST_FUNCTION_ATTRIBUTE typename simd<T>::simd_t reduce_packet_transform(
+    typename simd<T>::simd_t x)
 {
     using S         = simd<T>;
     const auto zero = S::set(T(0));

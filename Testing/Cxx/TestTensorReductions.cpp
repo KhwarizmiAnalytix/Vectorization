@@ -202,7 +202,7 @@ template <typename T> void check_extrema()
         tensor_t x(n + 1);
         fill_pattern(x);
         // Offset by one element so the head and tail peels are both exercised.
-        auto view   = x.slice(0, 1, static_cast<int64_t>(n + 1));
+        auto view   = x.slice(0, 1, static_cast<int64_t>(n) + 1);
         auto values = view.to_host_vector();
         expect_reductions_match<T>(view, values);
         expect_reductions_match<T>(x, x.to_host_vector());
@@ -337,7 +337,7 @@ template <typename T> void check_packed_assignment()
         tensor_t buffer(n + 1);
         buffer  = T(1);
         auto lo = buffer.slice(0, 0, static_cast<int64_t>(n));
-        auto hi = buffer.slice(0, 1, static_cast<int64_t>(n + 1));
+        auto hi = buffer.slice(0, 1, static_cast<int64_t>(n) + 1);
         if (n > 1)
         {
             EXPECT_ANY_THROW(lo = hi + T(1));  // views share n - 1 elements

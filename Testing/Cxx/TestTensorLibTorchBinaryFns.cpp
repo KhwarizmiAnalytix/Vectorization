@@ -17,8 +17,7 @@ namespace
 {
 using namespace libtorch_test;
 
-template <typename T>
-void test_libtorch_binary_fns()
+template <typename T> void test_libtorch_binary_fns()
 {
     using tensor_t                = vectorization::tensor<T>;
     constexpr std::size_t n       = 512 + 7;

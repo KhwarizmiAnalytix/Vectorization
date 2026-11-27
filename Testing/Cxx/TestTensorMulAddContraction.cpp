@@ -229,7 +229,7 @@ template <typename T> void check_flat_offsets()
                 {
                     const T want = av[i + static_cast<std::size_t>(sx)] * T(2) -
                                    bv[i + static_cast<std::size_t>(sy)];
-                    ok           = ok && dst[i] == want;
+                    ok = ok && dst[i] == want;
                 }
                 EXPECT_TRUE(ok) << "dst offset " << d << ", x offset " << sx << ", y offset " << sy;
             }

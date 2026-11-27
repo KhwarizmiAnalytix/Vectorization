@@ -49,9 +49,9 @@ except ImportError:  # Windows CLI smoke and some CI jobs skip pip install
         RESET_ALL = ""
 
 
-from helpers import cli as cli_helper
 from helpers import (
     build as build_helper,
+    cli as cli_helper,
     config as config_helper,
     cppcheck as cppcheck_helper,
     test as test_helper,
@@ -1186,7 +1186,11 @@ def parse_args(args):
 def main():
     """Parse CLI args and drive config/build/test/coverage, or print --help."""
     forwarded = cli_helper.dispatch(
-        sys.argv[1:], Path(__file__).resolve().parents[1], VectorizationFlags, VectorizationConfiguration, parse_args
+        sys.argv[1:],
+        Path(__file__).resolve().parents[1],
+        VectorizationFlags,
+        VectorizationConfiguration,
+        parse_args,
     )
     if forwarded is not None:
         sys.exit(forwarded)

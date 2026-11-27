@@ -15,9 +15,10 @@ class GpuBuildTests(unittest.TestCase):
     @unittest.skipIf(os.name == "nt", "HIP is supported on Linux only")
     def test_hip_compiler_architectures_and_host_flags(self):
         for selection in ("sdk", "explicit", "environment"):
-            with self.subTest(
-                selection=selection
-            ), tempfile.TemporaryDirectory() as directory:
+            with (
+                self.subTest(selection=selection),
+                tempfile.TemporaryDirectory() as directory,
+            ):
                 work = Path(directory)
                 sdk = work / "rocm"
                 (sdk / "include/hip").mkdir(parents=True)

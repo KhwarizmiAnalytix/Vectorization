@@ -575,10 +575,16 @@ if(VECTORIZATION_ENABLE_BENCHMARK)
       )
     endif()
 
-    target_link_libraries(
-      ${target_name} PRIVATE Benchmark::benchmark Benchmark::benchmark_main
-                             Vectorization::Vectorization
-    )
+    if(bench_name STREQUAL "BenchmarkTensorBaselines")
+      target_link_libraries(
+        ${target_name} PRIVATE Benchmark::benchmark Vectorization::Vectorization
+      )
+    else()
+      target_link_libraries(
+        ${target_name} PRIVATE Benchmark::benchmark Benchmark::benchmark_main
+                               Vectorization::Vectorization
+      )
+    endif()
     if(bench_name STREQUAL "BenchmarkTensorMkl" AND VECTORIZATION_ENABLE_MKL)
       target_compile_definitions(${target_name} PRIVATE VECTORIZATION_HAS_MKL=1)
       target_link_libraries(${target_name} PRIVATE MKL::MKL)

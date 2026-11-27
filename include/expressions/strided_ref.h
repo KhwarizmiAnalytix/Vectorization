@@ -160,10 +160,7 @@ template <typename T> struct retained_ref : strided_ref<T>
     {
     }
     VECTORIZATION_EXEC_CHECK_DISABLE
-    VECTORIZATION_FUNCTION_ATTRIBUTE retained_ref(retained_ref&& other) noexcept
-        : strided_ref<T>(std::move(other)), storage(std::move(other.storage))
-    {
-    }
+    VECTORIZATION_FUNCTION_ATTRIBUTE retained_ref(retained_ref&&) noexcept = default;
     VECTORIZATION_EXEC_CHECK_DISABLE
     VECTORIZATION_FUNCTION_ATTRIBUTE retained_ref& operator=(retained_ref const& other)
     {
@@ -172,14 +169,9 @@ template <typename T> struct retained_ref : strided_ref<T>
         return *this;
     }
     VECTORIZATION_EXEC_CHECK_DISABLE
-    VECTORIZATION_FUNCTION_ATTRIBUTE retained_ref& operator=(retained_ref&& other) noexcept
-    {
-        strided_ref<T>::operator=(std::move(other));
-        storage = std::move(other.storage);
-        return *this;
-    }
+    VECTORIZATION_FUNCTION_ATTRIBUTE retained_ref& operator=(retained_ref&&) noexcept = default;
     VECTORIZATION_EXEC_CHECK_DISABLE
-    VECTORIZATION_FUNCTION_ATTRIBUTE ~retained_ref() {}
+    VECTORIZATION_FUNCTION_ATTRIBUTE ~retained_ref() = default;
 };
 
 // Compute the element offset for flat index `flat` using the strided layout.

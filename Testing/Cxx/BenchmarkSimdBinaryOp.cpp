@@ -39,7 +39,7 @@ public:
         if constexpr (std::is_arithmetic<T>::value)
         {
             auto x = -dcf * fabs(-a + b);
-            c = a * dcf *
+            c      = a * dcf *
                 ((fabs(x) < std::numeric_limits<double>::epsilon()) ? 1. - 0.5 * x : expm1(x) / x);
         }
         else

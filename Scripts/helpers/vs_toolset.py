@@ -35,9 +35,11 @@ def cuda_toolkit() -> Optional[tuple[Path, tuple[int, int]]]:
     """Return (root, (major, minor)) of the toolkit CMake's FindCUDAToolkit uses."""
     # FindCUDAToolkit's order: CUDAToolkit_ROOT, CUDACXX, nvcc on PATH, CUDA_PATH.
     nvcc = os.environ.get("CUDACXX") or shutil.which("nvcc")
-    root = (os.environ.get("CUDAToolkit_ROOT")
-            or (str(Path(nvcc).resolve().parent.parent) if nvcc else None)
-            or os.environ.get("CUDA_PATH"))
+    root = (
+        os.environ.get("CUDAToolkit_ROOT")
+        or (str(Path(nvcc).resolve().parent.parent) if nvcc else None)
+        or os.environ.get("CUDA_PATH")
+    )
     if not root:
         return None
     try:
@@ -52,21 +54,38 @@ def cuda_toolkit() -> Optional[tuple[Path, tuple[int, int]]]:
 def v143_tools_version(version_range: str) -> Optional[str]:
     """Return the v143 MSVC version (e.g. "14.44") installed in that Visual Studio."""
     program_files = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
-    vswhere = Path(program_files) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    vswhere = (
+        Path(program_files) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    )
     if not vswhere.is_file():
         return None
     try:
         installation = subprocess.run(
-            [str(vswhere), "-latest", "-products", "*", "-version", version_range,
-             "-property", "installationPath"],
-            capture_output=True, text=True, check=True,
+            [
+                str(vswhere),
+                "-latest",
+                "-products",
+                "*",
+                "-version",
+                version_range,
+                "-property",
+                "installationPath",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return None
     if not installation:
         return None
-    marker = (Path(installation) / "VC" / "Auxiliary" / "Build"
-              / "Microsoft.VCToolsVersion.v143.default.txt")
+    marker = (
+        Path(installation)
+        / "VC"
+        / "Auxiliary"
+        / "Build"
+        / "Microsoft.VCToolsVersion.v143.default.txt"
+    )
     try:
         version = marker.read_text(encoding="utf-8").strip()
     except OSError:
@@ -91,16 +110,20 @@ def select(generator: str, clang_cl: bool, definitions: list[str]) -> Optional[s
         tools = v143_tools_version(version_range)
         cuda_text = f"CUDA {cuda[0]}.{cuda[1]}"
         if tools:
-            print(f"[INFO] {cuda_text} predates the {generator} STL (needs CUDA "
-                  f"{minimum[0]}.{minimum[1]}+); using MSVC {tools} (v143)")
+            print(
+                f"[INFO] {cuda_text} predates the {generator} STL (needs CUDA "
+                f"{minimum[0]}.{minimum[1]}+); using MSVC {tools} (v143)"
+            )
             if clang_cl:
                 fields.append(f"version={tools}")
             else:
                 toolset = "v143"
         else:
-            print(f"[WARNING] {cuda_text} predates the {generator} STL and its MSVC "
-                  "v143 build tools are not installed; install them or CUDA "
-                  f"{minimum[0]}.{minimum[1]}+")
+            print(
+                f"[WARNING] {cuda_text} predates the {generator} STL and its MSVC "
+                "v143 build tools are not installed; install them or CUDA "
+                f"{minimum[0]}.{minimum[1]}+"
+            )
     if (root / "extras" / "visual_studio_integration" / "MSBuildExtensions").is_dir():
         fields.append(f"cuda={root}")
     if fields:

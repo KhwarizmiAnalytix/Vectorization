@@ -17,8 +17,7 @@ namespace
 {
 using namespace libtorch_test;
 
-template <typename T>
-void test_libtorch_hyperbolic()
+template <typename T> void test_libtorch_hyperbolic()
 {
     using tensor_t = vectorization::tensor<T>;
 

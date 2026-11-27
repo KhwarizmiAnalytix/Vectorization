@@ -36,4 +36,3 @@ cc_library(
     linkstatic = True,
     visibility = ["//visibility:public"],
 )
-

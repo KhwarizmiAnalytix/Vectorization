@@ -103,25 +103,23 @@ endif()
 # Vectorization owns Memory; the hook is shared with nested projects.
 xsigma_add_memory()
 if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND CMAKE_CUDA_COMPILER_ID STREQUAL "Clang")
-  if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC" AND VECTORIZATION_CPU_BACKEND STREQUAL "avx2")
+  if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC" AND VECTORIZATION_CPU_BACKEND STREQUAL
+                                                             "avx2"
+  )
     add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:/clang:-mavx2>)
   endif()
-  set(CMAKE_CUDA_RUNTIME_LIBRARY_LINK_OPTIONS_SHARED
-      "${CUDAToolkit_LIBRARY_DIR}/cudadevrt.lib"
-      "${CUDAToolkit_LIBRARY_DIR}/cudart.lib"
+  set(CMAKE_CUDA_RUNTIME_LIBRARY_LINK_OPTIONS_SHARED "${CUDAToolkit_LIBRARY_DIR}/cudadevrt.lib"
+                                                     "${CUDAToolkit_LIBRARY_DIR}/cudart.lib"
   )
-  set(CMAKE_CUDA_RUNTIME_LIBRARY_LINK_OPTIONS_STATIC
-      "${CUDAToolkit_LIBRARY_DIR}/cudadevrt.lib"
-      "${CUDAToolkit_LIBRARY_DIR}/cudart_static.lib"
+  set(CMAKE_CUDA_RUNTIME_LIBRARY_LINK_OPTIONS_STATIC "${CUDAToolkit_LIBRARY_DIR}/cudadevrt.lib"
+                                                     "${CUDAToolkit_LIBRARY_DIR}/cudart_static.lib"
   )
-  set(CMAKE_CUDA_RUNTIME_LIBRARY_LINK_OPTIONS_SHARED
-      "${CUDAToolkit_LIBRARY_DIR}/cudadevrt.lib"
-      "${CUDAToolkit_LIBRARY_DIR}/cudart.lib"
+  set(CMAKE_CUDA_RUNTIME_LIBRARY_LINK_OPTIONS_SHARED "${CUDAToolkit_LIBRARY_DIR}/cudadevrt.lib"
+                                                     "${CUDAToolkit_LIBRARY_DIR}/cudart.lib"
       CACHE INTERNAL "CUDA shared runtime link options" FORCE
   )
-  set(CMAKE_CUDA_RUNTIME_LIBRARY_LINK_OPTIONS_STATIC
-      "${CUDAToolkit_LIBRARY_DIR}/cudadevrt.lib"
-      "${CUDAToolkit_LIBRARY_DIR}/cudart_static.lib"
+  set(CMAKE_CUDA_RUNTIME_LIBRARY_LINK_OPTIONS_STATIC "${CUDAToolkit_LIBRARY_DIR}/cudadevrt.lib"
+                                                     "${CUDAToolkit_LIBRARY_DIR}/cudart_static.lib"
       CACHE INTERNAL "CUDA static runtime link options" FORCE
   )
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL" CACHE STRING "MSVC runtime library" FORCE)
@@ -173,9 +171,12 @@ endif()
 # /Zc:preprocessor is dropped entirely: it is there for cl.exe behind nvcc, and
 # clang-cl, whose preprocessor always conforms, reports it as unused.
 function(vectorization_unwrap_cuda_xcompiler_options target)
-  if(NOT (WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda"
-          AND CMAKE_CUDA_COMPILER_ID STREQUAL "Clang"
-          AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC" AND TARGET ${target})
+  if(NOT
+     (WIN32
+      AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda"
+      AND CMAKE_CUDA_COMPILER_ID STREQUAL "Clang"
+      AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"
+      AND TARGET ${target})
   )
     return()
   endif()
@@ -198,7 +199,9 @@ vectorization_unwrap_cuda_xcompiler_options(Scalars)
 
 # Memory links CUPTI's nvperf_host.lib, whose import library exports DllMain.
 # LLD skips that symbol, as it must, and warns on every Memory.dll link.
-if(WIN32 AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND TARGET Memory
+if(WIN32
+   AND VECTORIZATION_GPU_BACKEND STREQUAL "cuda"
+   AND TARGET Memory
    AND CMAKE_CXX_COMPILER_LINKER_ID STREQUAL "LLD"
 )
   target_link_options(Memory PRIVATE "LINKER:/ignore:importeddllmain")

@@ -1,8 +1,8 @@
 """Run CPU tests when the runner supports the compiled ISA; keep build coverage otherwise."""
 
 import argparse
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 
 def main():
@@ -17,12 +17,23 @@ def main():
         probe = build / "cpu-probe"
         subprocess.run(["cmake", "-S", str(source), "-B", str(probe)], check=True)
         if (probe / "supported.txt").read_text() != "0":
-            print("::notice::AVX-512 build passed; execution requires AVX-512 CPU and OS support.")
+            print(
+                "::notice::AVX-512 build passed; execution requires AVX-512 CPU and OS support."
+            )
             return 0
-    return subprocess.call([
-        "ctest", "--test-dir", str(build), "-C", args.config,
-        "--output-on-failure", "--no-tests=error", "--timeout", "300",
-    ])
+    return subprocess.call(
+        [
+            "ctest",
+            "--test-dir",
+            str(build),
+            "-C",
+            args.config,
+            "--output-on-failure",
+            "--no-tests=error",
+            "--timeout",
+            "300",
+        ]
+    )
 
 
 if __name__ == "__main__":

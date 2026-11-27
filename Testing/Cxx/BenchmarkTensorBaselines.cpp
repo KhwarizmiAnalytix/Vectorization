@@ -39,6 +39,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <exception>
 #include <limits>
 #include <random>
 #include <string>
@@ -206,7 +208,7 @@ void skip_mismatch(benchmark::State& state)
         (void)a;                                                                                   \
         (void)b;                                                                                   \
         (void)c;                                                                                   \
-        BODY;                                                                                      \
+        (BODY);                                                                                    \
     }
 #else
 #define BASELINE_TORCH(BODY)
@@ -218,26 +220,26 @@ void skip_mismatch(benchmark::State& state)
         static constexpr const char*   name      = #NAME;                                          \
         static constexpr bool          reduction = false;                                          \
         static constexpr std::size_t   streams   = (ARITY) + 1;                                    \
-        static constexpr double        lo = LO, hi = HI;                                           \
+        static constexpr double        lo = (LO), hi = (HI);                                       \
         template <typename U> static U scalar(U a, U b, U c)                                       \
         {                                                                                          \
             (void)b;                                                                               \
             (void)c;                                                                               \
-            return SCALAR;                                                                         \
+            return (SCALAR);                                                                       \
         }                                                                                          \
         template <typename A, typename B, typename C>                                              \
         static auto vec(const A& a, const B& b, const C& c)                                        \
         {                                                                                          \
             (void)b;                                                                               \
             (void)c;                                                                               \
-            return VEC;                                                                            \
+            return (VEC);                                                                          \
         }                                                                                          \
         template <typename A, typename B, typename C>                                              \
         static auto eigen(const A& a, const B& b, const C& c)                                      \
         {                                                                                          \
             (void)b;                                                                               \
             (void)c;                                                                               \
-            return EIGEN;                                                                          \
+            return (EIGEN);                                                                        \
         }                                                                                          \
         BASELINE_TORCH(TORCH)                                                                      \
     };
@@ -803,7 +805,7 @@ template <strided_op Op, typename T> void bench_strided_eigen(benchmark::State& 
 // Wall time drives the iteration count (process CPU time is coarse on Windows,
 // ~15.6 ms ticks); the CPU column still reports all threads' work, which is the
 // fair comparison if the tensor evaluator runs in parallel.
-void configure(benchmark::Benchmark* b)
+void configure(benchmark::internal::Benchmark* b)
 {
     b->MeasureProcessCPUTime()->UseRealTime()->Unit(benchmark::kMicrosecond);
 }
@@ -852,7 +854,7 @@ template <typename T> void register_strided_ops()
     register_strided<strided_op::fma, T>();
 }
 
-[[maybe_unused]] const bool kRegistered = []
+void register_all_baselines()
 {
     register_ops<AddOp,
         MulOp,
@@ -871,7 +873,27 @@ template <typename T> void register_strided_ops()
         MinOp>();
     register_strided_ops<float>();
     register_strided_ops<double>();
-    return true;
-}();
+}
 
 }  // namespace
+
+int main(int argc, char** argv)
+{
+    try
+    {
+        register_all_baselines();
+        benchmark::Initialize(&argc, argv);
+        if (benchmark::ReportUnrecognizedArguments(argc, argv))
+        {
+            return 1;
+        }
+        benchmark::RunSpecifiedBenchmarks();
+        benchmark::Shutdown();
+    }
+    catch (const std::exception& error)
+    {
+        std::fprintf(stderr, "benchmark startup failed: %s\n", error.what());
+        return 1;
+    }
+    return 0;
+}

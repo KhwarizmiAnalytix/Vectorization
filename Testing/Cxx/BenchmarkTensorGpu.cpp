@@ -117,7 +117,7 @@ constexpr gpu_error_t kGpuSuccess = hipSuccess;
 #include <backend/gpu/metal/metal_dispatch.h>
 using gpu_error_t                 = int;
 constexpr gpu_error_t kGpuSuccess = 0;
-#define gpuGetDeviceCount(pn) \
+#define gpuGetDeviceCount(pn)                                                                      \
     (*(pn) = scalars::metal_backend::device_available() ? 1 : 0, kGpuSuccess)
 // Every metal_backend::dispatch()/dispatch_fill() call already blocks on
 // waitUntilCompleted internally (see metal_dispatch.mm) — no separate device-sync API.
@@ -159,8 +159,7 @@ constexpr device_enum kActiveGpuDevice  = device_enum::METAL;
 constexpr bool        kMetalOnlyBackend = true;
 #endif
 
-template <typename T>
-void fill_uniform(std::vector<T>& v, T lo, T hi, unsigned seed)
+template <typename T> void fill_uniform(std::vector<T>& v, T lo, T hi, unsigned seed)
 {
     std::mt19937                      gen(seed);
     std::uniform_real_distribution<T> dist(lo, hi);
@@ -177,8 +176,7 @@ bool has_gpu_device()
 // Metal is float-only (MSL has no double); tensor<double> on device_enum::METAL throws
 // at allocation time (Library/Memory/allocator.h). Every GPU_*<double> benchmark checks
 // this before constructing a device tensor so it skips cleanly instead of throwing.
-template <typename T>
-bool skip_if_unsupported(benchmark::State& state)
+template <typename T> bool skip_if_unsupported(benchmark::State& state)
 {
     if (kMetalOnlyBackend && std::is_same_v<T, double>)
     {
@@ -196,7 +194,7 @@ bool skip_if_unsupported(benchmark::State& state)
 }  // namespace
 
 // Explicit sizes: 1K (latency-bound), 64K, 1M, 4M (throughput-bound).
-#define BENCH_SIZES \
+#define BENCH_SIZES                                                                                \
     ->Arg(1 << 10)->Arg(1 << 16)->Arg(1 << 20)->Arg(1 << 22)->Unit(benchmark::kMicrosecond)
 
 // GPU cases additionally get a warm-up + minimum measurement window so the
@@ -208,8 +206,7 @@ bool skip_if_unsupported(benchmark::State& state)
 // ---------------------------------------------------------------------------
 // Fill: a = scalar
 // ---------------------------------------------------------------------------
-template <typename T>
-static void CPU_Fill(benchmark::State& state)
+template <typename T> static void CPU_Fill(benchmark::State& state)
 {
     const size_t n = static_cast<size_t>(state.range(0));
     tensor<T>    a(n);
@@ -220,8 +217,7 @@ static void CPU_Fill(benchmark::State& state)
 BENCHMARK_TEMPLATE(CPU_Fill, float) BENCH_SIZES;
 BENCHMARK_TEMPLATE(CPU_Fill, double) BENCH_SIZES;
 
-template <typename T>
-static void GPU_Fill(benchmark::State& state)
+template <typename T> static void GPU_Fill(benchmark::State& state)
 {
     if (skip_if_unsupported<T>(state))
         return;
@@ -240,8 +236,7 @@ BENCHMARK_TEMPLATE(GPU_Fill, double) GPU_BENCH_SIZES;
 // ---------------------------------------------------------------------------
 // Binary add: c = a + b  (device-resident; excludes transfer)
 // ---------------------------------------------------------------------------
-template <typename T>
-static void CPU_Add(benchmark::State& state)
+template <typename T> static void CPU_Add(benchmark::State& state)
 {
     const size_t   n = static_cast<size_t>(state.range(0));
     std::vector<T> ha(n), hb(n);
@@ -259,8 +254,7 @@ static void CPU_Add(benchmark::State& state)
 BENCHMARK_TEMPLATE(CPU_Add, float) BENCH_SIZES;
 BENCHMARK_TEMPLATE(CPU_Add, double) BENCH_SIZES;
 
-template <typename T>
-static void GPU_Add(benchmark::State& state)
+template <typename T> static void GPU_Add(benchmark::State& state)
 {
     if (skip_if_unsupported<T>(state))
         return;
@@ -283,8 +277,7 @@ static void GPU_Add(benchmark::State& state)
 BENCHMARK_TEMPLATE(GPU_Add, float) GPU_BENCH_SIZES;
 BENCHMARK_TEMPLATE(GPU_Add, double) GPU_BENCH_SIZES;
 
-template <typename T>
-static void GPU_Add_Transfer(benchmark::State& state)
+template <typename T> static void GPU_Add_Transfer(benchmark::State& state)
 {
     if (skip_if_unsupported<T>(state))
         return;
@@ -327,8 +320,7 @@ BENCHMARK_TEMPLATE(GPU_Add_Transfer, double) GPU_BENCH_SIZES;
 // ---------------------------------------------------------------------------
 constexpr int kNumStreams = 4;
 
-template <typename T>
-static void GPU_SingleStream_Add(benchmark::State& state)
+template <typename T> static void GPU_SingleStream_Add(benchmark::State& state)
 {
     if (skip_if_unsupported<T>(state))
         return;
@@ -358,8 +350,7 @@ static void GPU_SingleStream_Add(benchmark::State& state)
 BENCHMARK_TEMPLATE(GPU_SingleStream_Add, float) GPU_BENCH_SIZES;
 BENCHMARK_TEMPLATE(GPU_SingleStream_Add, double) GPU_BENCH_SIZES;
 
-template <typename T>
-static void GPU_MultiStream_Add(benchmark::State& state)
+template <typename T> static void GPU_MultiStream_Add(benchmark::State& state)
 {
     if (skip_if_unsupported<T>(state))
         return;
@@ -407,8 +398,7 @@ BENCHMARK_TEMPLATE(GPU_MultiStream_Add, double) GPU_BENCH_SIZES;
 // ---------------------------------------------------------------------------
 // Binary multiply: c = a * b  (device-resident; excludes transfer)
 // ---------------------------------------------------------------------------
-template <typename T>
-static void CPU_Multiply(benchmark::State& state)
+template <typename T> static void CPU_Multiply(benchmark::State& state)
 {
     const size_t   n = static_cast<size_t>(state.range(0));
     std::vector<T> ha(n), hb(n);
@@ -426,8 +416,7 @@ static void CPU_Multiply(benchmark::State& state)
 BENCHMARK_TEMPLATE(CPU_Multiply, float) BENCH_SIZES;
 BENCHMARK_TEMPLATE(CPU_Multiply, double) BENCH_SIZES;
 
-template <typename T>
-static void GPU_Multiply(benchmark::State& state)
+template <typename T> static void GPU_Multiply(benchmark::State& state)
 {
     if (skip_if_unsupported<T>(state))
         return;
@@ -455,8 +444,7 @@ BENCHMARK_TEMPLATE(GPU_Multiply, double) GPU_BENCH_SIZES;
 // in [0.5, 1.5] (same fill_uniform call as the other binary ops), so this
 // never exercises a divide-by-zero path.
 // ---------------------------------------------------------------------------
-template <typename T>
-static void CPU_Divide(benchmark::State& state)
+template <typename T> static void CPU_Divide(benchmark::State& state)
 {
     const size_t   n = static_cast<size_t>(state.range(0));
     std::vector<T> ha(n), hb(n);
@@ -474,8 +462,7 @@ static void CPU_Divide(benchmark::State& state)
 BENCHMARK_TEMPLATE(CPU_Divide, float) BENCH_SIZES;
 BENCHMARK_TEMPLATE(CPU_Divide, double) BENCH_SIZES;
 
-template <typename T>
-static void GPU_Divide(benchmark::State& state)
+template <typename T> static void GPU_Divide(benchmark::State& state)
 {
     if (skip_if_unsupported<T>(state))
         return;
@@ -507,8 +494,7 @@ BENCHMARK_TEMPLATE(GPU_Divide, double) GPU_BENCH_SIZES;
 // tensors is cheap after warm-up: this instead measures a fixture with one
 // fewer live allocation altogether).
 // ---------------------------------------------------------------------------
-template <typename T>
-static void CPU_AddInPlace(benchmark::State& state)
+template <typename T> static void CPU_AddInPlace(benchmark::State& state)
 {
     const size_t   n = static_cast<size_t>(state.range(0));
     std::vector<T> ha(n), hb(n);
@@ -527,8 +513,7 @@ static void CPU_AddInPlace(benchmark::State& state)
 BENCHMARK_TEMPLATE(CPU_AddInPlace, float) BENCH_SIZES;
 BENCHMARK_TEMPLATE(CPU_AddInPlace, double) BENCH_SIZES;
 
-template <typename T>
-static void GPU_AddInPlace(benchmark::State& state)
+template <typename T> static void GPU_AddInPlace(benchmark::State& state)
 {
     if (skip_if_unsupported<T>(state))
         return;
@@ -555,8 +540,7 @@ BENCHMARK_TEMPLATE(GPU_AddInPlace, double) GPU_BENCH_SIZES;
 // ---------------------------------------------------------------------------
 // Compound expression: exp(a) + sqrt(b) -- fused into a single kernel/loop
 // ---------------------------------------------------------------------------
-template <typename T>
-static void CPU_Compound(benchmark::State& state)
+template <typename T> static void CPU_Compound(benchmark::State& state)
 {
     const size_t   n = static_cast<size_t>(state.range(0));
     std::vector<T> ha(n), hb(n);
@@ -574,8 +558,7 @@ static void CPU_Compound(benchmark::State& state)
 BENCHMARK_TEMPLATE(CPU_Compound, float) BENCH_SIZES;
 BENCHMARK_TEMPLATE(CPU_Compound, double) BENCH_SIZES;
 
-template <typename T>
-static void GPU_Compound(benchmark::State& state)
+template <typename T> static void GPU_Compound(benchmark::State& state)
 {
     if (skip_if_unsupported<T>(state))
         return;
@@ -610,8 +593,7 @@ BENCHMARK_TEMPLATE(GPU_Compound, double) GPU_BENCH_SIZES;
 // ---------------------------------------------------------------------------
 constexpr int kMcSteps = 64;
 
-template <typename T>
-static void CPU_MonteCarloPath(benchmark::State& state)
+template <typename T> static void CPU_MonteCarloPath(benchmark::State& state)
 {
     const size_t   n = static_cast<size_t>(state.range(0));
     std::vector<T> hz0(n), hz1(n), hz2(n), hz3(n);
@@ -643,8 +625,7 @@ static void CPU_MonteCarloPath(benchmark::State& state)
 BENCHMARK_TEMPLATE(CPU_MonteCarloPath, float) BENCH_SIZES;
 BENCHMARK_TEMPLATE(CPU_MonteCarloPath, double) BENCH_SIZES;
 
-template <typename T>
-static void GPU_MonteCarloPath(benchmark::State& state)
+template <typename T> static void GPU_MonteCarloPath(benchmark::State& state)
 {
     if (skip_if_unsupported<T>(state))
         return;
@@ -682,8 +663,7 @@ BENCHMARK_TEMPLATE(GPU_MonteCarloPath, double) GPU_BENCH_SIZES;
 // ---------------------------------------------------------------------------
 // Allocation overhead: construct + destroy a device tensor every iteration.
 // ---------------------------------------------------------------------------
-template <typename T>
-static void GPU_TensorAllocFree(benchmark::State& state)
+template <typename T> static void GPU_TensorAllocFree(benchmark::State& state)
 {
     if (skip_if_unsupported<T>(state))
         return;
@@ -709,8 +689,7 @@ BENCHMARK_TEMPLATE(GPU_TensorAllocFree, double) GPU_BENCH_SIZES;
 // LibTorch MPS allocation overhead — same construct/destroy loop as
 // GPU_TensorAllocFree, for a head-to-head against PyTorch's MPS caching path.
 // ---------------------------------------------------------------------------
-template <typename T>
-static void LibTorch_MPS_TensorAllocFree(benchmark::State& state)
+template <typename T> static void LibTorch_MPS_TensorAllocFree(benchmark::State& state)
 {
     if constexpr (std::is_same_v<T, double>)
     {
@@ -761,8 +740,7 @@ BENCHMARK_TEMPLATE(LibTorch_MPS_TensorAllocFree, float) GPU_BENCH_SIZES;
 // ---------------------------------------------------------------------------
 constexpr size_t kSumN = 512;
 
-template <typename T>
-static void CPU_SumAddMulSin(benchmark::State& state)
+template <typename T> static void CPU_SumAddMulSin(benchmark::State& state)
 {
     std::vector<T> ha(kSumN), hb(kSumN), hx(kSumN);
     fill_uniform(ha, static_cast<T>(-1), static_cast<T>(1), 5u);
@@ -781,8 +759,7 @@ static void CPU_SumAddMulSin(benchmark::State& state)
 BENCHMARK_TEMPLATE(CPU_SumAddMulSin, float)->Unit(benchmark::kMicrosecond);
 BENCHMARK_TEMPLATE(CPU_SumAddMulSin, double)->Unit(benchmark::kMicrosecond);
 
-template <typename T>
-static void GPU_SumAddMulSin(benchmark::State& state)
+template <typename T> static void GPU_SumAddMulSin(benchmark::State& state)
 {
     if (skip_if_unsupported<T>(state))
     {
@@ -814,7 +791,6 @@ BENCHMARK_TEMPLATE(GPU_SumAddMulSin, double)
     ->MinWarmUpTime(0.1)
     ->MinTime(0.3);
 
-
 // Match BenchmarkTensorReductions's fused CPU workload. Scalar results include
 // the synchronization required to make the returned value host-visible.
 #define GPU_REDUCTION_BENCHMARK(NAME)                                                              \
@@ -834,7 +810,7 @@ BENCHMARK_TEMPLATE(GPU_SumAddMulSin, double)
         x.copy_from_host(host);                                                                    \
         for (auto _ : state)                                                                       \
         {                                                                                          \
-            benchmark::DoNotOptimize(vectorization::NAME(x * T(0.5) + T(0.5)));                    \
+            benchmark::DoNotOptimize(vectorization::NAME(x* T(0.5) + T(0.5)));                     \
         }                                                                                          \
         state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(n));                     \
         state.SetBytesProcessed(state.iterations() * static_cast<int64_t>(n * sizeof(T)));         \

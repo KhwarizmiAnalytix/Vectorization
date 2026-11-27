@@ -108,7 +108,8 @@ option(USE_NATIVE_ARCH "Prefer host CPU instruction tuning (-march=native, Clang
 
 # Public feature flags; Cmake/dependencies.cmake forwards each one to its owner.
 option(VECTORIZATION_ENABLE_SVML
-       "Require Intel SVML through Scalars (auto-enabled on x86 when supported and SLEEF is off)" OFF
+       "Require Intel SVML through Scalars (auto-enabled on x86 when supported and SLEEF is off)"
+       OFF
 )
 option(VECTORIZATION_ENABLE_SLEEF "Enable SLEEF through Scalars" OFF)
 option(VECTORIZATION_ENABLE_ACCELERATE "Enable Apple Accelerate through Scalars" OFF)
@@ -119,9 +120,10 @@ option(VECTORIZATION_ENABLE_BLAS
 option(VECTORIZATION_ENABLE_BLIS "Enable BLIS as the CBLAS/LAPACKE provider through LinearAlgebra"
        OFF
 )
-option(VECTORIZATION_ENABLE_LU_PIVOTING
-       "Partial pivoting in LinearAlgebra's NATIVE LU (BLAS/MKL always pivot); OFF is numerically unstable"
-       ON
+option(
+  VECTORIZATION_ENABLE_LU_PIVOTING
+  "Partial pivoting in LinearAlgebra's NATIVE LU (BLAS/MKL always pivot); OFF is numerically unstable"
+  ON
 )
 option(VECTORIZATION_ENABLE_MIMALLOC "Enable Memory's mimalloc allocator" ON)
 option(VECTORIZATION_ENABLE_MIMALLOC_STATS "Enable mimalloc allocation statistics" OFF)
@@ -221,11 +223,14 @@ endif()
 
 # Resolve automatic LTO before forwarding it to dependencies. CUDA and sccache
 # reject LTO; CMake's MSVC auto-export scanner cannot read /GL object files.
-if(VECTORIZATION_LTO_MODE STREQUAL "auto" AND
-   (VECTORIZATION_GPU_BACKEND STREQUAL "cuda" OR
-    (VECTORIZATION_ENABLE_CACHE AND VECTORIZATION_CACHE_BACKEND STREQUAL "sccache") OR
-    (MSVC AND BUILD_SHARED_LIBS)))
-  message(STATUS "Vectorization: automatic LTO disabled for this GPU/cache/shared-library configuration")
+if(VECTORIZATION_LTO_MODE STREQUAL "auto"
+   AND (VECTORIZATION_GPU_BACKEND STREQUAL "cuda"
+        OR (VECTORIZATION_ENABLE_CACHE AND VECTORIZATION_CACHE_BACKEND STREQUAL "sccache")
+        OR (MSVC AND BUILD_SHARED_LIBS))
+)
+  message(
+    STATUS "Vectorization: automatic LTO disabled for this GPU/cache/shared-library configuration"
+  )
   set(VECTORIZATION_LTO_MODE off CACHE STRING "LTO mode for Vectorization" FORCE)
 endif()
 

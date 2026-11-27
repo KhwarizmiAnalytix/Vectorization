@@ -19,8 +19,7 @@ namespace
 {
 using namespace libtorch_test;
 
-template <typename T>
-void test_libtorch_gpu()
+template <typename T> void test_libtorch_gpu()
 {
     if (!torch::cuda::is_available())
     {

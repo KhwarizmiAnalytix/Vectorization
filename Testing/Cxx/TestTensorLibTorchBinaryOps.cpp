@@ -18,8 +18,7 @@ namespace
 {
 using namespace libtorch_test;
 
-template <typename T>
-void test_libtorch_binary_ops()
+template <typename T> void test_libtorch_binary_ops()
 {
     using tensor_t = vectorization::tensor<T>;
 

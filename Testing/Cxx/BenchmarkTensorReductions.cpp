@@ -35,7 +35,7 @@
         }                                                                                          \
         for (auto _ : state)                                                                       \
         {                                                                                          \
-            benchmark::DoNotOptimize(vectorization::NAME(x * T(0.5) + T(0.5)));                    \
+            benchmark::DoNotOptimize(vectorization::NAME(x* T(0.5) + T(0.5)));                     \
         }                                                                                          \
         state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(n));                     \
         state.SetBytesProcessed(state.iterations() * static_cast<int64_t>(n * sizeof(T)));         \

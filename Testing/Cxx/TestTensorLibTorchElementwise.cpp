@@ -17,8 +17,7 @@ namespace
 {
 using namespace libtorch_test;
 
-template <typename T>
-void test_libtorch_elementwise()
+template <typename T> void test_libtorch_elementwise()
 {
     using tensor_t            = vectorization::tensor<T>;
     constexpr std::size_t n   = 512 + 7;  // deliberate non-multiple of SIMD width

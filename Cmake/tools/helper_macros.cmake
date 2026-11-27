@@ -51,8 +51,12 @@ function(xsigma_target_optional_icecc target_name enable_var)
     set_property(
       TARGET "${target_name}" PROPERTY CXX_COMPILER_LAUNCHER "${VECTORIZATION_ICECC_EXECUTABLE}"
     )
-    set_property(TARGET "${target_name}" PROPERTY C_COMPILER_LAUNCHER "${VECTORIZATION_ICECC_EXECUTABLE}")
-    message(STATUS "Icecream compiler launcher for ${target_name}: ${VECTORIZATION_ICECC_EXECUTABLE}")
+    set_property(
+      TARGET "${target_name}" PROPERTY C_COMPILER_LAUNCHER "${VECTORIZATION_ICECC_EXECUTABLE}"
+    )
+    message(
+      STATUS "Icecream compiler launcher for ${target_name}: ${VECTORIZATION_ICECC_EXECUTABLE}"
+    )
   else()
     message(STATUS "Icecream enabled for ${target_name} but icecc was not found in PATH")
   endif()

@@ -246,17 +246,27 @@ class SetupCliTests(unittest.TestCase):
                 command = run.call_args.args[0]
                 self.assertEqual(command[command.index("-T") + 1], "ClangCL")
 
-    def vs_toolset(self, generator, clang_cl, definitions, cuda, v143="14.44", extras=True):
+    def vs_toolset(
+        self, generator, clang_cl, definitions, cuda, v143="14.44", extras=True
+    ):
         """Return vs_toolset.select() for a fake CUDA root and Visual Studio instance."""
         toolsets = setup.config_helper.vs_toolset
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             if extras:
-                (root / "extras/visual_studio_integration/MSBuildExtensions").mkdir(parents=True)
-            environment = {k: v for k, v in os.environ.items() if k != "CMAKE_GENERATOR_TOOLSET"}
+                (root / "extras/visual_studio_integration/MSBuildExtensions").mkdir(
+                    parents=True
+                )
+            environment = {
+                k: v for k, v in os.environ.items() if k != "CMAKE_GENERATOR_TOOLSET"
+            }
             with (
                 patch.dict(os.environ, environment, clear=True),
-                patch.object(toolsets, "cuda_toolkit", return_value=(root, cuda) if cuda else None),
+                patch.object(
+                    toolsets,
+                    "cuda_toolkit",
+                    return_value=(root, cuda) if cuda else None,
+                ),
                 patch.object(toolsets, "v143_tools_version", return_value=v143),
             ):
                 toolset = toolsets.select(generator, clang_cl, definitions)
@@ -292,8 +302,14 @@ class SetupCliTests(unittest.TestCase):
             patch.object(setup.config_helper.subprocess, "check_call") as run,
         ):
             setup.config_helper.configure_build(
-                "source", "build", "Visual Studio 18 2026", "-DCMAKE_CXX_COMPILER=clang-cl",
-                "-DCMAKE_C_COMPILER=clang-cl", ["-DVECTORIZATION_GPU_BACKEND=cuda"], "", False,
+                "source",
+                "build",
+                "Visual Studio 18 2026",
+                "-DCMAKE_CXX_COMPILER=clang-cl",
+                "-DCMAKE_C_COMPILER=clang-cl",
+                ["-DVECTORIZATION_GPU_BACKEND=cuda"],
+                "",
+                False,
             )
         select.assert_called_once_with(
             "Visual Studio 18 2026", True, ["-DVECTORIZATION_GPU_BACKEND=cuda"]
@@ -305,10 +321,19 @@ class SetupCliTests(unittest.TestCase):
             patch.object(toolsets, "select", return_value=selected) as select,
             patch.object(cli.subprocess, "run", return_value=Mock(returncode=0)) as run,
         ):
-            self.dispatch([
-                "config", "--build-dir", "build", "--compiler", "clang-cl",
-                "--generator", "Visual Studio 18 2026", "--gpu-backend", "cuda",
-            ])
+            self.dispatch(
+                [
+                    "config",
+                    "--build-dir",
+                    "build",
+                    "--compiler",
+                    "clang-cl",
+                    "--generator",
+                    "Visual Studio 18 2026",
+                    "--gpu-backend",
+                    "cuda",
+                ]
+            )
         self.assertEqual(select.call_args.args[:2], ("Visual Studio 18 2026", True))
         self.assertIn("-DVECTORIZATION_GPU_BACKEND=cuda", select.call_args.args[2])
         command = run.call_args.args[0]

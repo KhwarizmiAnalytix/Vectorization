@@ -1531,7 +1531,7 @@ public:
         sizes_and_strides sas        = sizes_and_strides_;
         sas.size_at_unchecked(dim)   = new_size;
         sas.stride_at_unchecked(dim) = sizes_and_strides_.stride_at_unchecked(dim) * step;
-        const size_t offset = static_cast<size_t>(first) *
+        const size_t offset          = static_cast<size_t>(first) *
                               static_cast<size_t>(sizes_and_strides_.stride_at_unchecked(dim));
         const size_t storage_size = view_.size() > offset ? view_.size() - offset : 0;
         // Memory returns a default CPU view for an out-of-range subview. An
@@ -2380,8 +2380,8 @@ private:
         // Independent of shape, so computed first and unconditionally: every
         // early return below (rank 0, non-CPU, empty, non-contiguous) must
         // still leave offset_ in sync with view_.
-        offset_ = view_.data() == nullptr ? int64_t{0}
-                                          : (reinterpret_cast<std::uintptr_t>(view_.data()) -
+        offset_        = view_.data() == nullptr ? int64_t{0}
+                                                 : (reinterpret_cast<std::uintptr_t>(view_.data()) -
                                                 reinterpret_cast<std::uintptr_t>(view_.base())) /
                                                 sizeof(value_t);
         const size_t n = rank();

@@ -17,8 +17,7 @@ namespace
 {
 using namespace libtorch_test;
 
-template <typename T>
-void test_libtorch_exp_log()
+template <typename T> void test_libtorch_exp_log()
 {
     using tensor_t = vectorization::tensor<T>;
 

@@ -19,8 +19,7 @@ namespace
 {
 using namespace libtorch_test;
 
-template <typename T>
-void test_libtorch_2d()
+template <typename T> void test_libtorch_2d()
 {
     using tensor_t             = vectorization::tensor<T>;
     constexpr std::size_t rows = 32;

@@ -309,11 +309,14 @@ if(VECTORIZATION_GPU_BACKEND STREQUAL "cuda" AND _vectorization_has_cuda_gpu_tes
     # TestTensor.cpp, TestTensorF2.cpp, etc. as CUDA too, and they instantiate the
     # same expression-tree templates, so they're equally exposed to the crash.
     if(WIN32)
+      # SHELL: inside a generator expression is emitted as one quoted
+      # argument for source-file COMPILE_OPTIONS (Ninja passes the literal
+      # "SHELL:-Xclang ..."). Keep the two tokens as separate list items.
       set_source_files_properties(
         ${_vec_tensor_test_sources}
         PROPERTIES
           COMPILE_OPTIONS
-          "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xclang -fno-cuda-host-device-constexpr>;$<$<COMPILE_LANGUAGE:CUDA>:-O1>"
+          "$<$<COMPILE_LANGUAGE:CUDA>:-Xclang>;$<$<COMPILE_LANGUAGE:CUDA>:-fno-cuda-host-device-constexpr>;$<$<COMPILE_LANGUAGE:CUDA>:-O1>"
       )
     else()
       set_source_files_properties(
